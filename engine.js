@@ -65,8 +65,8 @@ function applyDamage(s, id, amount, type) {
   return { amt, text: `${c.name} takes ${amt}${t ? ' ' + t : ''} damage${note} (${c.hp}/${c.maxHp}).${status}` };
 }
 // Falling (PHB): 1d6 bludgeoning per full 10 ft, max 20d6, and the creature lands prone if it
-// takes damage. Into water it can use its reaction for a DC 15 Athletics or Acrobatics check to
-// hit the water cleanly and halve the damage (assumed taken when it helps).
+// takes damage. Water breaks the fall: damage is halved, and an Athletics or Acrobatics check
+// (DC 10 + 1 per 10 ft fallen) to hit the water cleanly cuts it to a quarter.
 function fallOn(s, id, feet, landing) {
   const c = who(s, id);
   if (landing) c.pos = landing;
@@ -78,10 +78,10 @@ function fallOn(s, id, feet, landing) {
   let amt = r.total, note = '';
   if (C.tagsAt(s, p.x, p.y).includes('water')) {
     const ath = abilityBonus(c, 'athletics').bonus, acr = abilityBonus(c, 'acrobatics').bonus;
-    const b = Math.max(ath, acr), d = C.d20();
-    const ok = d.nat + b >= 15;
-    note = ` Hits the water (${ath >= acr ? 'Athletics' : 'Acrobatics'} ${d.detail}${sign(b)} = ${d.nat + b} vs DC 15: ${ok ? 'clean entry, half damage' : 'belly flop'}).`;
-    if (ok) amt = Math.floor(amt / 2);
+    const b = Math.max(ath, acr), d = C.d20(), dc = 10 + Math.floor(feet / 10);
+    const ok = d.nat + b >= dc;
+    note = ` Into the water: half damage, and ${ath >= acr ? 'Athletics' : 'Acrobatics'} ${d.detail}${sign(b)} = ${d.nat + b} vs DC ${dc}: ${ok ? 'a clean entry, a quarter' : 'a rough landing'}.`;
+    amt = Math.floor(amt / (ok ? 4 : 2));
   }
   const res = applyDamage(s, id, amt, 'bludgeoning');
   if (res.amt > 0) addCond(c, 'prone');
@@ -163,7 +163,7 @@ cmd('range', 'range <a> <b|cell>                  distance (height included), li
   return null;
 });
 
-cmd('move', 'move <id> <cell> [--jump] [--running] [--fast-climb] [--force]   pathed move; checks speed, walls, enemies, difficult terrain, climbing; warns on opportunity attacks', (s, { pos, flags }) => {
+cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--force]   pathed move; checks speed, walls, enemies, difficult terrain, climbing; warns on opportunity attacks', (s, { pos, flags }) => {
   need(s);
   const id = pos[0], c = who(s, id);
   const dest = C.cellId(C.parseCell(pos[1]).x, C.parseCell(pos[1]).y);
@@ -174,7 +174,7 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--fast-climb] [--force]   pa
   if (occ) fail(`${dest} is occupied by ${s.creatures[occ].name}.`);
   if (c.hp <= 0 && c.side !== 'party') fail(`${c.name} is down.`);
   if (['grappled', 'restrained', 'paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k)) && !flags.force) fail(`${c.name} can't move (${c.conditions.map((x) => x.name).join(', ')}).`);
-  const path = C.findPath(s, id, dest, { jump: !!flags.jump, running: !!flags.running, fastClimb: !!flags['fast-climb'] });
+  const path = C.findPath(s, id, dest, { jump: !!(flags.jump || flags.vault), running: !!flags.running, fastClimb: !!flags['fast-climb'], vault: !!flags.vault });
   if (!path) fail(`No route from ${c.pos} to ${dest} (walls, enemies, or a ledge that can't be climbed). If a creative ruling allows it, use --force or "place".`);
   const ts = turnState(s, id);
   let budget = C.speedOf(c) * (ts.dash ? 2 : 1);
@@ -191,26 +191,35 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--fast-climb] [--force]   pa
       const { bonus } = abilityBonus(c, 'athletics');
       const r = C.d20();
       const ok = r.nat + bonus >= st.dc;
-      const what = st.kind === 'jump' ? `jump over ${st.over.join('/') || 'the low wall'} (${st.height} ft high)` : `climb ${Math.abs(st.rise)} ft at full speed`;
+      const what = st.kind === 'jump' ? `jump over ${st.over.join('/') || 'the low wall'} (${st.height} ft high)`
+        : st.kind === 'leap' ? `leap onto the ${st.rise}-ft ledge at ${st.to} and land on their feet`
+          : st.kind === 'grab' ? `haul up quickly after grabbing the lip of the ${st.rise}-ft ledge` : `climb ${Math.abs(st.rise)} ft at full speed`;
       events.push(`Athletics to ${what}: ${r.detail}${sign(bonus)} = ${r.nat + bonus} vs DC ${st.dc}: ${ok ? 'success' : 'FAIL'}.`);
-      if (!ok) { mishap = st; break; }
+      if (!ok) { mishap = st; if (st.kind !== 'jump') spent += st.cost; break; } // the attempt still used the movement
     } else if (st.kind === 'jump') events.push(`Jumps ${st.width} ft over ${st.over.join('/') || 'the low wall'}${st.running ? '' : ' (standing)'}.`);
+    else if (st.kind === 'leap') events.push(`Leaps up onto the ${st.rise}-ft ledge at ${st.to}.`);
+    else if (st.kind === 'grab') events.push(`Jumps, grabs the lip of the ${st.rise}-ft ledge and hauls up.`);
     else if (st.kind === 'climb') events.push(`Climbs ${st.rise > 0 ? 'up' : 'down'} ${Math.abs(st.rise)} ft.`);
     spent += st.cost;
     walked.push(...(st.over || []), st.to);
   }
   let landing = walked[walked.length - 1], fallText = '';
+  if (mishap && mishap.kind === 'leap') {
+    addCond(c, 'prone');
+    fallText = ` ${c.name} hits the face of the ledge and drops back to ${landing}, prone.`;
+  }
   if (mishap && mishap.kind === 'jump') {
     // trips into the first obstacle (or, over a chasm, falls in: the DM decides how far)
     const first = mishap.over[0];
     const fp = first && C.parseCell(first);
     if (first && !C.blocksMove(C.tagsAt(s, fp.x, fp.y))) { spent += 5; walked.push(first); landing = first; addCond(c, 'prone'); fallText = ` ${c.name} trips into the ${C.terrainName(s, fp.x, fp.y)} at ${first} and lands prone.`; }
-    else fallText = ` ${c.name} comes up short at ${landing}${first ? ` and goes over the edge into ${first}! DM: rule on the fall ("fall ${id} <cell> --feet N") or let them catch the edge` : ''}.`;
+    else if (!first) { addCond(c, 'prone'); fallText = ` ${c.name} clips the low wall and sprawls at ${landing}, prone.`; }
+    else fallText = ` ${c.name} comes up short at ${landing} and goes over the edge into ${first}! DM: rule on the fall ("fall ${id} <cell> --feet N") or let them catch the edge.`;
   }
   ts.used += spent;
   c.pos = landing;
-  if (mishap && mishap.kind === 'climb') {
-    // falls from the ledge to its foot: the lower of the two squares
+  if (mishap && (mishap.kind === 'climb' || mishap.kind === 'grab')) {
+    // falls from the ledge (or its lip) to its foot: the lower of the two squares
     const lower = mishap.rise > 0 ? landing : (C.occupant(s, C.parseCell(mishap.to).x, C.parseCell(mishap.to).y, id) ? landing : mishap.to);
     if (lower !== landing) walked.push(lower);
     fallText = ' ' + fallOn(s, id, Math.abs(mishap.rise), lower);

@@ -88,6 +88,7 @@
     },
     "wren": {
       "name": "Wren",
+      "size": "small",
       "side": "party",
       "controller": "llm",
       "pos": "K12",

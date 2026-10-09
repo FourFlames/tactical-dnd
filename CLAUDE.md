@@ -41,6 +41,8 @@ Plain actions map directly:
 | "I open the door" | `door door1 open` (`show` lists walls and doors by id) |
 | "I vault the crates" | `move rook F4 --jump` (add `--running` if they got a run-up earlier this turn) |
 | "I scramble up the ledge, fast" | `move rook L6 --fast-climb` (Athletics vs the climb DC; failure falls) |
+| "I jump for the ledge" | `move rook L6 --jump` (lands on it, or grabs the lip and hauls up; add `--fast-climb` for a quick haul) |
+| "I leap onto the ledge in one bound" | `move rook L6 --vault` (Athletics, DC 5 + 3 per foot over their high jump; failure drops them prone) |
 | "I jump down to the courtyard" | `fall rook L8` (no `--feet` needed when the map shows the drop) |
 
 Use `range a b` whenever you're unsure about distance, line of sight, or cover. It's free.
