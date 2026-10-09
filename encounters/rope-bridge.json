@@ -35,8 +35,8 @@
         { "name": "Longsword", "bonus": 5, "damage": "1d8+3", "type": "slashing", "reach": 5 },
         { "name": "Javelin", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [30, 120] }
       ],
-      "resources": { "secondWind": 1, "actionSurge": 1, "javelins": 3 },
-      "notes": "Human Fighter 3 (Champion: crits on 19-20). Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action."
+      "resources": { "secondWind": 1, "actionSurge": 1, "javelins": 3, "superiority": 4, "heroic inspiration": 1 },
+      "notes": "Human Fighter 3 (Battle Master). Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action."
     },
     "wren": {
       "name": "Wren", "side": "party", "controller": "llm", "pos": "K9",
