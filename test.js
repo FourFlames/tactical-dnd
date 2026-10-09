@@ -81,6 +81,48 @@ try {
   r = run('range', 'rook', 'vessa');
   expect('range reports height difference', /10 ft higher/.test(r.out), r.out);
 
+  // climbing, jumping, falling, and height in distance and sight
+  run('load', 'watchtower');
+  run('place', 'rook', 'L7');
+  r = run('move', 'rook', 'L6');
+  expect('climbing a 10-ft ledge costs double (5 + 5 parapet + 20)', r.ok && /\(30 ft/.test(r.out) && /Climbs up 10 ft/.test(r.out), r.out);
+  run('load', 'watchtower');
+  run('place', 'rook', 'L7');
+  r = run('move', 'rook', 'L6', '--fast-climb');
+  expect('fast climb rolls Athletics; failure falls', r.ok && (/success/.test(r.out) ? /\(20 ft/.test(r.out) : /falls 10 ft/.test(r.out)), r.out);
+  run('load', 'watchtower');
+  run('place', 'rook', 'I4');
+  r = run('move', 'rook', 'K4');
+  expect('stairs cost normal movement', r.ok && /\(10 ft/.test(r.out), r.out);
+  run('load', 'watchtower');
+  run('place', 'rook', 'A4');
+  r = run('move', 'rook', 'F4', '--jump');
+  expect('running long jump clears two crates', r.ok && /Jumps 10 ft over D4\/E4/.test(r.out), r.out);
+  run('load', 'watchtower');
+  run('place', 'rook', 'C4');
+  r = run('move', 'rook', 'F4', '--jump');
+  expect('standing jump is half as long', r.ok && !/Jumps/.test(r.out), r.out);
+  run('place', 'vessa', 'Q2');
+  run('place', 'wren', 'K5');
+  r = run('move', 'wren', 'M5', '--jump', '--running');
+  expect('low-Str jumper needs Athletics to clear a crate', r.ok && /Athletics to jump over L5 \(4 ft high\).*DC 12/.test(r.out), r.out);
+  run('load', 'watchtower');
+  run('place', 'rook', 'J6');
+  run('place', 'vessa', 'K6');
+  r = run('attack', 'rook', 'vessa', 'longsword');
+  expect('height counts toward reach', !r.ok && /10 ft away/.test(r.out), r.out);
+  run('load', 'watchtower');
+  run('place', 'vessa', 'N6');
+  r = run('range', 'vessa', 'rook');
+  const r2 = run('range', 'rook', 'vessa');
+  expect('parapet covers the defender, not the shooter leaning over it', !/cover/.test(r.out) && /cover \+2/.test(r2.out), r.out + ' | ' + r2.out);
+  r = run('fall', 'band1', 'P8', '--feet', '20');
+  expect('fall: 1d6 per 10 ft and prone', r.ok && /2d6/.test(r.out) && /prone/.test(r.out), r.out);
+  run('load', 'rope-bridge');
+  run('place', 'rook', 'E9');
+  r = run('move', 'rook', 'E4', '--jump');
+  expect('long jump across a 10-ft chasm', r.ok && /Jumps 10 ft over/.test(r.out), r.out);
+
   run('load', 'rope-bridge');
   r = run('initiative');
   expect('initiative starts round 1', r.ok && /Round 1/.test(r.out), r.out);

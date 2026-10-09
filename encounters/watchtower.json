@@ -2,6 +2,7 @@
   "name": "The Ruined Watchtower",
   "intro": "Wind hisses through the broken courtyard of an old watchtower. Above you, on the tower's raised stone floor, a brazier smokes between two pillars, and someone up there is laughing.",
   "dmNotes": "Vessa holds the tower platform (10 ft up, low parapet = half cover) and shoots from behind it; she only comes down the stairs (J4-J5) if a PC reaches them. The guardhouse bandit (band2) shoots through the window (G9-G10) and slips out the SECRET door (secret1, west wall B10-B11) to flank once the party is in the courtyard. band3 is hidden behind the crates at C5. The brazier at N3 can be kicked off the platform edge onto the crates at L5 (flammable cover goes up). Bandits surrender when Vessa drops; Vessa parleys if she drops below half HP and her crew is down.",
+  "climbDC": 13,
   "legend": {
     ".": { "name": "flagstones", "tags": [] },
     "g": { "name": "grass", "tags": [] },

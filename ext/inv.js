@@ -51,7 +51,7 @@ module.exports = {
       const t = who(toId), n = count(raw);
       if (t === c) fail('Cannot give to yourself.');
       if (!c.pos || !t.pos) fail('Both creatures must be on the map to hand items over.');
-      if (C.distFeet(C.parseCell(c.pos), C.parseCell(t.pos)) > 5) fail(`${t.name} must be within 5 ft to hand items over.`);
+      if (C.distFeet(C.at(s, c), C.at(s, t)) > 5) fail(`${t.name} must be within 5 ft to hand items over.`);
       // A corpse (non-party at 0 HP) can be looted this way; a living giver must be able to act.
       const corpse = c.hp <= 0 && c.side !== 'party';
       const stuck = ['unconscious', 'incapacitated', 'paralyzed', 'stunned', 'petrified'].filter((k) => hasCond(c, k));
