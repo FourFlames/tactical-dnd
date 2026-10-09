@@ -6,6 +6,12 @@
 <title>Battlemap</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+SC:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
 <style>
   :root {
     --bg: #14130f;
@@ -43,12 +49,18 @@
   .toggle a.dm.on { color: var(--secret); }
   .mapwrap { flex: 1; min-height: 360px; display: flex; align-items: center; justify-content: center; }
   svg.map { width: 100%; height: 100%; max-height: calc(100vh - 110px); }
+  .map3d { width: 100%; height: 100%; min-height: 360px; border-radius: 8px; overflow: hidden; cursor: grab; }
+  .map3d:active { cursor: grabbing; }
+  .tools { display: flex; gap: 6px; }
+  .tools button { background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-dim); font: 12px var(--sans); letter-spacing: .06em; text-transform: uppercase; padding: 5px 12px; cursor: pointer; }
+  .tools button:hover, .tools button.on { background: var(--panel-2); color: var(--ink); }
   @media (max-width: 900px) {
     .stage { padding: 14px 16px 8px; }
     .topbar { flex-wrap: wrap; gap: 8px 12px; }
     .title { font-size: 22px; }
     .mapwrap { min-height: 0; }
     svg.map { height: auto; }
+    .map3d { height: 62vh; }
   }
   .hover { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); height: 18px; margin-top: 6px; }
   .hover b { color: var(--ink); font-weight: 500; }
@@ -103,9 +115,17 @@
       <h1 class="title" id="title">Battlemap</h1>
       <span class="round" id="round"></span>
       <span class="spacer"></span>
+      <div class="tools" id="tools3d" hidden>
+        <button id="bWalls" title="Cut walls down so you can see inside">Low walls</button>
+        <button id="bCam" title="Reset the camera">Reset view</button>
+      </div>
       <div class="toggle">
-        <a href="/" id="tPlayer">Player</a>
-        <a href="/?dm" id="tDm" class="dm">DM</a>
+        <a id="t2d">2D</a>
+        <a id="t3d">3D</a>
+      </div>
+      <div class="toggle">
+        <a id="tPlayer">Player</a>
+        <a id="tDm" class="dm">DM</a>
       </div>
     </div>
     <div class="mapwrap" id="mapwrap"></div>
@@ -120,10 +140,18 @@
 </div>
 <script>
 const DM = new URLSearchParams(location.search).has('dm');
+const THREE_D = new URLSearchParams(location.search).has('3d');
+const href = (dm, td) => '/' + ([dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c));
+document.getElementById('tPlayer').href = href(false, THREE_D);
+document.getElementById('tDm').href = href(true, THREE_D);
+document.getElementById('t2d').href = href(DM, false);
+document.getElementById('t3d').href = href(DM, true);
 document.getElementById(DM ? 'tDm' : 'tPlayer').classList.add('on');
+document.getElementById(THREE_D ? 't3d' : 't2d').classList.add('on');
 const CELL = 48;
 const NS = 'http://www.w3.org/2000/svg';
 let state = null, selected = null, lastLogLen = 0, svg = null, tokLayer = null, fxLayer = null;
+let map3d = null, map3dLoading = null, map3dError = null;
 
 const SIDE_COLOR = { party: 'var(--party)', enemy: 'var(--enemy)', neutral: 'var(--neutral)' };
 const el = (tag, attrs = {}, parent) => {
@@ -142,6 +170,9 @@ function terrainStyle(cell) {
   if (t.includes('bridge')) return { fill: '#5a4027', planks: true };
   if (t.includes('water')) return { fill: '#1f3a44' };
   if (cell.ch === 'o' || t.includes('slick')) return { fill: '#26241c', oil: true };
+  const name = (cell.terrain || '').toLowerCase();
+  if (/grass|meadow|lawn/.test(name)) return { fill: '#26301c' };
+  if (/dirt|mud|earth|sand|path/.test(name)) return { fill: '#2f281d' };
   return { fill: 'var(--floor)' };
 }
 
@@ -173,15 +204,49 @@ function buildSvg(v) {
   svg.addEventListener('mousemove', (e) => {
     const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    const x = Math.floor(p.x / CELL), y = Math.floor(p.y / CELL);
-    const h = document.getElementById('hover');
-    if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) { h.textContent = ''; return; }
-    const c = state.cells[y][x];
-    const id = String.fromCharCode(65 + x) + (y + 1);
-    h.innerHTML = c.fog === 'unknown' ? `<b>${id}</b> · unexplored` : `<b>${id}</b> · ${esc(c.terrain)}${c.tags.length ? ' · ' + c.tags.map(esc).join(', ') : ''}${c.fog === 'remembered' ? ' · out of sight' : ''}`;
+    hoverCell(Math.floor(p.x / CELL), Math.floor(p.y / CELL));
   });
   svg.addEventListener('mouseleave', () => (document.getElementById('hover').textContent = ''));
   wrap.appendChild(svg);
+}
+
+function hoverCell(x, y) {
+  const h = document.getElementById('hover');
+  if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) { h.textContent = ''; return; }
+  const c = state.cells[y][x];
+  const id = String.fromCharCode(65 + x) + (y + 1);
+  if (c.fog === 'unknown') { h.innerHTML = `<b>${id}</b> · unexplored`; return; }
+  const bits = [esc(c.terrain)];
+  if (c.h) bits.push(`${c.h} ft up`);
+  if (c.obj && c.obj.name !== c.terrain) bits.push(`${esc(c.obj.name)} (${c.obj.height} ft)`);
+  if (c.tags.length) bits.push(c.tags.map(esc).join(', '));
+  if (c.fog === 'remembered') bits.push('out of sight');
+  h.innerHTML = `<b>${id}</b> · ${bits.join(' · ')}`;
+}
+
+// Walls along grid lines: thick stone lines; doors, windows, low walls and secret doors styled apart.
+function drawWalls(v, g) {
+  for (const w of v.walls || []) {
+    const x1 = w.x1 * CELL, y1 = w.y1 * CELL, x2 = w.x2 * CELL, y2 = w.y2 * CELL;
+    const line = (attrs) => el('line', Object.assign({ x1, y1, x2, y2, 'stroke-linecap': 'square' }, attrs), g);
+    if (w.kind === 'door') {
+      line({ stroke: '#0e0d0a', 'stroke-width': 7 });
+      if (w.open) {
+        // leaf swung open from the first vertex
+        const len = Math.hypot(x2 - x1, y2 - y1), vert = x1 === x2;
+        el('line', { x1, y1, x2: x1 + (vert ? len * .8 : 0), y2: y1 + (vert ? 0 : len * .8), stroke: '#8a5f34', 'stroke-width': 4 }, g);
+      } else line({ stroke: w.hidden ? 'var(--secret)' : '#8a5f34', 'stroke-width': 4, 'stroke-dasharray': w.hidden ? '5 4' : null });
+    } else if (w.kind === 'window') {
+      line({ stroke: '#0e0d0a', 'stroke-width': 7 });
+      line({ stroke: '#9fb7c4', 'stroke-width': 2 });
+    } else if (w.kind === 'low') {
+      line({ stroke: '#0e0d0a', 'stroke-width': 5, opacity: .7 });
+      line({ stroke: '#8c867a', 'stroke-width': 2.5, 'stroke-dasharray': '3 4' });
+    } else {
+      line({ stroke: '#0e0d0a', 'stroke-width': 8 });
+      line({ stroke: w.hidden ? 'var(--secret)' : '#6d675d', 'stroke-width': 4 });
+    }
+  }
 }
 
 function drawTerrain(v) {
@@ -201,11 +266,17 @@ function drawTerrain(v) {
       el('circle', { cx: X + CELL / 2, cy: Y + CELL / 2, r: CELL * .7, fill: 'url(#glow)', class: 'burning' }, g);
       el('circle', { cx: X + CELL / 2, cy: Y + CELL / 2, r: CELL * .22, fill: '#3a2f25', stroke: '#8a6a3f', 'stroke-width': 2 }, g);
     }
-    if (c.ch === 'c') { el('rect', { x: X + 7, y: Y + 7, width: CELL - 14, height: CELL - 14, fill: '#6b4e2e', stroke: '#3c2b19', 'stroke-width': 2, rx: 2 }, g); el('path', { d: `M${X + 7} ${Y + 7} L${X + CELL - 7} ${Y + CELL - 7} M${X + CELL - 7} ${Y + 7} L${X + 7} ${Y + CELL - 7}`, stroke: '#3c2b19', 'stroke-width': 1.5 }, g); }
-    if (c.ch === ',' ) for (const [dx, dy, r] of [[.3, .35, 5], [.62, .3, 4], [.5, .65, 6], [.25, .7, 3], [.75, .7, 4]]) el('circle', { cx: X + dx * CELL, cy: Y + dy * CELL, r, fill: '#4a463b' }, g);
+    const ok = c.obj && c.obj.kind;
+    if (ok === 'barrel') for (const [dx, dy] of [[.36, .38], [.64, .42], [.48, .66]]) { el('circle', { cx: X + dx * CELL, cy: Y + dy * CELL, r: 8, fill: '#7a5330', stroke: '#3d3b39', 'stroke-width': 2 }, g); }
+    if (ok === 'pillar') { el('circle', { cx: X + CELL / 2, cy: Y + CELL / 2, r: CELL * .36, fill: '#6d675d', stroke: '#2a2822', 'stroke-width': 3 }, g); }
+    if (ok === 'tree') { el('circle', { cx: X + CELL / 2, cy: Y + CELL / 2, r: CELL * .62, fill: '#2f4a22', opacity: .85 }, g); el('circle', { cx: X + CELL / 2, cy: Y + CELL / 2, r: CELL * .12, fill: '#5a4430' }, g); }
+    if (c.h) { const t = el('text', { x: X + CELL - 3, y: Y + CELL - 4, 'text-anchor': 'end', fill: 'var(--ink-faint)', 'font-family': 'IBM Plex Mono', 'font-size': 9 }, g); t.textContent = `${c.h}′`; }
+    if (c.ch === 'c' || ok === 'crate') { el('rect', { x: X + 7, y: Y + 7, width: CELL - 14, height: CELL - 14, fill: '#6b4e2e', stroke: '#3c2b19', 'stroke-width': 2, rx: 2 }, g); el('path', { d: `M${X + 7} ${Y + 7} L${X + CELL - 7} ${Y + CELL - 7} M${X + CELL - 7} ${Y + 7} L${X + 7} ${Y + CELL - 7}`, stroke: '#3c2b19', 'stroke-width': 1.5 }, g); }
+    if (ok === 'rubble' || (c.ch === ',' && /rubble/i.test(c.terrain))) for (const [dx, dy, r] of [[.3, .35, 5], [.62, .3, 4], [.5, .65, 6], [.25, .7, 3], [.75, .7, 4]]) el('circle', { cx: X + dx * CELL, cy: Y + dy * CELL, r, fill: '#4a463b' }, g);
     if (c.tags.includes('burning')) el('rect', { x: X, y: Y, width: CELL, height: CELL, fill: 'url(#glow)', class: 'burning' }, g);
     if (c.fog === 'remembered') el('rect', { x: X, y: Y, width: CELL, height: CELL, fill: '#0c0b09', opacity: .58 }, fog);
   }
+  drawWalls(v, g);
 }
 
 function tokenLabels(v) {
@@ -285,7 +356,7 @@ function drawSide(v) {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.innerHTML = v.log.map((e) => `<div class="entry ${e.type}">${e.type === 'turn' ? '' : `<span class="r">R${e.round}</span>`}${esc(e.text)}</div>`).join('');
   if (atBottom || v.log.length !== lastLogLen) log.scrollTop = log.scrollHeight;
-  if (v.log.length !== lastLogLen) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
+  if (v.log.length !== lastLogLen && !THREE_D) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
   lastLogLen = v.log.length;
 }
 
@@ -304,11 +375,38 @@ function select(id) { selected = selected === id ? null : id; render(); }
 
 function render() {
   if (!state) return;
-  if (state.empty) { document.getElementById('mapwrap').innerHTML = '<div class="empty">No encounter loaded.<br><code>node engine.js load rope-bridge</code></div>'; return; }
+  if (state.empty) { document.getElementById('mapwrap').innerHTML = '<div class="empty">No encounter loaded.<br><code>node engine.js load rope-bridge</code></div>'; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
+  if (THREE_D) { render3d(); drawSide(state); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
   if (!svg || svg.dataset.key !== key) { buildSvg(state); svg.dataset.key = key; }
   drawTerrain(state); drawTokens(state); drawSide(state);
 }
+
+// The 3D map loads three.js from a CDN on first use; the 2D map never needs it.
+function render3d() {
+  document.getElementById('tools3d').hidden = false;
+  if (map3dError) return;
+  if (!map3d) {
+    if (!map3dLoading) {
+      const wrap = document.getElementById('mapwrap');
+      wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
+      map3dLoading = import('/viewer/map3d.js').then((m) => {
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: select, onHover: hoverCell });
+        render();
+      }).catch((e) => {
+        map3dError = e;
+        wrap.innerHTML = `<div class="empty">The 3D map couldn't load (it fetches three.js from the internet).<br><code>${esc(e.message)}</code><br><a href="${href(DM, false)}" style="color:var(--gold)">Back to 2D</a></div>`;
+      });
+    }
+    return;
+  }
+  map3d.update(state, { selected });
+}
+document.getElementById('bWalls').addEventListener('click', (e) => {
+  e.currentTarget.classList.toggle('on');
+  if (map3d) map3d.setWallsLow(e.currentTarget.classList.contains('on'));
+});
+document.getElementById('bCam').addEventListener('click', () => map3d && map3d.resetCamera());
 
 async function refresh() {
   try {

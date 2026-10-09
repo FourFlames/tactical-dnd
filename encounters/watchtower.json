@@ -1,0 +1,194 @@
+{
+  "name": "The Ruined Watchtower",
+  "intro": "Wind hisses through the broken courtyard of an old watchtower. Above you, on the tower's raised stone floor, a brazier smokes between two pillars, and someone up there is laughing.",
+  "dmNotes": "Vessa holds the tower platform (10 ft up, low parapet = half cover) and shoots from behind it; she only comes down the stairs (J4-J5) if a PC reaches them. The guardhouse bandit (band2) shoots through the window (G9-G10) and slips out the SECRET door (secret1, west wall B10-B11) to flank once the party is in the courtyard. band3 is hidden behind the crates at C5. The brazier at N3 can be kicked off the platform edge onto the crates at L5 (flammable cover goes up). Bandits surrender when Vessa drops; Vessa parleys if she drops below half HP and her crew is down.",
+  "climbDC": 13,
+  "legend": {
+    ".": { "name": "flagstones", "tags": [] },
+    "g": { "name": "grass", "tags": [] },
+    ",": { "name": "packed dirt", "tags": [] },
+    "s": { "name": "stone stairs", "tags": ["stairs"] },
+    "~": { "name": "rain pool", "tags": ["water"], "depth": 3 },
+    "c": {
+      "name": "crates",
+      "tags": ["difficult", "cover-half", "climbable", "flammable"],
+      "object": { "kind": "crate", "height": 4 }
+    },
+    "b": { "name": "barrels", "tags": ["difficult", "cover-half", "flammable"], "object": { "kind": "barrel", "height": 4 } },
+    "r": { "name": "rubble", "tags": ["difficult", "cover-half"], "object": { "kind": "rubble", "height": 2 } },
+    "P": { "name": "stone pillar", "tags": ["impassable", "opaque"], "object": { "kind": "pillar", "height": 15 } },
+    "B": {
+      "name": "brazier",
+      "tags": ["impassable", "fire-source", "cover-half", "can-topple"],
+      "object": { "kind": "brazier", "height": 3 }
+    },
+    "t": {
+      "name": "old oak",
+      "tags": ["impassable", "cover-half", "climbable"],
+      "object": { "kind": "tree", "height": 25, "stand": false }
+    }
+  },
+  "rows": [
+    "gtgggggggg........",
+    "ggggg,,ggg.P....P.",
+    "gg.......g...B....",
+    "g..cc....s........",
+    "g......~~s.c......",
+    "g......~~g........",
+    "g.....rr.ggggggggg",
+    "g..........gtggggg",
+    "g.....c....,,ggggg",
+    "g.b...........gggg",
+    "g.b...,,.......ggt",
+    "ggggg,,.....gggggg"
+  ],
+  "heights": [
+    "..........22222222",
+    "..........22222222",
+    "..........22222222",
+    ".........122222222",
+    ".........122222222",
+    "..........22222222"
+  ],
+  "walls": [
+    "B8-D8",
+    { "id": "door1", "kind": "door", "from": "D8", "to": "E8" },
+    "E8-G8",
+    "B8-B10",
+    { "id": "secret1", "kind": "door", "from": "B10", "to": "B11", "hidden": true },
+    "B11-B12",
+    "B12-G12",
+    "G8-G9",
+    { "id": "win1", "kind": "window", "from": "G9", "to": "G10" },
+    "G10-G12",
+    { "kind": "low", "from": "B7", "to": "F7" },
+    { "kind": "low", "from": "K7", "to": "S7" },
+    { "kind": "low", "from": "K1", "to": "K4" },
+    { "kind": "low", "from": "K6", "to": "K7" }
+  ],
+  "creatures": {
+    "rook": {
+      "name": "Rook",
+      "side": "party",
+      "controller": "player",
+      "pos": "H12",
+      "hp": 28,
+      "ac": 18,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": { "str": 16, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10 },
+      "saves": { "str": 5, "con": 4 },
+      "skills": { "athletics": 5, "perception": 3, "intimidation": 2 },
+      "attacks": [
+        { "name": "Longsword", "bonus": 5, "damage": "1d8+3", "type": "slashing", "reach": 5 },
+        { "name": "Javelin", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [30, 120] }
+      ],
+      "resources": { "secondWind": 1, "actionSurge": 1, "javelins": 3, "superiority": 4, "heroic inspiration": 1 },
+      "notes": "Human Fighter 3 (Battle Master). Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action."
+    },
+    "wren": {
+      "name": "Wren",
+      "size": "small",
+      "side": "party",
+      "controller": "llm",
+      "pos": "K12",
+      "hp": 20,
+      "ac": 14,
+      "speed": 25,
+      "stats": { "str": 8, "dex": 16, "con": 12, "int": 13, "wis": 12, "cha": 14 },
+      "saves": { "dex": 5, "int": 3 },
+      "skills": { "stealth": 7, "acrobatics": 5, "sleight-of-hand": 5, "perception": 3, "deception": 4 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [80, 320] },
+        { "name": "Shortsword", "bonus": 5, "damage": "1d6+3", "type": "piercing", "reach": 5 }
+      ],
+      "resources": { "arrows": 20 },
+      "notes": "Halfling Rogue 3. Sneak Attack +2d6 once per turn with advantage or an ally adjacent to the target (use --extra 2d6). Cunning Action: bonus-action Dash, Disengage, or Hide.",
+      "persona": "Wiry, sardonic, allergic to fair fights. Prefers high ground, flanks, and anything involving fire. Will loot mid-combat if she thinks nobody's looking."
+    },
+    "ash": {
+      "name": "Brother Ash",
+      "side": "party",
+      "controller": "llm",
+      "pos": "I12",
+      "hp": 27,
+      "ac": 18,
+      "speed": 25,
+      "stats": { "str": 14, "dex": 10, "con": 14, "int": 10, "wis": 16, "cha": 12 },
+      "saves": { "wis": 5, "cha": 3 },
+      "skills": { "medicine": 5, "insight": 5, "religion": 2 },
+      "attacks": [
+        { "name": "Mace", "bonus": 4, "damage": "1d6+2", "type": "bludgeoning", "reach": 5 },
+        { "name": "Spiritual Weapon", "bonus": 5, "damage": "1d8+3", "type": "force", "range": [60, 60] }
+      ],
+      "resources": { "slots1": 4, "slots2": 2 },
+      "notes": "Dwarf Life Cleric 3. Sacred Flame (cantrip): target in 60 ft makes DC 13 DEX save or takes 1d8 radiant (use: damage <id> 1d8 radiant --save dex --dc 13). Spells: Bless, Cure Wounds, Healing Word, Shield of Faith, Spiritual Weapon (2nd, bonus action), Hold Person (2nd, DC 13 WIS). Life domain: healing spells add 2 + spell level.",
+      "persona": "Gravelly, patient, deeply suspicious of bridges. Keeps everyone alive first, smites second. Quotes scripture nobody else has heard of."
+    },
+    "vessa": {
+      "name": "Vessa",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "N5",
+      "hp": 32,
+      "ac": 15,
+      "speed": 30,
+      "stats": { "str": 14, "dex": 16, "con": 14, "int": 12, "wis": 11, "cha": 14 },
+      "skills": { "athletics": 4, "deception": 4 },
+      "attacks": [
+        { "name": "Light Crossbow", "bonus": 5, "damage": "1d8+3", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 5, "damage": "1d6+3", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Bandit captain. Multiattack: two scimitar attacks or two crossbow shots per Attack action. Parry (reaction): +2 AC against one melee hit. Proud, mercenary, will deal."
+    },
+    "band1": {
+      "name": "Bandit",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "P5",
+      "hp": 11,
+      "ac": 12,
+      "speed": 30,
+      "stats": { "str": 11, "dex": 12, "con": 12, "int": 10, "wis": 10, "cha": 10 },
+      "skills": { "stealth": 3 },
+      "attacks": [
+        { "name": "Light Crossbow", "bonus": 3, "damage": "1d8+1", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 3, "damage": "1d6+1", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Stays at the parapet with Vessa."
+    },
+    "band2": {
+      "name": "Bandit",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "E10",
+      "hp": 11,
+      "ac": 12,
+      "speed": 30,
+      "stats": { "str": 11, "dex": 12, "con": 12, "int": 10, "wis": 10, "cha": 10 },
+      "skills": { "stealth": 3 },
+      "attacks": [
+        { "name": "Light Crossbow", "bonus": 3, "damage": "1d8+1", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 3, "damage": "1d6+1", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Shoots through the guardhouse window, then uses the secret door."
+    },
+    "band3": {
+      "name": "Bandit",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "C5",
+      "hp": 11,
+      "ac": 12,
+      "speed": 30,
+      "stats": { "str": 11, "dex": 12, "con": 12, "int": 10, "wis": 10, "cha": 10 },
+      "skills": { "stealth": 3 },
+      "attacks": [
+        { "name": "Light Crossbow", "bonus": 3, "damage": "1d8+1", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 3, "damage": "1d6+1", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Hidden behind the crates. Ambushes whoever comes close.",
+      "hidden": true
+    }
+  }
+}

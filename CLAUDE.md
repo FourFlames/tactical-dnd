@@ -38,8 +38,16 @@ Plain actions map directly:
 | "Second Wind" | `heal rook 1d10+3` (and decrement the resource in your head; mention it) |
 | "I hide behind the crates" | `check wren stealth 12`, then `hide wren` on success |
 | Sacred Flame on the goblin | `damage gob2 1d8 radiant --save dex --dc 13` |
+| "I open the door" | `door door1 open` (`show` lists walls and doors by id) |
+| "I vault the crates" | `move rook F4 --jump` (add `--running` if they got a run-up earlier this turn) |
+| "I scramble up the ledge, fast" | `move rook L6 --fast-climb` (Athletics vs the climb DC; failure falls) |
+| "I jump for the ledge" | `move rook L6 --jump` (lands on it, or grabs the lip and hauls up; add `--fast-climb` for a quick haul) |
+| "I leap onto the ledge in one bound" | `move rook L6 --vault` (Athletics, DC 5 + 3 per foot over their high jump; failure drops them prone) |
+| "I jump down to the courtyard" | `fall rook L8` (no `--feet` needed when the map shows the drop) |
 
 Use `range a b` whenever you're unsure about distance, line of sight, or cover. It's free.
+
+Some maps have height (`show` prints creatures as `N5@10ft`) and walls along grid lines (listed under the map). The engine handles both: distance and reach count height, climbing ledges costs double, stairs don't, line of sight and cover are traced in 3D, and falls deal 1d6 per 10 ft. High ground gives no bonus to hit, only better angles past cover. If a player wants to jump or climb fast, use the flags above; anything stranger (swinging from a rope, catching a ledge) is a ruling.
 
 Movement is pathed: the engine routes around walls and enemies and charges double for difficult terrain. If it says the creature can't make it, tell the player how far they *can* get, or suggest a dash.
 

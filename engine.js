@@ -64,6 +64,30 @@ function applyDamage(s, id, amount, type) {
   }
   return { amt, text: `${c.name} takes ${amt}${t ? ' ' + t : ''} damage${note} (${c.hp}/${c.maxHp}).${status}` };
 }
+// Falling (PHB): 1d6 bludgeoning per full 10 ft, max 20d6, and the creature lands prone if it
+// takes damage. Water breaks the fall: damage is halved, and an Athletics or Acrobatics check
+// (DC 10 + 1 per 10 ft fallen) to hit the water cleanly cuts it to a quarter.
+function fallOn(s, id, feet, landing) {
+  const c = who(s, id);
+  if (landing) c.pos = landing;
+  delete c.z;
+  const p = C.parseCell(c.pos);
+  const dice = Math.min(20, Math.floor(Math.max(0, feet) / 10));
+  if (!dice) return `${c.name} drops ${feet} ft to ${c.pos} without harm.`;
+  const r = C.roll(`${dice}d6`);
+  let amt = r.total, note = '';
+  if (C.tagsAt(s, p.x, p.y).includes('water')) {
+    const ath = abilityBonus(c, 'athletics').bonus, acr = abilityBonus(c, 'acrobatics').bonus;
+    const b = Math.max(ath, acr), d = C.d20(), dc = 10 + Math.floor(feet / 10);
+    const ok = d.nat + b >= dc;
+    note = ` Into the water: half damage, and ${ath >= acr ? 'Athletics' : 'Acrobatics'} ${d.detail}${sign(b)} = ${d.nat + b} vs DC ${dc}: ${ok ? 'a clean entry, a quarter' : 'a rough landing'}.`;
+    amt = Math.floor(amt / (ok ? 4 : 2));
+  }
+  const res = applyDamage(s, id, amt, 'bludgeoning');
+  if (res.amt > 0) addCond(c, 'prone');
+  return `${c.name} falls ${feet} ft to ${c.pos}: ${dice}d6 ${r.detail} = ${r.total}.${note} ${res.text}${res.amt > 0 ? ' Lands prone.' : ''}`;
+}
+
 function addCond(c, name, rounds) {
   c.conditions = (c.conditions || []).filter((x) => x.name !== name);
   c.conditions.push(rounds ? { name, rounds: Number(rounds) } : { name });
@@ -81,6 +105,7 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
   enc.height = enc.rows.length; enc.width = enc.rows[0].length;
   enc.round = 0; enc.turnOrder = []; enc.turnIdx = 0; enc.turn = {}; enc.explored = []; enc.tagOverrides = {};
   for (const [id, c] of Object.entries(enc.creatures)) { c.maxHp = c.maxHp || c.hp; c.conditions = c.conditions || []; c.id = id; }
+  C.wallSegments(enc); // throws on a malformed wall
   if (fs.existsSync(C.LOG)) fs.unlinkSync(C.LOG);
   C.saveState(enc);
   C.appendLog(enc, 'scene', enc.intro || `Encounter: ${enc.name}`);
@@ -105,12 +130,15 @@ cmd('show', 'show [--player]                    ASCII battlemap + creature table
   });
   out += '\nLegend: ' + Object.entries(s.legend).map(([k, l]) => `${k}=${l.name}`).join('  ') + '   Tokens: first letter of id (UPPER=party, lower=others)\n';
   const ov = Object.entries(s.tagOverrides || {}).filter(([, o]) => (o.add || []).length || (o.remove || []).length);
+  const walls = C.wallSegments(s).filter((w) => !flags.player || v.walls.some((x) => x.from === w.from && x.to === w.to));
+  if (walls.length) out += 'Walls (along grid lines): ' + walls.map((w) => `${w.id ? w.id + ' ' : ''}${w.from}-${w.to}${w.kind !== 'wall' ? ' ' + w.kind : ''}${w.kind === 'door' ? (w.open ? ' (open)' : ' (closed)') : ''}${w.hidden ? ' (secret)' : ''}`).join(', ') + '\n';
   if (ov.length) out += 'Terrain changes: ' + ov.map(([k, o]) => `${k}:+${(o.add || []).join('+')}${(o.remove || []).length ? ' -' + o.remove.join('-') : ''}`).join('  ') + '\n';
   out += '\n';
   for (const c of Object.values(v.creatures)) {
     const conds = c.conditions.map((x) => x.name + (x.rounds ? `(${x.rounds})` : '')).join(',');
     const hp = c.hp !== undefined ? `${c.hp}/${c.maxHp} AC${c.ac}` : c.health;
-    out += `${c.id.padEnd(10)} ${c.name.padEnd(16)} ${c.side.padEnd(7)} ${c.pos.padEnd(4)} ${hp}${conds ? ' [' + conds + ']' : ''}${c.hidden ? ' (hidden)' : ''}\n`;
+    const pos = c.elev ? `${c.pos}@${c.elev}ft` : c.pos;
+    out += `${c.id.padEnd(10)} ${c.name.padEnd(16)} ${c.side.padEnd(7)} ${pos.padEnd(4)} ${hp}${conds ? ' [' + conds + ']' : ''}${c.hidden ? ' (hidden)' : ''}\n`;
   }
   if (s.turnOrder && s.turnOrder.length) out += `\nRound ${s.round}, turn: ${s.turnOrder[s.turnIdx]}  order: ${s.turnOrder.join(' > ')}`;
   console.log(out);
@@ -124,16 +152,18 @@ cmd('status', 'status <id>                        full sheet for one creature', 
   return null;
 });
 
-cmd('range', 'range <a> <b|cell>                  distance, line of sight, cover', (s, { pos }) => {
+cmd('range', 'range <a> <b|cell>                  distance (height included), line of sight, cover', (s, { pos }) => {
   need(s);
-  const a = C.parseCell(who(s, pos[0]).pos);
-  const b = C.parseCell(s.creatures[pos[1]] ? s.creatures[pos[1]].pos : pos[1]);
+  const a = C.at(s, who(s, pos[0]));
+  const b = s.creatures[pos[1]] ? C.at(s, s.creatures[pos[1]]) : (() => { const p = C.parseCell(pos[1]); return Object.assign(p, { z: C.elevAt(s, p.x, p.y) }); })();
   const cov = C.coverBetween(s, a, b);
-  console.log(`${C.distFeet(a, b)} ft, line of sight: ${C.hasLOS(s, a, b) ? 'yes' : 'NO'}${cov ? `, cover +${cov} AC` : ''}`);
+  const rise = b.z - a.z;
+  const height = rise ? `, target is ${Math.abs(rise)} ft ${rise > 0 ? 'higher' : 'lower'}` : '';
+  console.log(`${C.distFeet(a, b)} ft, line of sight: ${C.hasLOS(s, a, b) ? 'yes' : 'NO'}${cov ? `, cover +${cov} AC` : ''}${height}`);
   return null;
 });
 
-cmd('move', 'move <id> <cell> [--force]          pathed move; checks speed, walls, enemies, difficult terrain; warns on opportunity attacks', (s, { pos, flags }) => {
+cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--force]   pathed move; checks speed, walls, enemies, difficult terrain, climbing; warns on opportunity attacks', (s, { pos, flags }) => {
   need(s);
   const id = pos[0], c = who(s, id);
   const dest = C.cellId(C.parseCell(pos[1]).x, C.parseCell(pos[1]).y);
@@ -144,38 +174,96 @@ cmd('move', 'move <id> <cell> [--force]          pathed move; checks speed, wall
   if (occ) fail(`${dest} is occupied by ${s.creatures[occ].name}.`);
   if (c.hp <= 0 && c.side !== 'party') fail(`${c.name} is down.`);
   if (['grappled', 'restrained', 'paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k)) && !flags.force) fail(`${c.name} can't move (${c.conditions.map((x) => x.name).join(', ')}).`);
-  const path = C.findPath(s, id, dest);
-  if (!path) fail(`No route from ${c.pos} to ${dest} (walls or enemies in the way). If a creative ruling allows it, use --force or "place".`);
+  const path = C.findPath(s, id, dest, { jump: !!(flags.jump || flags.vault), running: !!flags.running, fastClimb: !!flags['fast-climb'], vault: !!flags.vault });
+  if (!path) fail(`No route from ${c.pos} to ${dest} (walls, enemies, or a ledge that can't be climbed). If a creative ruling allows it, use --force or "place".`);
   const ts = turnState(s, id);
   let budget = C.speedOf(c) * (ts.dash ? 2 : 1);
   if (hasCond(c, 'prone')) budget = Math.floor(budget / 2);
   const left = budget - ts.used;
   if (path.cost > left && !flags.force) fail(`${c.name} needs ${path.cost} ft to reach ${dest} but has ${left} ft left this turn${ts.dash ? '' : ' (could dash)'}.`);
-  // opportunity attacks: leaving a hostile's reach
+  // Walk the path, rolling for risky climbs and jumps as they come; a failure stops the move.
+  const from = c.pos;
+  const walked = [from];
+  const events = [];
+  let spent = 0, mishap = null;
+  for (const st of path.steps) {
+    if (st.check) {
+      const { bonus } = abilityBonus(c, 'athletics');
+      const r = C.d20();
+      const ok = r.nat + bonus >= st.dc;
+      const what = st.kind === 'jump' ? `jump over ${st.over.join('/') || 'the low wall'} (${st.height} ft high)`
+        : st.kind === 'leap' ? `leap onto the ${st.rise}-ft ledge at ${st.to} and land on their feet`
+          : st.kind === 'grab' ? `haul up quickly after grabbing the lip of the ${st.rise}-ft ledge` : `climb ${Math.abs(st.rise)} ft at full speed`;
+      events.push(`Athletics to ${what}: ${r.detail}${sign(bonus)} = ${r.nat + bonus} vs DC ${st.dc}: ${ok ? 'success' : 'FAIL'}.`);
+      if (!ok) { mishap = st; if (st.kind !== 'jump') spent += st.cost; break; } // the attempt still used the movement
+    } else if (st.kind === 'jump') events.push(`Jumps ${st.width} ft over ${st.over.join('/') || 'the low wall'}${st.running ? '' : ' (standing)'}.`);
+    else if (st.kind === 'leap') events.push(`Leaps up onto the ${st.rise}-ft ledge at ${st.to}.`);
+    else if (st.kind === 'grab') events.push(`Jumps, grabs the lip of the ${st.rise}-ft ledge and hauls up.`);
+    else if (st.kind === 'climb') events.push(`Climbs ${st.rise > 0 ? 'up' : 'down'} ${Math.abs(st.rise)} ft.`);
+    spent += st.cost;
+    walked.push(...(st.over || []), st.to);
+  }
+  let landing = walked[walked.length - 1], fallText = '';
+  if (mishap && mishap.kind === 'leap') {
+    addCond(c, 'prone');
+    fallText = ` ${c.name} hits the face of the ledge and drops back to ${landing}, prone.`;
+  }
+  if (mishap && mishap.kind === 'jump') {
+    // trips into the first obstacle (or, over a chasm, falls in: the DM decides how far)
+    const first = mishap.over[0];
+    const fp = first && C.parseCell(first);
+    if (first && !C.blocksMove(C.tagsAt(s, fp.x, fp.y))) { spent += 5; walked.push(first); landing = first; addCond(c, 'prone'); fallText = ` ${c.name} trips into the ${C.terrainName(s, fp.x, fp.y)} at ${first} and lands prone.`; }
+    else if (!first) { addCond(c, 'prone'); fallText = ` ${c.name} clips the low wall and sprawls at ${landing}, prone.`; }
+    else fallText = ` ${c.name} comes up short at ${landing} and goes over the edge into ${first}! DM: rule on the fall ("fall ${id} <cell> --feet N") or let them catch the edge.`;
+  }
+  ts.used += spent;
+  c.pos = landing;
+  if (mishap && (mishap.kind === 'climb' || mishap.kind === 'grab')) {
+    // falls from the ledge (or its lip) to its foot: the lower of the two squares
+    const lower = mishap.rise > 0 ? landing : (C.occupant(s, C.parseCell(mishap.to).x, C.parseCell(mishap.to).y, id) ? landing : mishap.to);
+    if (lower !== landing) walked.push(lower);
+    fallText = ' ' + fallOn(s, id, Math.abs(mishap.rise), lower);
+    landing = lower;
+  }
+  // opportunity attacks: leaving a hostile's reach, measured in 3D along the route taken
   const provokers = [];
   if (!ts.disengage && !flags.force) {
+    const z = (cell) => { const p = C.parseCell(cell); return Object.assign(p, { z: typeof c.z === 'number' ? c.z : C.elevAt(s, p.x, p.y) }); };
     for (const [oid, o] of Object.entries(s.creatures)) {
-      if (!o.pos || o.hp <= 0 || !C.hostile(c, o) || hasCond(o, 'incapacitated')) continue;
+      if (oid === id || !o.pos || o.hp <= 0 || !C.hostile(c, o) || hasCond(o, 'incapacitated')) continue;
       const reach = Math.max(5, ...(o.attacks || []).filter((a) => !a.range).map((a) => a.reach || 5));
-      const op = C.parseCell(o.pos);
-      for (let i = 0; i < path.cells.length - 1; i++) {
-        const inNow = C.distFeet(C.parseCell(path.cells[i]), op) <= reach;
-        const inNext = C.distFeet(C.parseCell(path.cells[i + 1]), op) <= reach;
-        if (inNow && !inNext) { provokers.push(oid); break; }
+      const op = C.at(s, o);
+      for (let i = 0; i < walked.length - 1; i++) {
+        if (C.distFeet(z(walked[i]), op) <= reach && C.distFeet(z(walked[i + 1]), op) > reach) { provokers.push(oid); break; }
       }
     }
   }
-  ts.used += path.cost;
-  const from = c.pos;
-  c.pos = dest;
-  const terr = C.tagsAt(s, dp.x, dp.y);
-  let text = `${c.name} moves ${from} → ${dest} (${path.cost} ft, ${Math.max(0, budget - ts.used)} ft left).`;
+  const lp = C.parseCell(c.pos);
+  const terr = C.tagsAt(s, lp.x, lp.y);
+  let text = `${c.name} moves ${from} → ${c.pos} (${spent} ft, ${Math.max(0, budget - ts.used)} ft left).`;
+  if (events.length) text += ' ' + events.join(' ');
+  text += fallText;
   if (flags.force) text += ' [forced by ruling]';
-  if (terr.length) text += ` Lands on ${C.terrainName(s, dp.x, dp.y)} [${terr.join(', ')}].`;
+  if (!mishap && terr.length) text += ` Lands on ${C.terrainName(s, lp.x, lp.y)} [${terr.join(', ')}].`;
   if (provokers.length) text += ` PROVOKES opportunity attack from: ${provokers.join(', ')}.`;
-  C.appendLog(s, 'move', text, { id, from, to: dest, path: path.cells });
+  C.appendLog(s, 'move', text, { id, from, to: c.pos, path: walked });
   console.log(text);
   return s;
+});
+
+cmd('fall', 'fall <id> [cell] [--feet N]         fall damage (1d6 per 10 ft, prone); into [cell] if pushed or jumping off a ledge', (s, { pos, flags }) => {
+  need(s);
+  const c = who(s, pos[0]);
+  const dest = pos[1] ? C.cellId(C.parseCell(pos[1]).x, C.parseCell(pos[1]).y) : c.pos;
+  const dp = C.parseCell(dest);
+  if (!C.inBounds(s, dp.x, dp.y)) fail(`${dest} is off the map.`);
+  if (dest !== c.pos && C.occupant(s, dp.x, dp.y, pos[0])) fail(`${dest} is occupied.`);
+  const feet = flags.feet !== undefined ? Number(flags.feet) : C.creatureElev(s, c) - C.elevAt(s, dp.x, dp.y);
+  if (!(feet > 0)) fail(`There's no drop from ${c.pos} to ${dest}. Give --feet N for a fall the map doesn't show (a pit, a chasm).`);
+  const from = c.pos;
+  const t = fallOn(s, pos[0], feet, dest);
+  C.appendLog(s, 'move', t, { id: pos[0], from, to: dest, path: [from, dest] });
+  console.log(t); return s;
 });
 
 cmd('place', 'place <id> <cell>                  forced movement / teleport, no cost or pathing (shoves, falls, spells)', (s, { pos }) => {
@@ -209,7 +297,7 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
   if (!attacks.length) fail(`${a.name} has no attacks listed.`);
   const w = pos[2] ? attacks.find((x) => x.name.toLowerCase().includes(pos[2].toLowerCase())) : attacks[0];
   if (!w) fail(`${a.name} has no attack matching "${pos[2]}". Has: ${attacks.map((x) => x.name).join(', ')}`);
-  const ap = C.parseCell(a.pos), tp = C.parseCell(t.pos);
+  const ap = C.at(s, a), tp = C.at(s, t);
   const dist = C.distFeet(ap, tp);
   if (!C.hasLOS(s, ap, tp)) fail(`${a.name} has no line of sight to ${t.name}.`);
   let mode = advMode(flags);
@@ -218,7 +306,7 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
     const [norm, long] = w.range;
     if (dist > long) fail(`${t.name} is ${dist} ft away; ${w.name} max range is ${long} ft.`);
     if (dist > norm) { mode = mode === 'adv' ? null : 'dis'; notes.push('long range'); }
-    const adjacentFoe = Object.values(s.creatures).some((o) => o.pos && o.hp > 0 && C.hostile(a, o) && C.distFeet(ap, C.parseCell(o.pos)) <= 5 && !hasCond(o, 'incapacitated'));
+    const adjacentFoe = Object.values(s.creatures).some((o) => o.pos && o.hp > 0 && C.hostile(a, o) && C.distFeet(ap, C.at(s, o)) <= 5 && !hasCond(o, 'incapacitated'));
     if (adjacentFoe) { mode = mode === 'adv' ? null : 'dis'; notes.push('hostile adjacent'); }
   } else {
     const reach = w.reach || 5;
@@ -353,6 +441,18 @@ function expandCells(spec) {
   }
   return out;
 }
+
+cmd('door', 'door <wall-id> open|close           open or shut a door (or reveal a secret one by opening it)', (s, { pos }) => {
+  need(s);
+  const w = (s.walls || []).find((x) => typeof x === 'object' && x.id === pos[0]);
+  if (!w) fail(`No wall with id "${pos[0]}". Doors: ${(s.walls || []).filter((x) => x.kind === 'door').map((x) => x.id).join(', ') || 'none'}`);
+  if (w.kind !== 'door') fail(`${pos[0]} is a ${w.kind || 'wall'}, not a door.`);
+  if (!['open', 'close'].includes(pos[1])) fail('Say "open" or "close".');
+  w.open = pos[1] === 'open';
+  if (w.open) w.hidden = false;
+  const t = `The door ${pos[0]} (${w.from}-${w.to}) ${w.open ? 'swings open' : 'shuts'}.`;
+  C.appendLog(s, 'terrain', t); console.log(t); return s;
+});
 
 cmd('spawn', `spawn '<json>'                     add a creature, e.g. spawn '{"id":"wolf1","name":"Wolf","side":"enemy","pos":"B2","hp":11,"ac":13,"speed":40,"attacks":[{"name":"Bite","bonus":4,"damage":"2d4+2","type":"piercing"}]}'`, (s, { pos }) => {
   need(s);
@@ -491,7 +591,7 @@ function main() {
     const extFile = path.join(C.ROOT, 'ext', `${name}.js`);
     if (!fs.existsSync(extFile)) fail(`Unknown command "${name}". Run "help", or "ext" for library commands. If nothing fits, resolve it with "ruling" and consider proposing a library command in pending/.`);
     const ext = require(extFile);
-    fn = (s, a) => ext.run(need(s), a, { C, who: (id) => who(s, id), fail, applyDamage: (id, n, t) => applyDamage(s, id, n, t), addCond, saveRoll, abilityBonus, expandCells, turnState, hasCond, mod, sign, advMode });
+    fn = (s, a) => ext.run(need(s), a, { C, who: (id) => who(s, id), fail, applyDamage: (id, n, t) => applyDamage(s, id, n, t), fallOn: (id, feet, cell) => fallOn(s, id, feet, cell), addCond, saveRoll, abilityBonus, expandCells, turnState, hasCond, mod, sign, advMode });
   }
   try {
     const out = fn(state, args);

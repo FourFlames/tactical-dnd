@@ -8,9 +8,9 @@
     "^": { "name": "chasm", "tags": ["impassable", "chasm"] },
     "=": { "name": "rope bridge", "tags": ["flammable", "narrow", "bridge"] },
     "o": { "name": "spilled oil", "tags": ["flammable", "slick"] },
-    "B": { "name": "brazier", "tags": ["impassable", "fire-source", "cover-half", "can-topple"] },
-    "c": { "name": "crates", "tags": ["difficult", "cover-half", "climbable"] },
-    ",": { "name": "rubble", "tags": ["difficult", "cover-half"] }
+    "B": { "name": "brazier", "tags": ["impassable", "fire-source", "cover-half", "can-topple"], "object": { "kind": "brazier", "height": 3 } },
+    "c": { "name": "crates", "tags": ["difficult", "cover-half", "climbable"], "object": { "kind": "crate", "height": 4 } },
+    ",": { "name": "rubble", "tags": ["difficult", "cover-half"], "object": { "kind": "rubble", "height": 2 } }
   },
   "rows": [
     "################",
@@ -39,7 +39,7 @@
       "notes": "Human Fighter 3 (Battle Master). Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action."
     },
     "wren": {
-      "name": "Wren", "side": "party", "controller": "llm", "pos": "K9",
+      "name": "Wren", "side": "party", "controller": "llm", "pos": "K9", "size": "small",
       "hp": 20, "ac": 14, "speed": 25,
       "stats": { "str": 8, "dex": 16, "con": 12, "int": 13, "wis": 12, "cha": 14 },
       "saves": { "dex": 5, "int": 3 },

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Tiny local server for the battlemap viewer. No dependencies.
-// Serves viewer.html, the computed view (player or DM), and pushes a refresh
+// Serves viewer.html (and its 3D modules in viewer/), the computed view (player or DM), and pushes a refresh
 // event whenever the engine writes state.json or log.jsonl.
 'use strict';
 
@@ -21,6 +21,13 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === '/' || url.pathname === '/index.html') {
     return send(res, 200, 'text/html; charset=utf-8', fs.readFileSync(path.join(__dirname, 'viewer.html')));
+  }
+  // The 3D map's modules. Only plain file names inside viewer/, nothing else on disk.
+  const mod = /^\/viewer\/([a-z0-9-]+\.js)$/.exec(url.pathname);
+  if (mod) {
+    const file = path.join(__dirname, 'viewer', mod[1]);
+    if (!fs.existsSync(file)) return send(res, 404, 'text/plain', 'not found');
+    return send(res, 200, 'text/javascript; charset=utf-8', fs.readFileSync(file));
   }
   if (url.pathname === '/api/state') {
     try {
