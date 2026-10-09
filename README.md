@@ -20,6 +20,15 @@ Then tell the DM something like: *"Load rope-bridge and let's play. I'm Rook."*
 
 The viewer has a **Player** view (fog of war, hidden enemies stay hidden, enemy HP shown only as healthy/bloodied) and a **DM** view at `/?dm` (everything, including secret notes). Both come in **2D** and **3D** (`/?3d`, or the toggle in the top bar). The 3D map shows floor heights, props and walls with procedurally generated textures: drag to orbit, right-drag to pan, scroll to zoom, and **Low walls** cuts walls down so you can see into rooms. It loads three.js from a CDN, so it needs an internet connection; the 2D map doesn't.
 
+## Playing with friends
+
+Tell the DM who's joining and which character they play ("Sam is joining as Wren"). The DM runs `node engine.js seat sam wren`, which prints a personal link like `http://10.0.0.5:5173/?seat=...`. Your friend opens it, watches the map live, and types actions into the **Your move** box on their turn. The DM picks those up and resolves them through the engine.
+
+- **Same Wi-Fi:** the printed LAN link works as is.
+- **Over the internet:** both of you install [Tailscale](https://tailscale.com), then `seat sam wren --host http://<your-tailscale-ip>:5173`. Avoid exposing the port to the open internet.
+- The link is the player's key, so share it privately. `unseat sam` revokes it.
+- The DM view (`/?dm`) only works from the machine running the server.
+
 ## How it fits together
 
 ```
