@@ -22,7 +22,7 @@ The viewer has a **Player** view (fog of war, hidden enemies stay hidden, enemy 
 
 ## Playing with friends
 
-Tell the DM who's joining and which character they play ("Sam is joining as Wren"). The DM runs `node engine.js seat sam wren`, which prints a personal link like `http://10.0.0.5:5173/?seat=...`. Your friend opens it, watches the map live, and types actions into the **Your move** box on their turn. The DM picks those up and resolves them through the engine.
+Tell the DM who's joining and which character they play ("Sam is joining as Wren"). The DM runs `node engine.js seat sam wren`, which prints a short personal link like `http://10.0.0.5:5173/j/ember-wolf-42` (capitals and spaces in the code are fine). Your friend opens it, watches the map live, and types actions into the **Your move** box on their turn. The DM picks those up and resolves them through the engine.
 
 - **Same Wi-Fi:** the printed LAN link works as is.
 - **Over the internet:** both of you install [Tailscale](https://tailscale.com), then `seat sam wren --host http://<your-tailscale-ip>:5173`. Avoid exposing the port to the open internet.

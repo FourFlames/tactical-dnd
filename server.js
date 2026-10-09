@@ -18,6 +18,18 @@ const HOST = process.env.HOST || '0.0.0.0';
 const MAX_TEXT = 600;
 const clients = new Set();
 const lastPost = new Map();
+// Join codes are short enough to guess, so an address that keeps missing gets locked out for a while.
+const misses = new Map();
+const LOCKOUT = 10 * 60 * 1000;
+function seatFor(req, token) {
+  const ip = req.socket.remoteAddress, now = Date.now();
+  const m = misses.get(ip);
+  if (m && m.count >= 10 && now - m.since < LOCKOUT) return { locked: true };
+  const seat = C.seatByToken(token);
+  if (seat) return seat;
+  if (!m || now - m.since > LOCKOUT) misses.set(ip, { count: 1, since: now }); else m.count++;
+  return null;
+}
 
 function send(res, code, type, body) {
   res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -44,6 +56,13 @@ const server = http.createServer((req, res) => {
     if (!fs.existsSync(file)) return send(res, 404, 'text/plain', 'not found');
     return send(res, 200, 'text/javascript; charset=utf-8', fs.readFileSync(file));
   }
+  // Short, typable join links: /j/ember-wolf-42 opens the viewer with that seat.
+  const join = /^\/j\/([^/]+)$/.exec(url.pathname);
+  if (join) {
+    let code = ''; try { code = C.normCode(decodeURIComponent(join[1])); } catch { /* bad escape */ }
+    res.writeHead(302, { Location: '/?seat=' + encodeURIComponent(code) });
+    return res.end();
+  }
   if (url.pathname === '/api/state') {
     const wantDm = url.searchParams.get('view') === 'dm';
     if (wantDm && !isLocal(req)) return json(res, 403, { error: 'The DM view is only available on the DM\'s machine.' });
@@ -56,7 +75,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (url.pathname === '/api/seat') {
-    const seat = C.seatByToken(url.searchParams.get('token'));
+    const seat = seatFor(req, url.searchParams.get('token'));
+    if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes, then check the code with the DM.' });
     if (!seat) return json(res, 404, { error: 'This link is not (or no longer) a seat at the table. Ask the DM for a new one.' });
     const intents = C.readIntents().filter((e) => e.player === seat.player).slice(-8)
       .map(({ id, t, creature, text, handled }) => ({ id, t, creature, text, handled }));
@@ -65,7 +85,8 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/intent' && req.method === 'POST') {
     return readBody(req, 4096, (body) => {
       let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
-      const seat = C.seatByToken(msg.token);
+      const seat = seatFor(req, msg.token);
+      if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes.' });
       if (!seat) return json(res, 403, { error: 'This link is not a seat at the table.' });
       const text = String(msg.text || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MAX_TEXT);
       if (!text) return json(res, 400, { error: 'Say what you do.' });

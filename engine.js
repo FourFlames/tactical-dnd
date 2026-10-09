@@ -574,13 +574,13 @@ cmd('secret', 'secret "<text>"                    DM-only note (hidden from the 
 // ---------- remote players ----------
 function seatLinks(player, token, host) {
   const port = process.env.PORT || 5173;
-  if (host) return [`${host.replace(/\/$/, '')}/?seat=${token}`];
+  if (host) return [`${host.replace(/\/$/, '')}/j/${token}`];
   const ips = Object.values(require('os').networkInterfaces()).flat()
     .filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address);
-  return (ips.length ? ips : ['localhost']).map((ip) => `http://${ip}:${port}/?seat=${token}`);
+  return (ips.length ? ips : ['localhost']).map((ip) => `http://${ip}:${port}/j/${token}`);
 }
 
-cmd('seat', 'seat <player> <id>[,<id>...] [--host <url>]   give a remote player a personal link to control those creatures', (s, { pos, flags }) => {
+cmd('seat', 'seat <player> <id>[,<id>...] [--host <url>] [--new]   give a remote player a personal link (--new: fresh code)', (s, { pos, flags }) => {
   need(s);
   const [player, list] = pos;
   if (!player || !list) fail('Usage: seat <player> <id>[,<id>...]');
@@ -590,7 +590,7 @@ cmd('seat', 'seat <player> <id>[,<id>...] [--host <url>]   give a remote player 
   const seats = C.loadSeats();
   for (const [p, seat] of Object.entries(seats)) if (p !== player) seat.creatures = seat.creatures.filter((id) => !ids.includes(id));
   for (const c of Object.values(s.creatures)) if (c.player === player && !ids.includes(c.id)) { delete c.player; c.controller = c.side === 'party' ? 'llm' : 'dm'; }
-  const token = (seats[player] && seats[player].token) || require('crypto').randomBytes(12).toString('base64url');
+  const token = (seats[player] && !flags.new && seats[player].token) || C.newCode(Object.values(seats).map((x) => x.token));
   seats[player] = { token, creatures: ids };
   for (const id of ids) Object.assign(s.creatures[id], { controller: 'player', player });
   C.saveSeats(seats);

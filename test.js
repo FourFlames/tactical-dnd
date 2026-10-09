@@ -150,7 +150,8 @@ try {
   for (const f of [C.SEATS, C.INTENTS]) if (fs.existsSync(f)) fs.unlinkSync(f);
   r = run('seat', 'sam', 'wren', '--host', 'http://table.test:5173');
   const token = (C.loadSeats().sam || {}).token;
-  expect('seat prints a personal link', r.ok && token && r.out.includes(`http://table.test:5173/?seat=${token}`), r.out);
+  expect('seat prints a short word-code link', r.ok && /^[a-z]+-[a-z]+-\d\d$/.test(token) && r.out.includes(`http://table.test:5173/j/${token}`), r.out);
+  expect('codes forgive capitals and spaces', C.seatByToken(' ' + token.replace(/-/g, ' ').toUpperCase()) !== null, token);
   expect('seated creature is player-controlled', C.loadState().creatures.wren.player === 'sam', '');
   r = run('wait', 'wren', '--timeout', '0');
   expect('wait times out cleanly', r.ok && /TIMEOUT/.test(r.out), r.out);
