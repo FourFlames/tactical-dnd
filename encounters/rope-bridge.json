@@ -8,9 +8,9 @@
     "^": { "name": "chasm", "tags": ["impassable", "chasm"] },
     "=": { "name": "rope bridge", "tags": ["flammable", "narrow", "bridge"] },
     "o": { "name": "spilled oil", "tags": ["flammable", "slick"] },
-    "B": { "name": "brazier", "tags": ["impassable", "fire-source", "cover-half", "can-topple"] },
-    "c": { "name": "crates", "tags": ["difficult", "cover-half", "climbable"] },
-    ",": { "name": "rubble", "tags": ["difficult", "cover-half"] }
+    "B": { "name": "brazier", "tags": ["impassable", "fire-source", "cover-half", "can-topple"], "object": { "kind": "brazier", "height": 3 } },
+    "c": { "name": "crates", "tags": ["difficult", "cover-half", "climbable"], "object": { "kind": "crate", "height": 4 } },
+    ",": { "name": "rubble", "tags": ["difficult", "cover-half"], "object": { "kind": "rubble", "height": 2 } }
   },
   "rows": [
     "################",

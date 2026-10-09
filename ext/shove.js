@@ -25,7 +25,8 @@ module.exports = {
       const nx = tp.x + dx, ny = tp.y + dy;
       const dest = C.cellId(nx, ny);
       const tags = C.inBounds(s, nx, ny) ? C.tagsAt(s, nx, ny) : ['wall'];
-      if (tags.includes('wall')) text += `${t.name} slams into the ${C.terrainName(s, nx, ny)} and doesn't budge.`;
+      const wallInWay = C.blocksMove(C.wallBetween(s, tp, { x: nx, y: ny }));
+      if (tags.includes('wall') || wallInWay) text += `${t.name} slams into the ${wallInWay ? 'wall' : C.terrainName(s, nx, ny)} and doesn't budge.`;
       else if (C.occupant(s, nx, ny, pos[1])) text += `${t.name} is pushed back but ${s.creatures[C.occupant(s, nx, ny, pos[1])].name} is in the way.`;
       else if (tags.includes('chasm') || tags.includes('impassable')) {
         text += `${t.name} is shoved toward ${dest} (${C.terrainName(s, nx, ny)})! DM: rule on it, e.g. DEX save DC 10 to catch the edge, otherwise "remove ${pos[1]}".`;

@@ -38,8 +38,11 @@ Plain actions map directly:
 | "Second Wind" | `heal rook 1d10+3` (and decrement the resource in your head; mention it) |
 | "I hide behind the crates" | `check wren stealth 12`, then `hide wren` on success |
 | Sacred Flame on the goblin | `damage gob2 1d8 radiant --save dex --dc 13` |
+| "I open the door" | `door door1 open` (`show` lists walls and doors by id) |
 
 Use `range a b` whenever you're unsure about distance, line of sight, or cover. It's free.
+
+Some maps have height (`show` prints creatures as `N5@10ft`) and walls along grid lines (listed under the map). The engine enforces walls, doors and windows, but **height isn't in the rules yet**: when `range` says a target is higher or lower, rule on it yourself (high ground, climbing a ledge, falling 1d6 per 10 ft).
 
 Movement is pathed: the engine routes around walls and enemies and charges double for difficult terrain. If it says the creature can't make it, tell the player how far they *can* get, or suggest a dash.
 

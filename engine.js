@@ -81,6 +81,7 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
   enc.height = enc.rows.length; enc.width = enc.rows[0].length;
   enc.round = 0; enc.turnOrder = []; enc.turnIdx = 0; enc.turn = {}; enc.explored = []; enc.tagOverrides = {};
   for (const [id, c] of Object.entries(enc.creatures)) { c.maxHp = c.maxHp || c.hp; c.conditions = c.conditions || []; c.id = id; }
+  C.wallSegments(enc); // throws on a malformed wall
   if (fs.existsSync(C.LOG)) fs.unlinkSync(C.LOG);
   C.saveState(enc);
   C.appendLog(enc, 'scene', enc.intro || `Encounter: ${enc.name}`);
@@ -105,12 +106,15 @@ cmd('show', 'show [--player]                    ASCII battlemap + creature table
   });
   out += '\nLegend: ' + Object.entries(s.legend).map(([k, l]) => `${k}=${l.name}`).join('  ') + '   Tokens: first letter of id (UPPER=party, lower=others)\n';
   const ov = Object.entries(s.tagOverrides || {}).filter(([, o]) => (o.add || []).length || (o.remove || []).length);
+  const walls = C.wallSegments(s).filter((w) => !flags.player || v.walls.some((x) => x.from === w.from && x.to === w.to));
+  if (walls.length) out += 'Walls (along grid lines): ' + walls.map((w) => `${w.id ? w.id + ' ' : ''}${w.from}-${w.to}${w.kind !== 'wall' ? ' ' + w.kind : ''}${w.kind === 'door' ? (w.open ? ' (open)' : ' (closed)') : ''}${w.hidden ? ' (secret)' : ''}`).join(', ') + '\n';
   if (ov.length) out += 'Terrain changes: ' + ov.map(([k, o]) => `${k}:+${(o.add || []).join('+')}${(o.remove || []).length ? ' -' + o.remove.join('-') : ''}`).join('  ') + '\n';
   out += '\n';
   for (const c of Object.values(v.creatures)) {
     const conds = c.conditions.map((x) => x.name + (x.rounds ? `(${x.rounds})` : '')).join(',');
     const hp = c.hp !== undefined ? `${c.hp}/${c.maxHp} AC${c.ac}` : c.health;
-    out += `${c.id.padEnd(10)} ${c.name.padEnd(16)} ${c.side.padEnd(7)} ${c.pos.padEnd(4)} ${hp}${conds ? ' [' + conds + ']' : ''}${c.hidden ? ' (hidden)' : ''}\n`;
+    const pos = c.elev ? `${c.pos}@${c.elev}ft` : c.pos;
+    out += `${c.id.padEnd(10)} ${c.name.padEnd(16)} ${c.side.padEnd(7)} ${pos.padEnd(4)} ${hp}${conds ? ' [' + conds + ']' : ''}${c.hidden ? ' (hidden)' : ''}\n`;
   }
   if (s.turnOrder && s.turnOrder.length) out += `\nRound ${s.round}, turn: ${s.turnOrder[s.turnIdx]}  order: ${s.turnOrder.join(' > ')}`;
   console.log(out);
@@ -129,7 +133,9 @@ cmd('range', 'range <a> <b|cell>                  distance, line of sight, cover
   const a = C.parseCell(who(s, pos[0]).pos);
   const b = C.parseCell(s.creatures[pos[1]] ? s.creatures[pos[1]].pos : pos[1]);
   const cov = C.coverBetween(s, a, b);
-  console.log(`${C.distFeet(a, b)} ft, line of sight: ${C.hasLOS(s, a, b) ? 'yes' : 'NO'}${cov ? `, cover +${cov} AC` : ''}`);
+  const rise = (s.creatures[pos[1]] ? C.creatureElev(s, s.creatures[pos[1]]) : C.elevAt(s, b.x, b.y)) - C.creatureElev(s, who(s, pos[0]));
+  const height = rise ? `, target is ${Math.abs(rise)} ft ${rise > 0 ? 'higher' : 'lower'} (not yet in the rules: rule on it)` : '';
+  console.log(`${C.distFeet(a, b)} ft, line of sight: ${C.hasLOS(s, a, b) ? 'yes' : 'NO'}${cov ? `, cover +${cov} AC` : ''}${height}`);
   return null;
 });
 
@@ -353,6 +359,18 @@ function expandCells(spec) {
   }
   return out;
 }
+
+cmd('door', 'door <wall-id> open|close           open or shut a door (or reveal a secret one by opening it)', (s, { pos }) => {
+  need(s);
+  const w = (s.walls || []).find((x) => typeof x === 'object' && x.id === pos[0]);
+  if (!w) fail(`No wall with id "${pos[0]}". Doors: ${(s.walls || []).filter((x) => x.kind === 'door').map((x) => x.id).join(', ') || 'none'}`);
+  if (w.kind !== 'door') fail(`${pos[0]} is a ${w.kind || 'wall'}, not a door.`);
+  if (!['open', 'close'].includes(pos[1])) fail('Say "open" or "close".');
+  w.open = pos[1] === 'open';
+  if (w.open) w.hidden = false;
+  const t = `The door ${pos[0]} (${w.from}-${w.to}) ${w.open ? 'swings open' : 'shuts'}.`;
+  C.appendLog(s, 'terrain', t); console.log(t); return s;
+});
 
 cmd('spawn', `spawn '<json>'                     add a creature, e.g. spawn '{"id":"wolf1","name":"Wolf","side":"enemy","pos":"B2","hp":11,"ac":13,"speed":40,"attacks":[{"name":"Bite","bonus":4,"damage":"2d4+2","type":"piercing"}]}'`, (s, { pos }) => {
   need(s);

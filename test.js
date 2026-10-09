@@ -51,6 +51,37 @@ try {
   r = run('shove', 'rook', 'gob1');
   expect('library command (ext/shove.js) runs', r.ok && /shoves/.test(r.out), r.out);
 
+  // height, props and walls along grid lines (watchtower)
+  run('load', 'watchtower');
+  let wt = C.loadState();
+  let wv = C.view(wt, 'dm');
+  expect('heights grid feeds the view', wv.cells[0][12].h === 10 && wv.cells[3][9].h === 5 && wv.cells[11][0].h === 0, JSON.stringify(wv.cells[3][9]));
+  expect('creature elevation on the platform', wv.creatures.vessa.elev === 10, JSON.stringify(wv.creatures.vessa));
+  expect('legend objects reach the view', wv.cells[3][3].obj && wv.cells[3][3].obj.kind === 'crate' && wv.cells[3][3].obj.stand === true, JSON.stringify(wv.cells[3][3]));
+  expect('secret door hidden from player view', !C.view(wt, 'player').walls.some((w) => w.id === 'secret1') && wv.walls.some((w) => w.id === 'secret1'), '');
+  r = run('place', 'rook', 'D7');
+  r = run('move', 'rook', 'D8');
+  expect('closed door blocks movement', !r.ok && /No route/.test(r.out), r.out);
+  r = run('door', 'door1', 'open');
+  expect('door command opens a door', r.ok && /swings open/.test(r.out), r.out);
+  r = run('move', 'rook', 'D8');
+  expect('open door lets you through', r.ok, r.out);
+  run('door', 'door1', 'close');
+  run('place', 'rook', 'G9');
+  r = run('move', 'rook', 'F9');
+  expect('window blocks movement', !r.ok, r.out);
+  r = run('range', 'rook', 'band2');
+  expect('window allows sight with cover', /line of sight: yes, cover \+2/.test(r.out), r.out);
+  run('place', 'rook', 'H10');
+  r = run('range', 'rook', 'band2');
+  expect('solid wall blocks sight', /line of sight: NO/.test(r.out), r.out);
+  run('place', 'rook', 'D6');
+  r = run('move', 'rook', 'D7');
+  expect('low wall costs 5 ft extra to cross', r.ok && /\(10 ft/.test(r.out), r.out);
+  r = run('range', 'rook', 'vessa');
+  expect('range reports height difference', /10 ft higher/.test(r.out), r.out);
+
+  run('load', 'rope-bridge');
   r = run('initiative');
   expect('initiative starts round 1', r.ok && /Round 1/.test(r.out), r.out);
   r = run('next');
