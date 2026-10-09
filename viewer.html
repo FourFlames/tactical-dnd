@@ -105,6 +105,19 @@
   .entry.secret { color: var(--secret); font-style: italic; }
   .entry.move, .entry.terrain, .entry.condition, .entry.action, .entry.spawn, .entry.heal { color: var(--ink-dim); font-size: 12px; }
   .empty { padding: 60px; text-align: center; color: var(--ink-dim); font-family: var(--display); font-size: 22px; }
+  .entry.declare { color: var(--party); font-size: 13px; }
+  .act textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 14px/1.4 var(--sans); }
+  .act textarea:focus { outline: none; border-color: var(--gold); }
+  .act .who { font-size: 13px; color: var(--ink-dim); margin-bottom: 8px; }
+  .act .who b { color: var(--gold); font-weight: 600; }
+  .act .bar2 { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .act button { background: var(--gold); color: #1b1a15; border: 0; border-radius: 6px; padding: 7px 16px; font: 600 13px var(--sans); cursor: pointer; }
+  .act button:disabled { opacity: .5; cursor: default; }
+  .act .err { color: var(--enemy); font-size: 12px; }
+  .act .sent { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .act .sent div { font-size: 12px; color: var(--ink-dim); }
+  .act .sent span { font-family: var(--mono); font-size: 10px; margin-left: 6px; color: var(--ink-faint); }
+  .act .sent .pend span { color: var(--gold); }
   .empty code { font-family: var(--mono); font-size: 13px; color: var(--gold); }
 </style>
 </head>
@@ -123,7 +136,7 @@
         <a id="t2d">2D</a>
         <a id="t3d">3D</a>
       </div>
-      <div class="toggle">
+      <div class="toggle" id="toggle">
         <a id="tPlayer">Player</a>
         <a id="tDm" class="dm">DM</a>
       </div>
@@ -133,21 +146,33 @@
   </main>
   <aside class="side">
     <div class="section"><div class="label">Initiative</div><div class="order" id="order"></div></div>
+    <div class="section act" id="actSec" hidden>
+      <div class="label">Your move</div>
+      <div class="who" id="actWho"></div>
+      <textarea id="actText" maxlength="600" placeholder="What do you do? e.g. I dash across the bridge and swing at the archer."></textarea>
+      <div class="bar2"><button id="actSend">Send to DM</button><span class="err" id="actErr"></span></div>
+      <div class="sent" id="actSent"></div>
+    </div>
     <div class="section" id="cardSec" hidden><div class="card" id="card"></div></div>
     <div class="label" style="padding: 14px 18px 0">Chronicle</div>
     <div class="log" id="log"></div>
   </aside>
 </div>
 <script>
-const DM = new URLSearchParams(location.search).has('dm');
-const THREE_D = new URLSearchParams(location.search).has('3d');
-const href = (dm, td) => '/' + ([dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c));
+const params = new URLSearchParams(location.search);
+const SEAT = params.get('seat');
+const DM = !SEAT && params.has('dm');
+const THREE_D = params.has('3d');
+// Seated players keep their seat when switching 2D/3D; they never get the DM toggle.
+const href = (dm, td) => '/' + [SEAT && 'seat=' + encodeURIComponent(SEAT), dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c);
 document.getElementById('tPlayer').href = href(false, THREE_D);
 document.getElementById('tDm').href = href(true, THREE_D);
 document.getElementById('t2d').href = href(DM, false);
 document.getElementById('t3d').href = href(DM, true);
 document.getElementById(DM ? 'tDm' : 'tPlayer').classList.add('on');
 document.getElementById(THREE_D ? 't3d' : 't2d').classList.add('on');
+if (SEAT) document.getElementById('toggle').style.display = 'none';
+let me = null;
 const CELL = 48;
 const NS = 'http://www.w3.org/2000/svg';
 let state = null, selected = null, lastLogLen = 0, svg = null, tokLayer = null, fxLayer = null;
@@ -348,7 +373,7 @@ function drawSide(v) {
     const down = c.hp !== undefined ? c.hp <= 0 && c.side !== 'party' : c.health === 'down';
     return `<div class="row ${v.current === id ? 'cur' : ''} ${down ? 'down' : ''}" data-id="${id}">
       <span class="dot" style="background:${SIDE_COLOR[c.side]}"></span>
-      <span class="nm">${esc(c.name)}<small>${c.pos}${c.controller === 'player' ? ' · you' : ''}${c.hidden ? ' · hidden' : ''}</small></span>${hpCell(c)}</div>`;
+      <span class="nm">${esc(c.name)}<small>${c.pos}${tag(c)}${c.hidden ? ' · hidden' : ''}</small></span>${hpCell(c)}</div>`;
   }).join('');
   document.querySelectorAll('.row').forEach((r) => r.addEventListener('click', () => select(r.dataset.id)));
   drawCard();
@@ -359,6 +384,42 @@ function drawSide(v) {
   if (v.log.length !== lastLogLen && !THREE_D) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
   lastLogLen = v.log.length;
 }
+
+function tag(c) {
+  if (me) return me.creatures.includes(c.id) ? ' · you' : c.player ? ' · ' + esc(c.player) : '';
+  return c.player ? ' · ' + esc(c.player) : c.controller === 'player' ? ' · you' : '';
+}
+
+function drawAct() {
+  const sec = document.getElementById('actSec');
+  if (!SEAT) return;
+  sec.hidden = false;
+  const who = document.getElementById('actWho');
+  if (!me) { who.textContent = 'Checking your seat…'; return; }
+  if (me.error) { who.textContent = me.error; document.getElementById('actSend').disabled = true; return; }
+  const names = me.creatures.map((id) => (state && state.creatures && state.creatures[id] ? state.creatures[id].name : id));
+  const mine = state && me.creatures.includes(state.current);
+  who.innerHTML = mine ? `<b>Your turn, ${esc(state.creatures[state.current].name)}.</b> Tell the DM what you do.`
+    : `Playing ${names.map(esc).join(', ')}, ${esc(me.player)}. Not your turn, but you can send a note.`;
+  document.getElementById('actSent').innerHTML = me.intents.slice().reverse().map((e) =>
+    `<div class="${e.handled ? '' : 'pend'}">${esc(e.text)}<span>${e.handled ? 'DM has it' : 'waiting for DM'}</span></div>`).join('');
+}
+
+async function sendAct() {
+  const box = document.getElementById('actText'), btn = document.getElementById('actSend'), err = document.getElementById('actErr');
+  const text = box.value.trim();
+  if (!text) return;
+  btn.disabled = true; err.textContent = '';
+  try {
+    const r = await fetch('/api/intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: SEAT, text }) });
+    const out = await r.json();
+    if (!r.ok) err.textContent = out.error || 'Could not send.'; else box.value = '';
+  } catch (e) { err.textContent = 'Could not reach the table.'; }
+  btn.disabled = false;
+  refresh();
+}
+document.getElementById('actSend').addEventListener('click', sendAct);
+document.getElementById('actText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendAct(); });
 
 function drawCard() {
   const sec = document.getElementById('cardSec');
@@ -375,7 +436,9 @@ function select(id) { selected = selected === id ? null : id; render(); }
 
 function render() {
   if (!state) return;
-  if (state.empty) { document.getElementById('mapwrap').innerHTML = '<div class="empty">No encounter loaded.<br><code>node engine.js load rope-bridge</code></div>'; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
+  drawAct();
+  const blank = state.error ? esc(state.error) : state.empty ? 'No encounter loaded.<br><code>node engine.js load rope-bridge</code>' : null;
+  if (blank) { document.getElementById('mapwrap').innerHTML = `<div class="empty">${blank}</div>`; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
   if (THREE_D) { render3d(); drawSide(state); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
   if (!svg || svg.dataset.key !== key) { buildSvg(state); svg.dataset.key = key; }
@@ -412,6 +475,7 @@ async function refresh() {
   try {
     const r = await fetch(`/api/state?view=${DM ? 'dm' : 'player'}`);
     state = await r.json();
+    if (SEAT) me = await fetch(`/api/seat?token=${encodeURIComponent(SEAT)}`).then((x) => x.json());
     render();
   } catch (e) { /* server restarting */ }
 }

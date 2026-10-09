@@ -7,7 +7,8 @@ const fs = require('fs');
 const C = require('./lib/core');
 
 const backup = {};
-for (const f of [C.STATE, C.LOG]) if (fs.existsSync(f)) backup[f] = fs.readFileSync(f);
+const FILES = [C.STATE, C.LOG, C.SEATS, C.INTENTS];
+for (const f of FILES) if (fs.existsSync(f)) backup[f] = fs.readFileSync(f);
 
 let pass = 0, failed = 0;
 function run(...args) {
@@ -145,8 +146,27 @@ try {
   expect('initiative starts round 1', r.ok && /Round 1/.test(r.out), r.out);
   r = run('next');
   expect('next advances the turn', r.ok && /turn/.test(r.out), r.out);
+
+  for (const f of [C.SEATS, C.INTENTS]) if (fs.existsSync(f)) fs.unlinkSync(f);
+  r = run('seat', 'sam', 'wren', '--host', 'http://table.test:5173');
+  const token = (C.loadSeats().sam || {}).token;
+  expect('seat prints a short word-code link', r.ok && /^[a-z]+-[a-z]+-\d\d$/.test(token) && r.out.includes(`http://table.test:5173/j/${token}`), r.out);
+  expect('codes forgive capitals and spaces', C.seatByToken(' ' + token.replace(/-/g, ' ').toUpperCase()) !== null, token);
+  expect('seated creature is player-controlled', C.loadState().creatures.wren.player === 'sam', '');
+  r = run('wait', 'wren', '--timeout', '0');
+  expect('wait times out cleanly', r.ok && /TIMEOUT/.test(r.out), r.out);
+  C.appendIntent({ id: 'i1', t: Date.now(), player: 'sam', creature: 'wren', text: 'I loose an arrow at the archer' });
+  r = run('wait', 'wren', '--timeout', '5');
+  expect('wait returns the declared action', r.ok && /loose an arrow/.test(r.out), r.out);
+  r = run('intents');
+  expect('handled intents are not repeated', /Nothing new/.test(r.out), r.out);
+  expect('declared action reaches the chronicle', C.readLog().some((e) => e.type === 'declare' && /loose an arrow/.test(e.text)), '');
+  run('load', 'rope-bridge');
+  expect('seats survive a reload', C.loadState().creatures.wren.player === 'sam', '');
+  r = run('unseat', 'sam');
+  expect('unseat revokes the link', r.ok && !C.loadSeats().sam && !C.loadState().creatures.wren.player, r.out);
 } finally {
-  for (const f of [C.STATE, C.LOG]) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
+  for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
 }
 console.log(`\n${pass} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

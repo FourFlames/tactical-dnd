@@ -4,3 +4,7 @@ state.json.tmp
 log.jsonl
 node_modules/
 .DS_Store
+
+# remote play: seat tokens and declared actions
+seats.json
+intents.jsonl
