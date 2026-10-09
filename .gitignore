@@ -1,0 +1,6 @@
+# live game state (recreated by `node engine.js load ...`)
+state.json
+state.json.tmp
+log.jsonl
+node_modules/
+.DS_Store

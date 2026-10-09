@@ -1,0 +1,12 @@
+{
+  "name": "tactical-dnd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tactical D&D 5e with Claude Code as the DM, a deterministic rules engine, and a live battlemap viewer.",
+  "scripts": {
+    "viewer": "node server.js",
+    "engine": "node engine.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}

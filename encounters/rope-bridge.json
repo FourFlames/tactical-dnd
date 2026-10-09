@@ -1,0 +1,114 @@
+{
+  "name": "The Rope Bridge",
+  "intro": "A frayed rope bridge spans a black chasm. On the far side, goblins crouch behind crates around a smoking brazier, and the planks at their end of the bridge glisten with spilled lamp oil.",
+  "dmNotes": "Bugbear Grall (hidden, K2) waits until a PC steps onto the bridge, then charges with advantage. Goblins will try to cut the bridge ropes if two or more PCs are on it (DC 12 ruling, 2 goblin actions). The brazier at F4 can be toppled into the oil at G4-H4: oil ignites, bridge planks catch next round. Goblins flee once Grall drops or 2 goblins are down.",
+  "legend": {
+    ".": { "name": "stone floor", "tags": [] },
+    "#": { "name": "cliff wall", "tags": ["wall"] },
+    "^": { "name": "chasm", "tags": ["impassable", "chasm"] },
+    "=": { "name": "rope bridge", "tags": ["flammable", "narrow", "bridge"] },
+    "o": { "name": "spilled oil", "tags": ["flammable", "slick"] },
+    "B": { "name": "brazier", "tags": ["impassable", "fire-source", "cover-half", "can-topple"] },
+    "c": { "name": "crates", "tags": ["difficult", "cover-half", "climbable"] },
+    ",": { "name": "rubble", "tags": ["difficult", "cover-half"] }
+  },
+  "rows": [
+    "################",
+    "#........#.....#",
+    "#..cc....#..,,.#",
+    "#....Boo.......#",
+    "#^^^^^==^^^^^^^#",
+    "#^^^^^==^^^^^^^#",
+    "#..,,..........#",
+    "#.........cc...#",
+    "#..............#",
+    "################"
+  ],
+  "creatures": {
+    "rook": {
+      "name": "Rook", "side": "party", "controller": "player", "pos": "H8",
+      "hp": 28, "ac": 18, "speed": 30, "initBonus": 1,
+      "stats": { "str": 16, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10 },
+      "saves": { "str": 5, "con": 4 },
+      "skills": { "athletics": 5, "perception": 3, "intimidation": 2 },
+      "attacks": [
+        { "name": "Longsword", "bonus": 5, "damage": "1d8+3", "type": "slashing", "reach": 5 },
+        { "name": "Javelin", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [30, 120] }
+      ],
+      "resources": { "secondWind": 1, "actionSurge": 1, "javelins": 3 },
+      "notes": "Human Fighter 3 (Champion: crits on 19-20). Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action."
+    },
+    "wren": {
+      "name": "Wren", "side": "party", "controller": "llm", "pos": "K9",
+      "hp": 20, "ac": 14, "speed": 25,
+      "stats": { "str": 8, "dex": 16, "con": 12, "int": 13, "wis": 12, "cha": 14 },
+      "saves": { "dex": 5, "int": 3 },
+      "skills": { "stealth": 7, "acrobatics": 5, "sleight-of-hand": 5, "perception": 3, "deception": 4 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [80, 320] },
+        { "name": "Shortsword", "bonus": 5, "damage": "1d6+3", "type": "piercing", "reach": 5 }
+      ],
+      "resources": { "arrows": 20 },
+      "notes": "Halfling Rogue 3. Sneak Attack +2d6 once per turn with advantage or an ally adjacent to the target (use --extra 2d6). Cunning Action: bonus-action Dash, Disengage, or Hide.",
+      "persona": "Wiry, sardonic, allergic to fair fights. Prefers high ground, flanks, and anything involving fire. Will loot mid-combat if she thinks nobody's looking."
+    },
+    "ash": {
+      "name": "Brother Ash", "side": "party", "controller": "llm", "pos": "E8",
+      "hp": 27, "ac": 18, "speed": 25,
+      "stats": { "str": 14, "dex": 10, "con": 14, "int": 10, "wis": 16, "cha": 12 },
+      "saves": { "wis": 5, "cha": 3 },
+      "skills": { "medicine": 5, "insight": 5, "religion": 2 },
+      "attacks": [
+        { "name": "Mace", "bonus": 4, "damage": "1d6+2", "type": "bludgeoning", "reach": 5 },
+        { "name": "Spiritual Weapon", "bonus": 5, "damage": "1d8+3", "type": "force", "range": [60, 60] }
+      ],
+      "resources": { "slots1": 4, "slots2": 2 },
+      "notes": "Dwarf Life Cleric 3. Sacred Flame (cantrip): target in 60 ft makes DC 13 DEX save or takes 1d8 radiant (use: damage <id> 1d8 radiant --save dex --dc 13). Spells: Bless, Cure Wounds, Healing Word, Shield of Faith, Spiritual Weapon (2nd, bonus action), Hold Person (2nd, DC 13 WIS). Life domain: healing spells add 2 + spell level.",
+      "persona": "Gravelly, patient, deeply suspicious of bridges. Keeps everyone alive first, smites second. Quotes scripture nobody else has heard of."
+    },
+    "gob1": {
+      "name": "Goblin Cutter", "side": "enemy", "controller": "dm", "pos": "H3",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 },
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] }
+      ],
+      "notes": "Nimble Escape: bonus-action Disengage or Hide. Has a knife for the bridge ropes."
+    },
+    "gob2": {
+      "name": "Goblin Archer", "side": "enemy", "controller": "dm", "pos": "D2",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Nimble Escape. Stays behind the crates."
+    },
+    "gob3": {
+      "name": "Goblin Archer", "side": "enemy", "controller": "dm", "pos": "M2",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Nimble Escape. Uses the rubble for cover."
+    },
+    "grall": {
+      "name": "Grall the Bugbear", "side": "enemy", "controller": "dm", "pos": "K2", "hidden": true,
+      "hp": 27, "ac": 16, "speed": 30,
+      "stats": { "str": 15, "dex": 14, "con": 13, "int": 8, "wis": 11, "cha": 9 },
+      "skills": { "stealth": 6, "survival": 2 },
+      "attacks": [
+        { "name": "Morningstar", "bonus": 4, "damage": "2d8+2", "type": "piercing", "reach": 5 },
+        { "name": "Javelin", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [30, 120] }
+      ],
+      "notes": "Surprise Attack: +2d6 on a hit against a surprised creature (use --extra 2d6). Brute. Bosses the goblins around; they rout if he falls."
+    }
+  }
+}
