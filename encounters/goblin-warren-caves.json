@@ -431,6 +431,7 @@
     },
     "wren": {
       "name": "Wren",
+      "size": "small",
       "side": "party",
       "controller": "llm",
       "pos": "M32",
@@ -538,6 +539,7 @@
     },
     "snikka": {
       "name": "Boss Snikka",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "L12",
@@ -689,6 +691,7 @@
     },
     "gob4": {
       "name": "Pip",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "L18",
@@ -780,6 +783,7 @@
     },
     "gob5": {
       "name": "Goblin Lookout",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "U15",
@@ -882,6 +886,7 @@
     },
     "gob6": {
       "name": "Nub",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "I13",
@@ -985,6 +990,7 @@
     },
     "gob7": {
       "name": "Gix",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "K15",
@@ -1111,6 +1117,7 @@
     },
     "tam": {
       "name": "Tam",
+      "size": "small",
       "side": "neutral",
       "controller": "dm",
       "pos": "S12",
@@ -1134,6 +1141,7 @@
     },
     "gob8": {
       "name": "Nib",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "X17",
@@ -1253,6 +1261,7 @@
     },
     "gob9": {
       "name": "Skrit",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Y27",
@@ -1380,6 +1389,7 @@
     },
     "gob10": {
       "name": "Gruk",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Y25",
@@ -1499,6 +1509,7 @@
     },
     "gob11": {
       "name": "Mogwa",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "X13",
@@ -1623,6 +1634,7 @@
     },
     "gob12": {
       "name": "Dribble",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Q7",
@@ -1735,6 +1747,7 @@
     },
     "gob13": {
       "name": "Bog",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "G7",
@@ -1839,6 +1852,7 @@
     },
     "gob14": {
       "name": "Snore",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "D16",
@@ -1938,6 +1952,7 @@
     },
     "gob15": {
       "name": "Grub",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "C21",

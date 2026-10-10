@@ -328,6 +328,20 @@ try {
   const caught = M('gob7').obs.filter((o) => o.kind === 'message').pop();
   expect('voices: a poor fake is caught by anyone who hears it clearly', caught && !caught.from && /isn't Grub's voice/.test(caught.fromLabel), JSON.stringify(caught));
 
+  // ---------- recognition in the gloom: judged by build, settled by voice, and foolable ----------
+  run('load', 'goblin-warren-caves');
+  setup((s) => { s.creatures.gob15.pos = 'H17'; s.minds.gob15.facing = 'E'; s.creatures.wren.pos = 'U16'; s.creatures.rook.pos = 'U18'; });
+  run('roll', '1d4');
+  const gTracks = Object.values(M('gob15').tracks);
+  const lookoutFig = gTracks.find((t) => t.cell === 'U15'), wrenFig = gTracks.find((t) => t.cell === 'U16'), rookFig = gTracks.find((t) => t.cell === 'U18');
+  expect('recognition: a goblin too far to name is "built like one of yours"', lookoutFig && lookoutFig.kin && /one of yours/.test(lookoutFig.label), JSON.stringify(gTracks));
+  expect('recognition: a halfling in the same gloom gets the same benefit of the doubt', wrenFig && wrenFig.kin, JSON.stringify(wrenFig));
+  expect('recognition: a human-sized figure there doesn\'t', rookFig && !rookFig.kin && rookFig.side === 'unknown', JSON.stringify(rookFig));
+  expect('recognition: a kin-looking figure isn\'t news', !M('gob15').obs.some((o) => /one of yours/.test(o.text) && o.sig >= 2), JSON.stringify(M('gob15').obs.slice(-4)));
+  decide('gob5', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'report', text: 'Lookout here, all quiet on the shelf.' }] });
+  const vouched = Object.values(M('gob15').tracks).find((t) => t.cell === 'U15');
+  expect('recognition: when the figure speaks, Grub knows the voice', vouched && /Goblin Lookout|you know the voice/.test(vouched.label), JSON.stringify(vouched));
+
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
