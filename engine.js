@@ -1371,6 +1371,12 @@ cmd('help', 'help', () => {
 // Before minds act (a tick, or one NPC's turn), the ones on OpenRouter models with news think first.
 async function thinkFirst(state, name, args) {
   if (!state || !Minds.active(state) || args.flags['no-think']) return;
+  // Split mode: anyone holding a new standing order takes it in first, with a short call of its own.
+  if (Think.takeMode() === 'split' && process.env.OPENROUTER_API_KEY && (name === 'tick' || (name === 'mind' && args.pos[1] === 'act'))) {
+    const scope = name === 'mind' ? [args.pos[0]] : Object.keys(state.minds);
+    const takers = scope.filter((id) => state.minds[id] && (state.minds[id].newRules || []).length && Think.isRemote(Minds.modelFor(state, state.minds[id])) && state.creatures[id] && state.creatures[id].hp > 0);
+    if (takers.length) await Think.takeOrders(state, takers);
+  }
   let ids;
   if (name === 'tick' && !(state.turnOrder || []).length) ids = Think.due(state);
   else if (name === 'mind' && args.pos[1] === 'act' && state.minds[args.pos[0]]) ids = Think.due(state, [args.pos[0]]);

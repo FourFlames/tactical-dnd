@@ -350,7 +350,7 @@ try {
   expect('standing: the goblins in earshot hold both rules', pipRules.some((o) => o.kind === 'pairs') && pipRules.some((o) => o.kind === 'hold-fire') && gixRules.length === 2, JSON.stringify([pipRules, gixRules]));
   expect('standing: obedient Pip keeps them more firmly than hot-headed Gix', pipRules[0].adherence > gixRules[0].adherence, JSON.stringify([pipRules[0].adherence, gixRules[0].adherence]));
   b = brief('gob4');
-  expect('standing: the brief shows the rule and how firmly they keep it', /STANDING ORDERS/.test(b) && /Nobody runs off alone/.test(b) && /inclined to keep it/.test(b), b.split('YOU\n')[0].slice(-600));
+  expect('standing: the brief asks how they take a new rule', /NEW STANDING ORDERS/.test(b) && /Nobody runs off alone/.test(b) && /standingResponses/.test(b), b.split('YOU\n')[0].slice(-600));
   // Gix goes off alone anyway, in front of the boss: she notices.
   setup((s) => { s.creatures.gob7.pos = 'Q18'; s.minds.gob7.facing = 'W'; });
   run('roll', '1d4');
@@ -368,6 +368,23 @@ try {
   } else expect('standing: at least one goblin keeps the pairs rule', false, 'none of gob4, gob5, gob6 keeps it');
   r = decide('snikka', { version: S().mseq, standing: [{ to: 'all', kind: 'hold-fire', text: 'Fire at will!', lift: true }] });
   expect('standing: the boss can lift a rule', !M('gob4').standing.some((o) => o.kind === 'hold-fire') && M('gob4').standing.some((o) => o.kind === 'pairs'), JSON.stringify(M('gob4').standing));
+
+  // ---------- split take-in: the goblin's own facts, and nothing it couldn't know ----------
+  run('load', 'goblin-warren-caves');
+  run('place', 'gob15', 'F15');
+  decide('gob15', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Snore is dead! Big paw prints going north toward the grotto!' }] });
+  const tp = (id) => spawnSync('node', ['-e', `const C=require('./lib/core'),T=require('./lib/think');console.log(T.takePrompt(C.loadState(),'${id}'))`], { cwd: __dirname, encoding: 'utf8' }).stdout;
+  const heardIt = Object.keys(S().minds).filter((id) => (M(id).claims || []).some((c) => /paw prints/.test(c.text)));
+  const missedIt = Object.keys(S().minds).filter((id) => id !== 'gob15' && !heardIt.includes(id) && S().creatures[id].hp > 0);
+  const nubP = tp('gob6'), farP = missedIt.length ? tp(missedIt[0]) : '';
+  expect('take-in: who is with you comes from what you can see', /With you: .*Gix/.test(nubP), nubP);
+  expect('take-in: the trouble is only what you were told', heardIt.includes('gob6') && /paw prints/.test(nubP), nubP);
+  expect('take-in: a goblin out of earshot knows nothing of it', missedIt.length && /know nothing yet of any trouble/.test(farP) && !/paw prints/.test(farP), `${missedIt[0]}: ${farP}`);
+  const alone = Object.keys(S().minds).map((id) => [id, tp(id)]).find(([, p]) => /You are alone/.test(p));
+  expect('take-in: a goblin with nobody in sight is told it is alone', !!alone, 'nobody was alone');
+  const dueScript = `const C=require('./lib/core'),T=require('./lib/think'),M=require('./lib/minds');const s=C.loadState();s.minds.gob6.pending=[{why:'new standing orders change your plans',urgency:2,refs:[],after:s.mtime||0}];const a=T.due(s,['gob6']).length;s.mtime=(s.mtime||0)+1;console.log(a,T.due(s,['gob6']).length)`;
+  const dueOut = spawnSync('node', ['-e', dueScript], { cwd: __dirname, encoding: 'utf8' }).stdout.trim();
+  expect('take-in: a rethink waits for the next tick', dueOut === '0 1', dueOut);
 
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
