@@ -67,8 +67,8 @@ try {
   expect('B: Bram\'s shout is heard by the sergeant inside', /Sergeant Hask/.test(r.out), r.out);
   const hk = M('hask');
   const rep = Object.values(hk.tracks).find((t) => !t.direct);
-  expect('B: Hask gets a REPORTED track, not a sighting', rep && rep.direct === false && /reported by Bram/.test(rep.label), JSON.stringify(hk.tracks));
-  expect('B: Hask has the message as evidence, with its source', hk.obs.some((o) => o.kind === 'message' && o.from === 'bram'), JSON.stringify(hk.obs.slice(-2)));
+  expect('B: Hask gets a REPORTED track, not a sighting', rep && rep.direct === false && /reported by .*Bram/.test(rep.label), JSON.stringify(hk.tracks));
+  expect('B: Hask has the message as evidence, with its source (through the walls: muffled, the voice only maybe Bram\'s)', hk.obs.some((o) => o.kind === 'message' && /Bram/.test(o.fromLabel) && /muffled/.test(o.text)), JSON.stringify(hk.obs.slice(-2)));
   expect('B: Hask has no visual observation of the intruder', !hk.obs.some((o) => o.kind === 'sight'), JSON.stringify(hk.obs));
   expect('B: the party overhears the shout in the chronicle', C.readLog(50).some((e) => e.type === 'narration' && /hear/.test(e.text) && /Someone by the path/.test(e.text)), JSON.stringify(C.readLog(10)));
 
@@ -79,7 +79,7 @@ try {
   const reps = Object.values(hk2.tracks).filter((t) => !t.direct);
   expect('C: two incompatible reports are both kept', reps.length >= 2 && new Set(reps.map((t) => t.cell)).size >= 2, JSON.stringify(reps));
   b = brief('hask');
-  expect('C: the brief shows both, each with its source', /reported by Bram|told by Bram/.test(b) && /told by Tilly|reported by Tilly/.test(b), b.split('WHAT YOU HAVE PERCEIVED')[0]);
+  expect('C: the brief shows both, each with its source', /Bram/.test(b.split('WHAT YOU HAVE PERCEIVED')[0]) && /Tilly/.test(b.split('WHAT YOU HAVE PERCEIVED')[0]), b.split('WHAT YOU HAVE PERCEIVED')[0]);
 
   // ---------- Scenario D: same evidence, different temperaments ----------
   run('load', 'tollhouse');
@@ -100,11 +100,11 @@ try {
   r = decide('hask', { version: S().mseq, orders: [{ to: 'bram', objective: 'Bram! Check the hedges by the path.', plan: [{ do: 'investigate', at: 'C12' }], channel: 'shout' }] });
   expect('E: a sergeant can order a guard', /order ord\d+ to bram/.test(r.out), r.out);
   let bo = M('bram').orders[0];
-  expect('E: the order arrives as received, not obeyed', bo && bo.status === 'received' && /hedges/.test(bo.objective), JSON.stringify(M('bram').orders));
+  expect('E: the order arrives as received, not obeyed', bo && bo.status === 'received', JSON.stringify(M('bram').orders));
   r = decide('bram', { version: S().mseq, orderResponses: [{ order: bo.id, response: 'decline', reply: 'Can\'t leave the door, Sarge!' }] });
   expect('E: the guard can decline, and says so', /declined/.test(r.out) && /acknowledgement/.test(r.out), r.out);
   expect('E: the order stays on record as declined', M('bram').orders[0].status === 'declined', JSON.stringify(M('bram').orders));
-  expect('E: the sergeant hears the refusal', M('hask').obs.some((o) => o.kind === 'message' && /leave the door/.test(o.content)), JSON.stringify(M('hask').obs.slice(-2)));
+  expect('E: the sergeant hears the refusal (muffled through the walls)', M('hask').obs.some((o) => o.kind === 'message' && o.msgKind === 'acknowledgement' && /Can't/.test(o.content)), JSON.stringify(M('hask').obs.slice(-2)));
   r = decide('bram', { version: S().mseq, orders: [{ to: 'hask', objective: 'go away' }] });
   expect('E: a guard cannot order his sergeant', /don't answer to you/.test(r.out), r.out);
 
@@ -294,6 +294,7 @@ try {
 
   // ---------- stories: known news is kept once; a second witness confirms it ----------
   run('load', 'goblin-warren-caves');
+  run('place', 'gob15', 'H13'); run('place', 'gob4', 'J12'); // everyone within clear earshot of the cookfire
   const say = (id, text) => decide(id, { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text }] });
   say('gob15', 'Snore is dead in the sleeping nook, torn up by big claws!');
   const msgs = (id) => M(id).obs.filter((o) => o.kind === 'message').length;
@@ -311,6 +312,21 @@ try {
   expect('stories: the brief tells each story once, with how it spread', /STORIES GOING AROUND/.test(b) && /Passed on by Pip/.test(b), b.split('WHAT YOU HAVE PERCEIVED')[0].slice(-800));
   const site = Object.values(M('gob6').tracks).find((t) => t.static);
   expect('sites: news about a spot is pinned there, not tracked as a mover', !site || !/could have reached/.test(b.split('PLACES YOU HAVE NEWS')[1] || ''), b);
+
+  // ---------- hearing: words, voices, and the people who fake them ----------
+  run('load', 'goblin-warren-caves');
+  decide('gob15', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Snore is dead in the sleeping nook, torn up by big claws!' }] });
+  const nubHeard = M('gob6').obs.filter((o) => o.kind === 'message').pop();
+  expect('hearing: through rock, Nub catches only some of Grub\'s words', nubHeard && /…/.test(nubHeard.content) && /muffled/.test(nubHeard.text), JSON.stringify(nubHeard));
+  setup((s) => Object.assign(s.creatures.wren, { pos: 'N18', hidden: true, stealth: 30 })); // in the rubble: heard, not seen
+  r = run('speak', 'wren', "It's me, Grub! Don't shoot, I'm coming back to the fire!", '--channel', 'shout', '--as', 'gob15', '--deception', '25');
+  const fooled = M('gob7').obs.filter((o) => o.kind === 'message').pop();
+  expect('voices: a good enough fake fools a goblin who hears it clearly', r.ok && fooled && fooled.from === 'gob15' && /Grub/.test(fooled.fromLabel), r.out + JSON.stringify(fooled));
+  run('load', 'goblin-warren-caves');
+  setup((s) => Object.assign(s.creatures.wren, { pos: 'N18', hidden: true, stealth: 30 }));
+  r = run('speak', 'wren', "It's me, Grub! Let me through!", '--channel', 'shout', '--as', 'gob15', '--deception', '3');
+  const caught = M('gob7').obs.filter((o) => o.kind === 'message').pop();
+  expect('voices: a poor fake is caught by anyone who hears it clearly', caught && !caught.from && /isn't Grub's voice/.test(caught.fromLabel), JSON.stringify(caught));
 
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;

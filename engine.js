@@ -1312,7 +1312,21 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
   return s;
 });
 
-cmd('noise', 'noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--sig 1-3] [--secret]   a sound NPCs may hear (a thrown stone, a dropped pot); default heard 60 ft, walls muffle', (s, { pos, flags }) => {
+cmd('speak', 'speak <id> "<words>" [--channel speech|shout|whisper] [--to <id,id>] [--as <npc-id>] [--deception <total>]   a character speaks aloud; NPC minds in earshot hear it (clearly, muffled or faintly). --as: pretending to be that NPC (roll Deception first)', (s, { pos, flags }) => {
+  need(s);
+  const id = pos[0];
+  who(s, id);
+  const text = pos.slice(1).join(' ').trim();
+  if (!text) fail('speak needs the words, in quotes.');
+  const channel = flags.channel || 'speech';
+  if (flags.as && !s.creatures[flags.as]) fail(`No creature "${flags.as}" to pretend to be.`);
+  const r = Minds.speak(s, id, { text, channel, kind: flags.kind || 'report', to: flags.to ? String(flags.to).split(',') : 'all', as: flags.as || undefined, deception: flags.deception !== undefined ? Number(flags.deception) : undefined });
+  if (r.error) fail(r.error);
+  console.log(`${s.creatures[id].name} ${channel === 'shout' ? 'shouts' : channel === 'whisper' ? 'whispers' : 'says'}: “${text}”. Heard by: ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}.`);
+  return s;
+});
+
+cmd('noise','noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--sig 1-3] [--secret]   a sound NPCs may hear (a thrown stone, a dropped pot); default heard 60 ft, walls muffle', (s, { pos, flags }) => {
   need(s);
   const cell = Minds.validCell(s, pos[0] || '');
   if (!cell) fail('noise needs a square, e.g. noise E5 "a pot shattering"');
