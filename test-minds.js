@@ -186,6 +186,20 @@ try {
   r = run('mind', 'bram', 'act');
   expect('in combat, "mind <id> act" fights through the engine', r.ok && /attack|Spear|Intruder/.test(r.out), r.out);
 
+  // ---------- an order is a destination, not a sighting ----------
+  run('load', 'goblin-warren-caves');
+  r = decide('snikka', { version: S().mseq, orders: [{ to: 'gob7', objective: 'Back Pip up at the crack mouth', plan: [{ do: 'guard', at: 'K17', facing: 'S' }], at: 'K17', channel: 'shout' }] });
+  expect('orders: Snikka can order Gix', /order ord\d+ to gob7/.test(r.out), r.out);
+  const overheard = Object.values(M('gob5').tracks).filter((t) => !M('gob5').roster[t.key]);
+  expect('orders: an overheard order creates no track for bystanders', overheard.length === 0, JSON.stringify(overheard));
+  expect('orders: the addressed goblin gets no phantom track either', !Object.values(M('gob7').tracks).some((t) => t.cell === 'K17' && !t.direct), JSON.stringify(M('gob7').tracks));
+  run('mind', 'gob7', 'fallback');
+  const gix = S().minds.gob7.intentions[0];
+  expect('orders: the fallback follows an accepted order', gix && gix.plan.some((st) => st.do === 'guard' && st.at === 'K17'), JSON.stringify(gix));
+  run('mind', 'gob5', 'fallback');
+  const look = S().minds.gob5.intentions[0];
+  expect('orders: a bystander keeps to its own business', look && !look.plan.some((st) => st.at === 'K17'), JSON.stringify(look));
+
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
