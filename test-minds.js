@@ -55,7 +55,7 @@ try {
   expect('A: the track keeps the last SEEN square, not her real one', tr && !tr.inView && tr.cell !== 'A11', JSON.stringify(tr));
   run('tick'); run('tick');
   b = brief('bram');
-  expect('A: the brief offers a region she could be in, not her square', /could be anywhere in \d+ squares/.test(b) && !/A11/.test(b.split('MAP YOU KNOW')[0]), b.split('WHAT YOU HAVE PERCEIVED')[0].slice(-600));
+  expect('A: the brief offers a region she could be in, not her square', /could have reached: \d+ squares/.test(b) && !/A11/.test(b.split('MAP YOU KNOW')[0]), b.split('WHAT YOU HAVE PERCEIVED')[0].slice(-600));
 
   // ---------- Scenario B: secondhand report ----------
   run('load', 'tollhouse');
@@ -208,6 +208,24 @@ try {
   expect('speech: the party hears place names, not squares', heardLine && /the west gap/.test(heardLine.text) && /the crack mouth/.test(heardLine.text) && !/K29|L18/.test(heardLine.text), heardLine ? heardLine.text : r.out);
   const snik = M('snikka').obs.filter((o) => o.kind === 'message').pop();
   expect('speech: NPC listeners hear the same words', snik && /the west gap/.test(snik.text) && !/K29/.test(snik.text), JSON.stringify(snik));
+
+  // ---------- forgiving decisions: the slips cheap models make in practice ----------
+  run('load', 'goblin-warren-caves');
+  run('place', 'rook', 'M21');
+  run('roll', '1d4'); // let Pip take in the stranger
+  const pipKey = Object.values(M('gob4').tracks).find((t) => t.side === 'hostile');
+  brief('gob4');
+  r = decide('gob4', { version: S().mseq, intention: { objective: 'stab it', plan: [{ do: 'attack', target: '1' }] } });
+  expect('lenient: a map mark ("1") is read as the track key', pipKey && new RegExp(`"1" read as ${pipKey.key}`).test(r.out) && !/rejected/.test(r.out), r.out);
+  r = decide('gob4', { version: S().mseq, intention: { objective: 'run to the boss', plan: [{ do: 'move', to: "the boss's corner" }] } });
+  expect('lenient: a place name works as a square', /read as L12/.test(r.out) && /move to L12/.test(r.out), r.out);
+  r = decide('gob4', { version: S().mseq, intention: { objective: 'hide by the fire', plan: [{ do: 'guard', at: 'J14' }] } });
+  expect('lenient: an unstandable square snaps to a neighbour', /J14 can't be stood on/.test(r.out) && !/rejected/.test(r.out), r.out);
+  r = decide('snikka', { version: S().mseq, say: [{ to: ['gob7'], channel: 'shout', kind: 'order', text: 'Gix, hold the crack mouth!' }] });
+  expect('lenient: an order filed under "say" goes out as an order', /order ord\d+ to gob7/.test(r.out) && M('gob7').orders.some((o) => /hold the crack mouth/.test(o.objective)), r.out);
+  b = brief('gob4');
+  expect('brief: places are named next to squares', /\(the crack mouth\)|\(the bottom of the crack\)|\(the crack\)/.test(b) && /PLACES YOU KNOW/.test(b), b.slice(0, 1500));
+  expect('brief: the warren brief stays short', b.length < 9000, `${b.length} chars`);
 
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
