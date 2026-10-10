@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as TX from './textures.js';
+import { buildBarracksProp } from './barracks-props.js';
 
 const FT = 1 / 5;
 const VARIANTS = 4;
@@ -183,7 +184,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         w.castShadow = false;
         waters.push(w);
       }
-      if (c.obj) buildObject(c.obj, x, y, top, dim, variant, add, geo);
+      if (c.obj) buildObject(c.obj, x, y, top, dim, variant, add, geo, c.terrain);
       else if (c.tags.includes('fire-source')) addFire(x + 0.5, top, y + 0.5, 1, dim);
       if (c.tags.includes('burning')) {
         const surfaceTop = c.obj && c.obj.stand ? top + c.obj.height * FT : top;
@@ -242,7 +243,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
   }
 
-  function buildObject(o, x, y, top, dim, variant, add, geo) {
+  function buildObject(o, x, y, top, dim, variant, add, geo, terrainName) {
+    if (buildBarracksProp(o, { x, y, top, dim, variant, add, geo, terrainName, addFire })) return;
     const r = TX.rng(TX.hash(x, y, 77));
     const H = o.height * FT;
     const cx = x + 0.5, cz = y + 0.5;
