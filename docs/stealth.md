@@ -93,7 +93,8 @@ Plus `lighting` on the encounter and `light`, `noisy`, `descr` (what NPCs see), 
 - Seeded dice and full deterministic replay. Decisions are recorded in traces and the log, but the engine's dice use `Math.random`.
 - Model-assisted memory consolidation. Old observations roll into a memory list deterministically, keeping their ids.
 - A cognition overlay in the viewer. The inspector is `mind <id>` in the terminal: each track next to the truth.
-- Rich sound propagation (around corners, along corridors). It's a straight line with wall penalties.
+- Rich sound propagation (around corners, along corridors). It's a straight line with wall penalties, so winding cracks muffle far more than they should.
+- Languages: everyone in earshot understands everyone.
 
 ## Places: how NPCs talk about the map
 
@@ -104,6 +105,39 @@ An encounter can name its places: `"places": [{"name": "the cookfire", "at": "J1
 - **Decisions may use a place name for a square** ("to": "the boss's corner").
 
 Encounters without `places` keep their squares everywhere.
+
+## Hearing words, knowing voices
+
+Sound uses the same rule as before (straight-line distance plus muffling against loudness), but how close a sound is to the edge of earshot now matters:
+
+| Share of earshot used | Words | Voice |
+|---|---|---|
+| up to 60% | every word | a comrade's voice is known |
+| 60-80% | some words lost (“Check … by the path.”) | still known (a familiar voice carries through a wall) |
+| 80-95% | some words lost | only "a voice that might be Bram's", unless they name themselves ("Grub here!") |
+| 95-100% | none: "shouting, too far off to make out" | "a distant voice" |
+
+The party's chronicle gets the same: garbled or distant when nobody in the party heard it clearly. Seeing the speaker settles who it is.
+
+**Impersonation.** `speak <id> "<words>" --as <npc> --deception <total>` lets a character pretend to be an NPC. Anyone who hears the voice well enough to know it compares their passive Perception with the Deception total; the rest are fooled, and a fooled goblin takes the words (and orders, and standing orders) as that NPC's. `speak` without `--as` is how party members talk to NPC minds at all.
+
+## Recognising comrades in the dark
+
+Sight still gives clarity (identified ≥ .65 for strangers, ≥ .45 for comrades). Below that, a figure **your own size** (`size` on creatures; goblins, halflings and children are `small`) is "built like one of yours": noted, not news, not a target for the default plans. A halfling in the gloom gets that benefit of the doubt too. A figure that speaks in a comrade's voice becomes that comrade, as far as the listener can tell, until a clearer look says otherwise. Briefs tell models to challenge an unclear figure before attacking it, unless their orders say otherwise.
+
+## Physical evidence
+
+`evidence <id|cell> "<what anyone looking closely would find>"` puts clues in the world: wounds on a body, tracks in the dust, a dropped knife. A body seen from afar is only "lies still… can't tell if asleep, hurt or dead" (curious, not combat); within 10 ft it's "is dead", with its evidence. Clues on squares are found by searching within 10 ft. (`describe` is different: it records what the *party* knows.)
+
+## Stories going around
+
+Heard news is kept as **claims**, matched by content-word overlap (no model). The same story again adds a source, not an observation, and doesn't trigger thinking; one that brings new detail is news. A retelling ("Grub says…") is a relay; a different witness is independent confirmation. Gullible listeners (low vigilance, or superstitious) count relays as confirmation too, so rumours inflate in some heads and not others. When a story first has two supporters, the listener gets "Now N goblins are telling the same story". Speakers won't repeat something they said in the last three rounds. A report about a place (or a body) is pinned there as a fixed site, not tracked as something that walks.
+
+## Standing orders
+
+Task orders say "go there and do this". **Standing orders** are rules that hold until lifted: `hold-fire`, `engage` (attack intruders on sight, and figures not built like your own), `raise-alarm` (shout about anything suspicious, even in a calm lair), `pairs` (nobody goes off alone), `hold-post`, or `custom` (words only). Officers give them in `standing` (`to`, `kind`, `text`, `rounds`, `lift`); an order shouted to everyone in `say`, a plan step, or `orders` with `"to": "all"` is classified by its words ("alone" → pairs, "hold your fire" → hold-fire…).
+
+Each listener who takes the voice for a superior's gets the rule with an **adherence** (0.4 obedience + 0.35 the issuer's authority + 0.25 loyalty), shown in the brief as "inclined to keep it: strongly / fairly / barely". Models decide for themselves. The default plans keep a rule or not by adherence (fixed per NPC and rule): they won't attack under hold-fire unless attacked, won't investigate off-post, and call for company instead of going alone. Breaking a rule is never blocked, but whoever sees it and knows the rule notices ("Saw Gix go off alone toward the west rubble, against your order"), the issuer most of all.
 
 ## Forgiving decisions
 
