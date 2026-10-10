@@ -225,6 +225,12 @@ try {
   expect('lenient: an order filed under "say" goes out as an order', /order ord\d+ to gob7/.test(r.out) && M('gob7').orders.some((o) => /hold the crack mouth/.test(o.objective)), r.out);
   r = decide('gob6', { version: S().mseq, intention: { objective: 'tell the boss', plan: [{ do: 'say', to: ['snikka'], channel: 'speech', kind: 'report', text: 'Singing by the crack!', about: { subject: 'stranger-singer', at: 'L19:N23' } }] } });
   expect('lenient: a made-up subject and a range in "about" still let the plan through', /isn't a track/.test(r.out) && /read as M21/.test(r.out) && /intention i\d+/.test(r.out), r.out);
+  run('load', 'goblin-warren-caves');
+  r = decide('snikka', { version: S().mseq,
+    orders: [{ to: 'gob6', objective: 'Hold the cookfire.', plan: [{ do: 'guard', at: 'I13', facing: 'W' }], at: 'I13' }, { to: 'gob7', objective: 'Hold the cookfire.', plan: [{ do: 'guard', at: 'K15', facing: 'W' }], at: 'K15' }],
+    say: [{ to: ['gob6', 'gob7'], channel: 'shout', kind: 'order', text: 'Nub, Gix, stay at the fire and watch west!' }] });
+  const nubO = M('gob6').orders.filter((o) => o.status !== 'superseded'), gixO = M('gob7').orders.filter((o) => o.status !== 'superseded');
+  expect('lenient: an order both given and said is one order, with its plan and the spoken words', nubO.length === 1 && gixO.length === 1 && gixO[0].at === 'K15' && gixO[0].plan && /watch west/.test(gixO[0].objective), JSON.stringify([nubO, gixO]) + r.out);
   b = brief('gob4');
   expect('brief: places are named next to squares', /\(the crack mouth\)|\(the bottom of the crack\)|\(the crack\)/.test(b) && /PLACES YOU KNOW/.test(b), b.slice(0, 1500));
   expect('brief: the warren brief stays short', b.length < 9000, `${b.length} chars`);
