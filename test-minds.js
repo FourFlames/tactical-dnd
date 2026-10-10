@@ -342,6 +342,33 @@ try {
   const vouched = Object.values(M('gob15').tracks).find((t) => t.cell === 'U15');
   expect('recognition: when the figure speaks, Grub knows the voice', vouched && /Goblin Lookout|you know the voice/.test(vouched.label), JSON.stringify(vouched));
 
+  // ---------- standing orders: rules that lean everything, kept by the loyal ----------
+  run('load', 'goblin-warren-caves');
+  r = decide('snikka', { version: S().mseq, intention: { objective: 'rally', plan: [{ do: 'say', to: 'all', channel: 'shout', kind: 'order', text: 'Nobody runs off alone! Hold your fire until I say!' }, { do: 'guard', at: 'L12' }] } });
+  expect('standing: a rule shouted to everyone becomes standing orders', /standing order/.test(r.out) && /pairs/.test(r.out) && /hold-fire/.test(r.out), r.out);
+  const pipRules = M('gob4').standing || [], gixRules = M('gob7').standing || [];
+  expect('standing: the goblins in earshot hold both rules', pipRules.some((o) => o.kind === 'pairs') && pipRules.some((o) => o.kind === 'hold-fire') && gixRules.length === 2, JSON.stringify([pipRules, gixRules]));
+  expect('standing: obedient Pip keeps them more firmly than hot-headed Gix', pipRules[0].adherence > gixRules[0].adherence, JSON.stringify([pipRules[0].adherence, gixRules[0].adherence]));
+  b = brief('gob4');
+  expect('standing: the brief shows the rule and how firmly they keep it', /STANDING ORDERS/.test(b) && /Nobody runs off alone/.test(b) && /inclined to keep it/.test(b), b.split('YOU\n')[0].slice(-600));
+  // Gix goes off alone anyway, in front of the boss: she notices.
+  setup((s) => { s.creatures.gob7.pos = 'Q18'; s.minds.gob7.facing = 'W'; });
+  run('roll', '1d4');
+  r = decide('gob7', { version: S().mseq, intention: { objective: 'glory', plan: [{ do: 'investigate', at: 'E13' }] } });
+  run('mind', 'gob7', 'act');
+  const seenBreak = M('snikka').obs.find((o) => /against your order/.test(o.text));
+  expect('standing: breaking it is allowed, and the boss sees it', seenBreak && /Gix go off alone/.test(seenBreak.text), JSON.stringify(M('snikka').obs.slice(-3)));
+  // A goblin that keeps the rule, on its default plan, won't go look alone.
+  const keeper = ['gob4', 'gob6', 'gob5'].find((g) => spawnSync('node', ['-e', `const C=require('./lib/core'),M=require('./lib/minds');console.log(M.keeps(C.loadState().minds['${g}'],'pairs'))`], { cwd: __dirname, encoding: 'utf8' }).stdout.trim() === 'true');
+  if (keeper) {
+    run('noise', 'D20', 'a crash', '--loud', '200');
+    run('mind', keeper, 'fallback');
+    const kp = S().minds[keeper].intentions[0];
+    expect('standing: a goblin keeping "pairs" calls for company instead of going alone', kp && !kp.plan.some((st) => st.do === 'investigate') && kp.plan.some((st) => st.do === 'watch' || st.do === 'guard'), JSON.stringify(kp));
+  } else expect('standing: at least one goblin keeps the pairs rule', false, 'none of gob4, gob5, gob6 keeps it');
+  r = decide('snikka', { version: S().mseq, standing: [{ to: 'all', kind: 'hold-fire', text: 'Fire at will!', lift: true }] });
+  expect('standing: the boss can lift a rule', !M('gob4').standing.some((o) => o.kind === 'hold-fire') && M('gob4').standing.some((o) => o.kind === 'pairs'), JSON.stringify(M('gob4').standing));
+
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');

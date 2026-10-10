@@ -1081,6 +1081,8 @@ function moveNear(s, id, cell) {
 function runStep(s, id, m, st) {
   const c = s.creatures[id];
   const ti = () => C.turnInfo(s, id);
+  // Breaking a standing order is allowed (the mind chose it); whoever sees it and knows the order notices.
+  if (['attack', 'investigate', 'move'].includes(st.do)) { const b = Minds.breach(s, id, st); if (b) Minds.witness(s, id, b); }
   switch (st.do) {
     case 'wait': return { done: true, stop: true, text: 'waits' };
     case 'say': {
