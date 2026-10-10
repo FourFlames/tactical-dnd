@@ -227,6 +227,41 @@ try {
   expect('brief: places are named next to squares', /\(the crack mouth\)|\(the bottom of the crack\)|\(the crack\)/.test(b) && /PLACES YOU KNOW/.test(b), b.slice(0, 1500));
   expect('brief: the warren brief stays short', b.length < 9000, `${b.length} chars`);
 
+  // ---------- the engine thinks for OpenRouter minds itself (fetch stubbed: no key, no network) ----------
+  run('load', 'goblin-warren-caves');
+  run('place', 'rook', 'M21');
+  const thinkScript = `
+    const C = require('./lib/core'), Think = require('./lib/think');
+    process.env.OPENROUTER_API_KEY = 'test';
+    const seen = [];
+    let n = 0;
+    global.fetch = async (url, req) => {
+      const body = JSON.parse(req.body); seen.push(body.model);
+      const brief = body.messages[1].content, v = Number(/brief v(\\d+)/.exec(brief)[1]);
+      n++;
+      const dec = n === 1 ? { nonsense: true, intention: { objective: 'x', plan: [{ do: 'fly' }] } } // first answer unusable: retried
+        : { version: v, alarm: 'combat', intention: { objective: 'Run to the boss', plan: [{ do: 'flee', to: "the boss's corner" }] }, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger at M21!' }] };
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(dec) } }], usage: { prompt_tokens: 1000, completion_tokens: 100, cost: 0.0005 } }) };
+    };
+    (async () => {
+      const s = C.loadState();
+      const due = Think.due(s);
+      await Think.think(s, ['gob4'], () => {});
+      C.saveState(s);
+      console.log(JSON.stringify({ due, seen, usage: s.mindStats.usage, plan: s.minds.gob4.intentions[0], pending: s.minds.gob4.pending }));
+    })();`;
+  const tr2 = spawnSync('node', ['-e', thinkScript], { cwd: __dirname, encoding: 'utf8' });
+  let res = {};
+  try { res = JSON.parse(tr2.stdout.trim().split('\n').pop()); } catch { res = { err: tr2.stdout + tr2.stderr }; }
+  expect('think: minions on an OpenRouter model are due to think', (res.due || []).includes('gob4') && !(res.due || []).includes('snikka'), JSON.stringify(res));
+  expect('think: an unusable answer is retried once', (res.seen || []).length === 2 && res.seen.every((x) => x === 'deepseek/deepseek-v4.1-flash'), JSON.stringify(res));
+  expect('think: the decision lands as the mind\'s plan', res.plan && res.plan.source === 'model' && res.plan.plan.some((st) => st.do === 'flee' && st.to), JSON.stringify(res.plan));
+  expect('think: tokens and cost are counted per model', res.usage && res.usage['deepseek/deepseek-v4.1-flash'].calls === 2 && res.usage['deepseek/deepseek-v4.1-flash'].prompt === 2000, JSON.stringify(res.usage));
+  const shout = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => /Stranger at/.test(e.text)).pop();
+  expect('think: what the model shouts uses place names', shout && /the crack/.test(shout.text) && !/M21/.test(shout.text), shout ? shout.text : 'no shout logged');
+  r = run('think');
+  expect('think: without a key the command says so', !r.ok && /OPENROUTER_API_KEY/.test(r.out), r.out);
+
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');

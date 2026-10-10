@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const C = require('./lib/core');
 const Minds = require('./lib/minds');
+const Think = require('./lib/think');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -1249,6 +1250,18 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
   fail(`Unknown: mind <id> ${verb}`);
 });
 
+cmd('think', 'think [<id>...] [--all]             minds on OpenRouter models think now (default: those with news; --all: every one of them). tick and "mind <id> act" do this on their own', async (s, { pos, flags }) => {
+  need(s);
+  if (!Minds.active(s)) fail('No NPC minds in this encounter.');
+  if (!process.env.OPENROUTER_API_KEY) fail('OPENROUTER_API_KEY isn\'t set in this shell.');
+  for (const id of pos) mindOf(s, id);
+  const ids = flags.all ? Object.keys(s.minds).filter((id) => Think.isRemote(Minds.modelFor(s, s.minds[id])) && s.creatures[id] && s.creatures[id].hp > 0)
+    : Think.due(s, pos.length ? pos : undefined);
+  if (!ids.length) { console.log('Nobody on an OpenRouter model needs to think.'); return null; }
+  await Think.think(s, ids);
+  return s;
+});
+
 cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes; every NPC mind follows its plan (6 seconds each), alarm cools', (s, { pos, flags }) => {
   need(s);
   if (!Minds.active(s)) fail('No NPC minds in this encounter.');
@@ -1320,7 +1333,17 @@ cmd('help', 'help', () => {
 });
 
 // ---------- dispatch ----------
-function main() {
+// Before minds act (a tick, or one NPC's turn), the ones on OpenRouter models with news think first.
+async function thinkFirst(state, name, args) {
+  if (!state || !Minds.active(state) || args.flags['no-think']) return;
+  let ids;
+  if (name === 'tick' && !(state.turnOrder || []).length) ids = Think.due(state);
+  else if (name === 'mind' && args.pos[1] === 'act' && state.minds[args.pos[0]]) ids = Think.due(state, [args.pos[0]]);
+  if (!ids || !ids.length) return;
+  if (!process.env.OPENROUTER_API_KEY) { console.log(`(OPENROUTER_API_KEY isn't set: ${ids.join(', ')} act on the fallback instead of thinking.)`); return; }
+  await Think.think(state, ids);
+}
+async function main() {
   const [name, ...rest] = process.argv.slice(2);
   if (!name) return CMDS.help();
   const args = parseArgs(rest);
@@ -1334,7 +1357,8 @@ function main() {
   }
   CAP.base = state ? Minds.snapshot(state) : null;
   try {
-    const out = fn(state, args);
+    await thinkFirst(state, name, args);
+    const out = await fn(state, args);
     if (out) {
       perceiveNow(out);
       C.saveState(out);

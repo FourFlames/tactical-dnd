@@ -1,0 +1,5 @@
+{
+  "models": {
+    "minion": "deepseek/deepseek-v4.1-flash"
+  }
+}
