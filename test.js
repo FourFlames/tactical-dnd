@@ -151,6 +151,13 @@ try {
   expect('jumps go in a straight line at any angle (F7 to E4 over the chasm)', r.ok && /F7 → E4 \(15 ft/.test(r.out) && /over F6\/E5/.test(r.out), r.out);
   r = run('move', 'rook', 'F3');
   expect('a diagonal step slips past a low brazier (E4 to F3, 5 ft)', r.ok && /E4 → F3 \(5 ft/.test(r.out), r.out);
+  run('load', 'goblin-warren-caves');
+  run('place', 'gob15', 'C23');
+  r = run('move', 'gob15', 'D24');
+  expect('a diagonal step slips past one rock corner (C23 to D24, 5 ft)', r.ok && /C23 → D24 \(5 ft/.test(r.out), r.out);
+  run('place', 'gob15', 'C21');
+  r = run('move', 'gob15', 'E25');
+  expect('the west tunnel reaches the stream cave (C21 to E25)', r.ok && /C21 → E25/.test(r.out), r.out);
 
   run('load', 'rope-bridge');
   r = run('initiative');
