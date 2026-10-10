@@ -200,6 +200,15 @@ try {
   const look = S().minds.gob5.intentions[0];
   expect('orders: a bystander keeps to its own business', look && !look.plan.some((st) => st.at === 'K17'), JSON.stringify(look));
 
+  // ---------- speech uses place names, never grid squares ----------
+  run('load', 'goblin-warren-caves');
+  run('place', 'rook', 'M23');
+  r = decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger down past K29! Hold L18!' }] });
+  const heardLine = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'narration' && /hear/.test(e.text)).pop();
+  expect('speech: the party hears place names, not squares', heardLine && /the west gap/.test(heardLine.text) && /the crack mouth/.test(heardLine.text) && !/K29|L18/.test(heardLine.text), heardLine ? heardLine.text : r.out);
+  const snik = M('snikka').obs.filter((o) => o.kind === 'message').pop();
+  expect('speech: NPC listeners hear the same words', snik && /the west gap/.test(snik.text) && !/K29/.test(snik.text), JSON.stringify(snik));
+
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
