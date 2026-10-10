@@ -58,7 +58,7 @@ function box(w, h, d, v0 = 0) {
 
 const SIDE_FOR = { grass: 'dirt', dirt: 'dirt', flagstone: 'rock', oil: 'rock', water: 'rock', rock: 'rock', planks: 'planks', chasm: 'rock' };
 
-export function createMap3D(container, { onSelect, onHover } = {}) {
+export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
@@ -90,7 +90,8 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
   const terrain = new THREE.Group();
   const tokens = new THREE.Group();
   const fx = new THREE.Group();
-  scene.add(terrain, tokens, fx);
+  const cursorG = new THREE.Group();
+  scene.add(terrain, tokens, fx, cursorG);
 
   let built = null;          // signature of the terrain currently built
   let disposables = [];      // geometries made for the current terrain
@@ -99,6 +100,8 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
   let lastState = null, lastSelected = null, lastMoveT = null;
   const tokenObjs = new Map();
   let trail = null;
+  let cursorKey = null;
+  const pings = [];
 
   // ---------- terrain ----------
   function cellElev(v, x, y) {
@@ -113,6 +116,8 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
       if (o.userData.dispose) { o.userData.dispose.dispose(); o.material.dispose(); }
     }
     disposables.forEach((g) => g.dispose());
+    // Flames live in the fx group (so they draw over everything), so take them out by hand.
+    for (const s of flames) { fx.remove(s); s.material.dispose(); }
     disposables = []; flames = []; waters = [];
     lights.forEach((l) => scene.remove(l)); lights = [];
     const geo = (g) => { disposables.push(g); return g; };
@@ -441,7 +446,7 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
     selRing.rotation.x = -Math.PI / 2; selRing.position.y = 0.025;
     g.add(base, rim, stem, sprite, turnRing, selRing);
     g.traverse((o) => { o.userData.id = c.id; });
-    g.userData = { id: c.id, sprite, turnRing, selRing, rim, stem, key: null, path: [], target: null };
+    g.userData = { id: c.id, sprite, turnRing, selRing, rim, stem, key: null, path: [], target: null, offset: new THREE.Vector3() };
     tokens.add(g);
     return g;
   }
@@ -496,6 +501,147 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
     fx.add(trail);
   }
 
+  // ---------- cursor & pings ----------
+  // The square cursor: a gold outline at the pointed height, with a drop line to the floor when
+  // it floats above it.
+  function setCursor(v, cur) {
+    const key = JSON.stringify(cur && cur.cell ? [cur.cell, cur.z] : null);
+    if (key === cursorKey) return;
+    cursorKey = key;
+    for (const o of [...cursorG.children]) { cursorG.remove(o); o.geometry.dispose(); o.material.dispose(); }
+    if (!cur || !cur.cell) return;
+    const p = cellOf(cur.cell), floor = cellElev(v, p.x, p.y);
+    const z = typeof cur.z === 'number' ? cur.z : floor;
+    const line = (pts) => cursorG.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: GOLD, depthTest: false, transparent: true })));
+    const y = z * FT + 0.04, x0 = p.x + 0.04, x1 = p.x + 0.96, z0 = p.y + 0.04, z1 = p.y + 0.96;
+    line([new THREE.Vector3(x0, y, z0), new THREE.Vector3(x1, y, z0), new THREE.Vector3(x1, y, z1), new THREE.Vector3(x0, y, z1), new THREE.Vector3(x0, y, z0)]);
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.92), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
+    fill.rotation.x = -Math.PI / 2; fill.position.set(p.x + 0.5, y, p.y + 0.5);
+    cursorG.add(fill);
+    if (z !== floor) line([new THREE.Vector3(p.x + 0.5, floor * FT + 0.03, p.y + 0.5), new THREE.Vector3(p.x + 0.5, y, p.y + 0.5)]);
+  }
+  function labelSprite(text) {
+    const c = document.createElement('canvas'); c.width = 512; c.height = 96;
+    const g = c.getContext('2d');
+    g.font = '600 40px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const w = Math.min(500, g.measureText(text).width + 40);
+    g.fillStyle = 'rgba(20,19,15,.75)'; g.fillRect(256 - w / 2, 14, w, 68);
+    g.fillStyle = GOLD; g.fillText(text, 256, 49);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
+    s.scale.set(2.4, 0.45, 1);
+    return s;
+  }
+  function addPing(p) {
+    if (!lastState) return;
+    const q = cellOf(p.cell), y = (p.z || cellElev(lastState, q.x, q.y)) * FT + 0.06;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.42, 40), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, depthTest: false, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(q.x + 0.5, y, q.y + 0.5);
+    const label = labelSprite(p.label ? `${p.who}: ${p.label}` : p.who);
+    label.position.set(q.x + 0.5, y + 0.9, q.y + 0.5);
+    fx.add(ring, label);
+    pings.push({ ring, label, born: performance.now() });
+  }
+
+  // ---------- move preview ----------
+  let pathObj = null;
+  function setPath(cells, ok) {
+    if (pathObj) { fx.remove(pathObj); pathObj.geometry.dispose(); pathObj.material.dispose(); pathObj = null; }
+    if (!cells || cells.length < 2 || !lastState) return;
+    const pts = cells.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(lastState, p.x, p.y) * FT + 0.08, p.y + 0.5); });
+    pathObj = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: ok ? GOLD : '#d25b4a', dashSize: 0.14, gapSize: 0.1, depthTest: false, transparent: true }));
+    pathObj.computeLineDistances();
+    fx.add(pathObj);
+  }
+
+  // ---------- combat effects ----------
+  // Small, self-contained animations: each is a step(now) that returns true when it's finished.
+  // Projectiles pick a look from the damage type; add kinds to SHOT_LOOK to grow the system.
+  const effects = [];
+  const SHOT_LOOK = {
+    arrow: { color: '#d9c9a3', shape: 'arrow' }, fire: { color: '#ff8a3d', shape: 'orb', glow: true }, radiant: { color: '#fff3b0', shape: 'orb', glow: true },
+    cold: { color: '#9fe3ff', shape: 'orb', glow: true }, necrotic: { color: '#b48cff', shape: 'orb', glow: true }, lightning: { color: '#cfe8ff', shape: 'orb', glow: true },
+    default: { color: GOLD, shape: 'orb' },
+  };
+  const tokenPoint = (id, up = 0.7) => { const g = tokenObjs.get(id); return g ? g.position.clone().setY(g.position.y + up) : null; };
+  function shoot(fromId, toId, kind) {
+    return new Promise((done) => {
+      const a = tokenPoint(fromId), b = tokenPoint(toId);
+      if (!a || !b) return done();
+      const look = SHOT_LOOK[kind] || SHOT_LOOK.default;
+      const mesh = look.shape === 'arrow'
+        ? new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.5, 6).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: look.color }))
+        : new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), new THREE.MeshBasicMaterial({ color: look.color }));
+      let light = null;
+      if (look.glow) { light = new THREE.PointLight(look.color, 3, 3); mesh.add(light); }
+      fx.add(mesh);
+      const dur = Math.min(650, 160 + a.distanceTo(b) * 45), born = performance.now(), arc = Math.min(1.2, a.distanceTo(b) * 0.08);
+      const at = (k) => a.clone().lerp(b, k).setY(a.y + (b.y - a.y) * k + Math.sin(Math.PI * k) * arc);
+      effects.push((now) => {
+        const k = Math.min(1, (now - born) / dur), p = at(k);
+        mesh.position.copy(p); mesh.lookAt(at(Math.min(1, k + 0.02)));
+        if (k < 1) return false;
+        fx.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); if (light) light.dispose();
+        done(); return true;
+      });
+    });
+  }
+  // Lunge toward the target and back.
+  function bump(fromId, toId) {
+    return new Promise((done) => {
+      const g = tokenObjs.get(fromId), t = tokenObjs.get(toId);
+      if (!g || !t) return done();
+      const dir = t.position.clone().sub(g.position).setY(0);
+      if (dir.lengthSq() < 1e-6) return done();
+      dir.normalize();
+      const born = performance.now();
+      let prev = 0, hitSent = false;
+      effects.push((now) => {
+        const k = Math.min(1, (now - born) / 300), off = Math.sin(Math.PI * k) * 0.38;
+        g.userData.offset.addScaledVector(dir, off - prev); prev = off;
+        if (k >= 0.5 && !hitSent) { hitSent = true; done(); }
+        return k >= 1;
+      });
+    });
+  }
+  function floatText(id, text, color, big) {
+    const g = tokenObjs.get(id);
+    if (!g) return;
+    const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+    const x = c.getContext('2d');
+    x.font = `800 ${big ? 84 : 64}px Inter, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.lineWidth = 10; x.strokeStyle = '#14130f'; x.strokeText(text, 128, 64); x.fillStyle = color; x.fillText(text, 128, 64);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
+    s.scale.set(big ? 1.5 : 1.1, big ? 0.75 : 0.55, 1);
+    fx.add(s);
+    const born = performance.now(), base = g.position.clone().setY(g.position.y + 1.4);
+    effects.push((now) => {
+      const k = (now - born) / 1300;
+      s.position.copy(base).setY(base.y + k * 0.8);
+      s.material.opacity = k < 0.7 ? 1 : Math.max(0, 1 - (k - 0.7) / 0.3);
+      if (k < 1) return false;
+      fx.remove(s); t.dispose(); s.material.dispose(); return true;
+    });
+  }
+  // Hit: the token flashes red and shakes, and the damage rises over it.
+  function hit(id, { text, color = '#ff6b4f', big = false, flash = true } = {}) {
+    const g = tokenObjs.get(id);
+    if (!g) return;
+    if (text) floatText(id, text, color, big);
+    if (!flash) return;
+    const m = g.userData.sprite.material, born = performance.now();
+    let prev = new THREE.Vector3();
+    effects.push((now) => {
+      const k = Math.min(1, (now - born) / (big ? 520 : 380));
+      m.color.setRGB(1, 0.35 + 0.65 * k, 0.3 + 0.7 * k);
+      const amp = (1 - k) * (big ? 0.12 : 0.07), off = new THREE.Vector3(Math.sin(now / 18) * amp, 0, Math.cos(now / 23) * amp);
+      g.userData.offset.add(off.clone().sub(prev)); prev = off;
+      if (k < 1) return false;
+      g.userData.offset.sub(prev); m.color.setRGB(1, 1, 1); return true;
+    });
+  }
+
   // ---------- camera ----------
   function frame(v) {
     const cx = v.width / 2, cz = v.height / 2, span = Math.max(v.width, v.height);
@@ -527,6 +673,7 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
     if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
     const p = pick(e);
     if (p && p.id && onSelect) onSelect(p.id);
+    else if (p && p.cell && onCell) onCell(p.cell.x, p.cell.y);
   });
   renderer.domElement.addEventListener('pointermove', (e) => {
     if (!onHover || e.buttons) return;
@@ -561,13 +708,28 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
     for (const w of waters) { const m = w.material.map; m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; }
     for (const g of tokens.children) {
       const u = g.userData;
+      // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
+      if (u.applied) g.position.sub(u.applied);
+      u.applied = u.offset.clone();
       if (u.path.length) {
         const next = u.path[0];
         const step = 7 * dt;
         const d = g.position.distanceTo(next);
         if (d <= step) { g.position.copy(next); u.path.shift(); } else g.position.lerp(next, step / d);
       } else if (u.target) g.position.lerp(u.target, 1 - Math.exp(-dt * 10));
+      g.position.add(u.applied);
       u.turnRing.material.opacity = 0.55 + Math.sin(t * 4) * 0.35;
+    }
+    for (let i = effects.length - 1; i >= 0; i--) if (effects[i](now)) effects.splice(i, 1);
+    for (let i = pings.length - 1; i >= 0; i--) {
+      const pg = pings[i], age = (now - pg.born) / 3000;
+      pg.ring.scale.setScalar(1 + ((age * 3) % 1) * 1.5);
+      pg.ring.material.opacity = Math.max(0, 1 - age);
+      pg.label.material.opacity = Math.max(0, Math.min(1, (1 - age) * 2));
+      if (age >= 1) {
+        for (const o of [pg.ring, pg.label]) { fx.remove(o); o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        pings.splice(i, 1);
+      }
     }
     if (trail) {
       const age = (now - trail.userData.born) / 2400;
@@ -584,14 +746,17 @@ export function createMap3D(container, { onSelect, onHover } = {}) {
   }
 
   return {
-    update(v, { selected } = {}) {
+    update(v, { selected, cursor } = {}) {
       lastState = v; lastSelected = selected;
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
       updateTokens(v, selected);
       playMoves(v);
+      setCursor(v, cursor);
     },
+    ping: addPing,
+    setPath, shoot, bump, hit,
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { if (lastState) frame(lastState); },
     dispose() {

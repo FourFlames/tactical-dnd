@@ -12,6 +12,7 @@ First, look at the situation yourself. These commands are read-only and safe:
 - `node engine.js status <your-id>` — your full sheet: HP, attacks, resources, notes, persona
 - `node engine.js show --player` — the battlemap as your party sees it (no spoilers)
 - `node engine.js range <your-id> <target-id-or-cell>` — distance, line of sight, cover
+- `node engine.js look <your-id> <target-id-or-cell>` — what you can tell about it: health, footing, which of your attacks reach, how far it is to walk there
 
 **Never run any other engine command.** You declare; the DM executes.
 
