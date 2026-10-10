@@ -92,3 +92,11 @@ Plus `lighting` on the encounter and `light`, `noisy`, `descr` (what NPCs see), 
 - Model-assisted memory consolidation. Old observations roll into a memory list deterministically, keeping their ids.
 - A cognition overlay in the viewer. The inspector is `mind <id>` in the terminal: each track next to the truth.
 - Rich sound propagation (around corners, along corridors). It's a straight line with wall penalties.
+
+## Calm lairs and superstition
+
+Set `"mindConfig": {"calm": true}` for an encounter where NPCs live and work together (a warren, a barracks) and shouldn't stampede at their own shadows. Off by default; other encounters are unchanged.
+
+- **Quiet about unknowns.** An unidentified figure or noise is never shouted about. Only an identified intruder, a creature with `"uncanny": true` (undead, glowing, huge: really freaky), or a witness with `superstition ≥ 0.8` raises a warning.
+- **Second-hand reports of unknowns are discounted** (significance 1) unless the listener is superstitious.
+- **`disposition.superstition` (0-1, default 0).** Vague sightings, and reports of them, scare the superstitious more (≥0.5: full significance and extra alarm). They also won't investigate an omen: they back away to their post and watch it. Ordinary comrades and plain, identified trouble don't trigger any of this.
