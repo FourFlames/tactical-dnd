@@ -5,9 +5,13 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const C = require('./lib/core');
+const R = require('./lib/rules');
+const P = require('./lib/power');
+const Chars = require('./lib/chars');
 
 const backup = {};
-const FILES = [C.STATE, C.LOG, C.SEATS, C.INTENTS, C.LISTEN];
+const FILES = [C.STATE, C.LOG, C.SEATS, C.INTENTS, C.LISTEN, Chars.PLAYERS];
+const madeChars = [];
 for (const f of FILES) if (fs.existsSync(f)) backup[f] = fs.readFileSync(f);
 
 let pass = 0, failed = 0;
@@ -226,7 +230,106 @@ try {
   expect('seats survive a reload', C.loadState().creatures.wren.player === 'sam', '');
   r = run('unseat', 'sam');
   expect('unseat revokes the link', r.ok && !C.loadSeats().sam && !C.loadState().creatures.wren.player, r.out);
+
+  // ---------- character builder ----------
+  console.log('\ncharacter builder');
+  // The starter party, rebuilt from choices, should match the hand-written sheets in the encounter.
+  const party = {
+    rook: { name: 'Rook', level: 3, species: 'human', class: 'fighter', subclass: 'battle-master', background: 'soldier', bgBonus: { str: 2, con: 1 },
+      abilities: { method: 'pointbuy', base: { str: 14, dex: 12, con: 13, int: 10, wis: 12, cha: 10 } },
+      picks: { 'species-skill': ['perception'], 'species-feat': ['lucky'], skills: ['history', 'survival'], 'fighting-style': ['protection'], maneuvers: ['precision-attack', 'parry', 'riposte'], 'student-of-war': ['insight'] },
+      gear: { armor: 'chain-mail', shield: true, weapons: ['longsword', 'javelin'] } },
+    wren: { name: 'Wren', level: 3, species: 'halfling', class: 'rogue', subclass: 'thief', background: 'charlatan', bgBonus: { dex: 2, cha: 1 },
+      abilities: { method: 'pointbuy', base: { str: 8, dex: 14, con: 12, int: 13, wis: 12, cha: 13 } },
+      picks: { 'bg-feat:skills': ['acrobatics', 'perception', 'stealth'], skills: ['insight', 'investigation', 'athletics', 'intimidation'], expertise: ['stealth', 'investigation'] },
+      gear: { armor: 'leather', weapons: ['shortbow', 'shortsword'] } },
+    ash: { name: 'Brother Ash', level: 3, species: 'dwarf', class: 'cleric', subclass: 'life', background: 'acolyte', bgBonus: { wis: 2, cha: 1 },
+      abilities: { method: 'manual', base: { str: 14, dex: 10, con: 14, int: 10, wis: 14, cha: 11 } },
+      picks: { 'divine-order': ['protector'], skills: ['medicine', 'history'], cantrips: ['sacred-flame', 'guidance', 'light'], spells: ['healing-word', 'shield-of-faith', 'spiritual-weapon', 'hold-person', 'guiding-bolt', 'sanctuary'], 'bg-feat:cantrips': ['spare-the-dying', 'thaumaturgy'], 'bg-feat:spell': ['command'] },
+      gear: { armor: 'chain-mail', shield: true, weapons: ['mace'] } },
+  };
+  const enc = JSON.parse(fs.readFileSync('encounters/rope-bridge.json', 'utf8')).creatures;
+  for (const [id, b] of Object.entries(party)) {
+    const dv = R.derive(b), want = enc[id], got = dv.creature;
+    const diffs = [];
+    // Wren's sheet has 20 HP; the rules give 21 (8 + 5 + 5 + CON +1 x 3): the hand-written sheet is one short.
+    if (got.hp !== want.hp && !(id === 'wren' && got.hp === 21)) diffs.push(`hp ${got.hp} vs ${want.hp}`);
+    if (got.ac !== want.ac) diffs.push(`ac ${got.ac} vs ${want.ac}`);
+    for (const k of Object.keys(want.stats)) if (got.stats[k] !== want.stats[k]) diffs.push(`${k} ${got.stats[k]} vs ${want.stats[k]}`);
+    for (const [k, v] of Object.entries(want.saves)) if (got.saves[k] !== v) diffs.push(`save ${k} ${got.saves[k]} vs ${v}`);
+    for (const [k, v] of Object.entries(want.skills)) if (got.skills[k] !== v) diffs.push(`skill ${k} ${got.skills[k]} vs ${v}`);
+    for (const a of want.attacks) {
+      const m = got.attacks.find((x) => x.name === a.name && !!x.range === !!a.range) || got.attacks.find((x) => a.range && x.name === a.name + ' (thrown)');
+      if (!m || m.bonus !== a.bonus || m.damage !== a.damage) diffs.push(`attack ${a.name}: ${m ? m.bonus + ' ' + m.damage : 'missing'} vs ${a.bonus} ${a.damage}`);
+    }
+    expect(`builder reproduces ${want.name}'s sheet`, !diffs.length && !dv.errors.length && !dv.todo.length, diffs.concat(dv.errors.map((e) => e.msg), dv.todo.map((t) => t.msg)).join('; '));
+  }
+  expect('hand-entered scores wait for the DM', R.derive(party.ash).status === 'needs-dm', R.derive(party.ash).status);
+  expect('features the engine reads come through', R.derive(party.wren).creature.features.includes('Sneak Attack +2d6') && C.featuresOf(R.derive(party.wren).creature).cunningAction, JSON.stringify(R.derive(party.wren).creature.features));
+  // Every class and subclass, at several levels, filled with recommended picks, comes out complete.
+  const broken = [];
+  for (const [cid, cls] of Object.entries(R.CLASSES)) for (const sub of Object.keys(cls.subclasses)) for (const lv of [1, 3, 5, 11, 20]) {
+    const b = R.recommend({ name: 'T', level: lv, class: cid, subclass: lv >= 3 ? sub : null, species: 'human' });
+    const dv = R.derive(b);
+    if (dv.status !== 'ready') broken.push(`${cid}/${sub} ${lv}: ${[...dv.errors.map((e) => e.msg), ...dv.todo.map((t) => t.msg)].join(' ')}`);
+    if (!(dv.creature.hp > 0) || !(dv.creature.ac >= 10)) broken.push(`${cid} ${lv}: hp ${dv.creature.hp} ac ${dv.creature.ac}`);
+  }
+  expect('recommended builds are complete for every class, subclass and level', !broken.length, broken.slice(0, 5).join('\n       '));
+  const bad = R.derive(Object.assign({}, party.rook, { abilities: { method: 'standard', base: { str: 15, dex: 15, con: 13, int: 12, wis: 10, cha: 8 } } }));
+  expect('the standard array is enforced', bad.errors.some((e) => e.step === 'abilities'), JSON.stringify(bad.errors));
+  // Power: official content priced with the vocabulary sits within its budget and the creep allowance.
+  const offScale = P.BENCHMARKS.filter((b) => !b.weak).map((b) => [b.name, P.benchCost(b) / P.SLOTS[b.slot].budget]).filter(([, x]) => x < 0.6 || x > 1 + P.DEFAULTS.creep);
+  expect('official benchmarks sit inside their budgets', !offScale.length, JSON.stringify(offScale));
+  const sneaky = [{ kind: 'skill', skill: 'stealth' }, { kind: 'advantage', scope: 'skill', text: 'Stealth in dim light' }, { kind: 'minor', text: 'blend into crowds' }];
+  const strong = P.rate({ slot: 'origin-feat', effects: [{ kind: 'ac', value: 2 }] }, { level: 3 });
+  const fine = P.rate({ slot: 'origin-feat', effects: sneaky }, { level: 3 });
+  expect('homebrew over budget needs the DM; on par does not', strong.verdict === 'over' && strong.needsDm && !fine.needsDm && ['fair', 'creep', 'under'].includes(fine.verdict), `${strong.verdict} ${fine.verdict} ${fine.cost}`);
+  // Storage, suggestions and the DM's commands.
+  C.saveSeats({});
+  const tester = Chars.register('test-player-x');
+  expect('a new player gets a code', !!tester.code && Chars.profileByCode(tester.code).name === 'test-player-x', JSON.stringify(tester));
+  const ch = Chars.create(tester.name, 'Testy McTest', 3);
+  madeChars.push(ch.id);
+  ch.build = Chars.mergeBuild(ch.build, Object.assign({}, party.rook, { name: 'Testy McTest',
+    abilities: Object.assign({}, party.rook.abilities, { rolls: [18, 18, 18, 18, 18, 18], approved: true }),
+    homebrew: [{ id: 'hb1', name: 'Shadowstep', slot: 'origin-feat', text: 'Sneaky.', effects: sneaky, status: 'approved' }] }));
+  expect('players can\'t forge rolls or approvals', !ch.build.abilities.rolls && !ch.build.abilities.approved && ch.build.homebrew[0].status === 'draft', JSON.stringify([ch.build.abilities, ch.build.homebrew[0].status]));
+  expect('on-par homebrew is usable without the DM', !Chars.useHomebrew(ch, 'hb1').error && ch.build.homebrew[0].status === 'auto', ch.build.homebrew[0].status);
+  Chars.save(ch);
+  r = run('suggest', ch.id, 'Try Alert instead of Lucky: you act first and set up your allies.', '--patch', '{"picks.species-feat":["alert"]}');
+  const sg = Chars.load(ch.id).suggestions[0];
+  expect('suggest records a suggestion with a patch', r.ok && sg && sg.status === 'open' && sg.patch['picks.species-feat'][0] === 'alert' && /init 1→3/.test(r.out), r.out);
+  let c2 = Chars.load(ch.id);
+  Chars.answerSuggestion(tester.name, c2, sg.id, 'discuss', 'Does Alert stack with anything?');
+  Chars.save(c2);
+  r = run('listen', '--timeout', '3');
+  expect('builder messages wake listen', /builder:testy-mctest/.test(r.out) && /Does Alert stack/.test(r.out), r.out);
+  run('char', ch.id, 'reply', sg.id, 'It adds your proficiency bonus to initiative.');
+  c2 = Chars.load(ch.id);
+  expect('the DM can answer in the suggestion thread', c2.suggestions[0].thread.length === 2 && c2.suggestions[0].thread[1].who === 'dm', JSON.stringify(c2.suggestions[0].thread));
+  Chars.answerSuggestion(tester.name, c2, sg.id, 'accept'); Chars.save(c2);
+  c2 = Chars.load(ch.id);
+  expect('accepting applies the change', c2.build.picks['species-feat'][0] === 'alert' && Chars.derive(c2).creature.initBonus === 3, JSON.stringify(c2.build.picks['species-feat']));
+  c2.build.homebrew.push({ id: 'hb2', name: 'Iron Hide', slot: 'origin-feat', text: '+2 AC', effects: [{ kind: 'ac', value: 2 }], status: 'draft' });
+  expect('over-budget homebrew is refused automatic use', !!Chars.useHomebrew(c2, 'hb2').error, '');
+  Chars.sendHomebrew(tester.name, c2, 'hb2', 'I want to be a wall'); Chars.save(c2);
+  expect('sent homebrew waits for the DM', Chars.derive(c2).status === 'needs-dm', Chars.derive(c2).status);
+  r = run('char', ch.id, 'decline', 'hb2', 'Too much at 3rd level; try +1 AC while you have a shield.');
+  expect('the DM can decline with a reason', r.ok && Chars.load(ch.id).build.homebrew[1].status === 'declined', r.out);
+  r = run('suggest', ch.id, 'Here is a version that works.', '--patch', '{"homebrew.hb2":{"name":"Iron Hide","slot":"origin-feat","text":"+1 AC while you hold a shield.","effects":[{"kind":"ac","value":1,"when":"often"}]},"picks.species-feat":["hb:hb2"]}');
+  c2 = Chars.load(ch.id);
+  Chars.answerSuggestion(tester.name, c2, c2.suggestions[1].id, 'accept'); Chars.save(c2);
+  expect('a DM-written homebrew is approved on accept and applies', c2.build.homebrew[1].status === 'approved' && Chars.derive(c2).creature.ac === 19, `${c2.build.homebrew[1].status} ac ${Chars.derive(c2).creature.ac}`);
+  run('load', 'rope-bridge');
+  C.saveSeats({ 'test-player-x': { token: tester.code, creatures: [] } });
+  r = run('char', ch.id, 'spawn', 'G8');
+  const sp = C.loadState().creatures[ch.id];
+  expect('a ready character joins the encounter, seated to its owner', r.ok && sp && sp.pos === 'G8' && sp.player === 'test-player-x' && C.loadSeats()['test-player-x'].creatures.includes(ch.id), r.out);
+  C.saveSeats({});
+  r = run('seat', 'test-player-x', ch.id);
+  expect('seating reuses the player\'s sign-in code', C.loadSeats()['test-player-x'].token === tester.code, r.out);
 } finally {
+  for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
 }
 console.log(`\n${pass} passed, ${failed} failed`);

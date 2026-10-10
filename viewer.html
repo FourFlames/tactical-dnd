@@ -42,6 +42,8 @@
   .stage { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 18px 22px 12px; }
   .topbar { display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px; }
   .title { font-family: var(--display); font-size: 28px; letter-spacing: .04em; color: var(--gold); margin: 0; font-weight: 700; }
+  .home { color: var(--ink-faint); text-decoration: none; font-size: 18px; align-self: center; }
+  .home:hover { color: var(--gold); }
   .round { font-family: var(--mono); color: var(--ink-dim); font-size: 13px; }
   .spacer { flex: 1; }
   .toggle { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
@@ -260,6 +262,7 @@
 <div class="app">
   <main class="stage">
     <div class="topbar">
+      <a class="home" href="/" title="Home: characters and games">&larr;</a>
       <h1 class="title" id="title">Battlemap</h1>
       <span class="round" id="round"></span>
       <span class="spacer"></span>
@@ -328,7 +331,7 @@ const THREE_D = params.has('3d');
 // Who this viewer acts as: a seat, or (on the DM's machine, player view) the local player.
 const TOKEN = SEAT || (DM ? null : 'local');
 // Seated players keep their seat when switching 2D/3D; they never get the DM toggle.
-const href = (dm, td) => '/' + [SEAT && 'seat=' + encodeURIComponent(SEAT), dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c);
+const href = (dm, td) => '/play' + [SEAT && 'seat=' + encodeURIComponent(SEAT), dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c);
 document.getElementById('tPlayer').href = href(false, THREE_D);
 document.getElementById('tDm').href = href(true, THREE_D);
 document.getElementById('t2d').href = href(DM, false);

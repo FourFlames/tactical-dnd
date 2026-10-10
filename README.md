@@ -10,7 +10,7 @@ You need Node 18+ and Claude Code, logged in with your Claude subscription. (If 
 
 ```bash
 # terminal 1: the battlemap
-node server.js            # open http://localhost:5173
+node server.js            # open http://localhost:5173 (home: sign in, build characters, join games)
 
 # terminal 2: the DM
 claude                    # or: claude --model haiku  (faster, cheaper turns)
@@ -18,7 +18,7 @@ claude                    # or: claude --model haiku  (faster, cheaper turns)
 
 Then tell the DM something like: *"Load rope-bridge and let's play. I'm Rook."*
 
-The viewer has a **Player** view (fog of war, hidden enemies stay hidden, enemy HP shown only as healthy/bloodied) and a **DM** view at `/?dm` (everything, including secret notes). Both come in **2D** and **3D** (`/?3d`, or the toggle in the top bar). The 3D map shows floor heights, props and walls with procedurally generated textures: drag to orbit, right-drag to pan, scroll to zoom, and **Low walls** cuts walls down so you can see into rooms. It loads three.js from a CDN, so it needs an internet connection; the 2D map doesn't.
+The battlemap at `/play` has a **Player** view (fog of war, hidden enemies stay hidden, enemy HP shown only as healthy/bloodied) and a **DM** view at `/play?dm` (everything, including secret notes). Both come in **2D** and **3D** (`/play?3d`, or the toggle in the top bar). The 3D map shows floor heights, props and walls with procedurally generated textures: drag to orbit, right-drag to pan, scroll to zoom, and **Low walls** cuts walls down so you can see into rooms. It loads three.js from a CDN, so it needs an internet connection; the 2D map doesn't.
 
 ## Playing with friends
 
@@ -27,7 +27,18 @@ Tell the DM who's joining and which character they play ("Sam is joining as Wren
 - **Same Wi-Fi:** the printed LAN link works as is.
 - **Over the internet:** both of you install [Tailscale](https://tailscale.com), then `seat sam wren --host http://<your-tailscale-ip>:5173`. Avoid exposing the port to the open internet.
 - The link is the player's key, so share it privately. `unseat sam` revokes it.
-- The DM view (`/?dm`) only works from the machine running the server.
+- The DM view (`/play?dm`) only works from the machine running the server.
+- A player who already made a profile in the character builder keeps their code: `seat` reuses it, so the code they sign in with is also their link to the table.
+
+## Making characters
+
+Everyone builds their own character in the browser. Open the home page, create a player (you get a word code to sign in with from any device), and start a character. New characters start at 3rd level; any level from 1 to 20 works.
+
+- The builder goes step by step: concept, species, class, background, ability scores, feats, spells, gear, then finishing touches. The sheet on the right updates with every choice. **Fill in everything I haven't chosen** completes a character with sensible picks that you can then change.
+- It uses the 2024 rules: all 12 classes with one or two subclasses each, the 2024 species and backgrounds, origin and general feats, standard weapons and armor, and spells up to 3rd level (higher-level spells can be added by name). Ability scores come from the standard array, point buy, server-rolled 4d6, or hand entry (the DM OKs that).
+- **Homebrew** (a feat, a fighting style, a trait, an item) gets a power meter that compares it with official content. If it's on par, or only a little stronger, you can use it right away. Anything bigger goes to the DM, and JD helps find a fair version. How the rating works: [docs/character-builder.md](docs/character-builder.md).
+- **The DM only steps in when it's needed**: when you ask ("I want to feel like a sniper nobody sees"), or for homebrew that needs a look. Their ideas show up as gold highlights on the fields they'd change, with **Accept**, **Decline** and **Talk about it**.
+- When a character is ready, the DM brings them into a game with `node engine.js char <id> spawn <cell>`, and the home page shows **Join the table**.
 
 ## How it fits together
 
@@ -45,14 +56,17 @@ you ──► Claude Code (DM, reads CLAUDE.md)
 | `CLAUDE.md` | The DM's instructions: turn loop, rulings, escalation, the library workflow |
 | `engine.js` | The rules engine CLI. `node engine.js help` lists commands |
 | `lib/core.js` | Grid math, pathing, line of sight, cover, dice, player/DM views |
-| `server.js`, `viewer.html` | Local viewer, no dependencies |
+| `server.js`, `viewer.html` | Local server and battlemap, no dependencies |
+| `home.html`, `builder.html` | Home page (sign in, your characters, your game) and the character builder |
+| `lib/rules.js`, `lib/power.js` | Character rules (choices → stat block) and the homebrew power rating; shared by the server and the browser |
+| `lib/chars.js` | Player profiles (`players.json`), characters (`characters/`), suggestions, homebrew approval |
 | `viewer/map3d.js`, `viewer/textures.js` | The 3D map (three.js) and its procedural textures |
 | `encounters/` | Encounter files: map rows, terrain legend with tags, creatures |
 | `ext/` | Library commands (`shove.js` is the example and template) |
 | `pending/` | Proposed library commands awaiting JD's stamp and your approval |
 | `.claude/agents/pc.md` | Plays LLM party members (Haiku). Declares actions; the DM executes |
-| `.claude/agents/jd.md` | J. D., Rules Lawyer (Opus). Hard rulings and library reviews |
-| `test.js` | Engine smoke tests: `node test.js` |
+| `.claude/agents/jd.md` | J. D., Rules Lawyer (Opus). Hard rulings, library reviews, homebrew |
+| `test.js` | Engine and builder tests: `node test.js` |
 
 ## Making encounters
 

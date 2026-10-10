@@ -130,10 +130,122 @@ function readBody(req, limit, cb) {
   req.on('end', () => cb(body));
 }
 
+// ---------- profiles and the character builder ----------
+// A profile is a name plus a sign-in code (the same word code a seat link uses). The browser keeps
+// the code and sends it as `token`. Characters belong to a profile; only the owner can see or change one.
+const Chars = require('./lib/chars');
+const R = require('./lib/rules');
+const lastReg = new Map();
+function profileFor(req, token) {
+  const ip = req.socket.remoteAddress, now = Date.now();
+  const m = misses.get(ip);
+  if (m && m.count >= 10 && now - m.since < LOCKOUT) return { locked: true };
+  const p = Chars.profileByCode(token);
+  if (p) return p;
+  if (!m || now - m.since > LOCKOUT) misses.set(ip, { count: 1, since: now }); else m.count++;
+  return null;
+}
+// Everything the home page shows: your characters and, if the DM seated you, the game you're in.
+function homeFor(req, p) {
+  const s = C.loadState();
+  const seat = C.loadSeats()[p.name];
+  const chars = Chars.list(p.name).map((c) => {
+    const d = Chars.derive(c);
+    return { id: c.id, name: c.build.name, summary: R.summary(c.build), status: d.status, level: c.build.level, updated: c.updated, color: (c.build.details || {}).color,
+      open: (c.suggestions || []).filter((x) => x.status === 'open').length, inGame: !!(s && s.creatures && s.creatures[c.id] && s.creatures[c.id].char === c.id) };
+  });
+  const game = s ? { name: s.name, round: s.round, seat: seat ? { token: seat.token, creatures: seat.creatures.filter((id) => s.creatures[id]).map((id) => ({ id, name: s.creatures[id].name })) } : null } : null;
+  return { name: p.name, code: p.code, characters: chars, game, local: isLocal(req), dm: C.dmPresence() };
+}
+function charApi(req, res, msg) {
+  const p = profileFor(req, msg.token);
+  if (p && p.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes.' });
+  if (!p) return json(res, 403, { error: 'Sign in first.' });
+  if (msg.action === 'new') {
+    if (Chars.list(p.name).length >= 30) return json(res, 400, { error: 'That\'s a lot of characters. Delete one first.' });
+    const c = Chars.create(p.name, msg.name, msg.level);
+    return json(res, 200, Chars.view(c));
+  }
+  const c = Chars.load(msg.id);
+  if (!c || c.owner !== p.name) return json(res, 404, { error: 'No such character.' });
+  let r = { ok: true };
+  switch (msg.action) {
+    case 'save': c.build = Chars.mergeBuild(c.build, msg.build); break;
+    case 'delete': fs.unlinkSync(path.join(Chars.DIR, c.id + '.json')); Chars.touch(); return json(res, 200, { ok: true, deleted: c.id });
+    case 'recommend': c.build = Chars.mergeBuild(c.build, R.recommend(c.build, { config: Chars.config() })); break;
+    case 'roll-abilities': r = Chars.rollAbilities(c); break;
+    case 'roll-hp': r = Chars.rollHp(c); break;
+    case 'use-homebrew': r = Chars.useHomebrew(c, msg.hb); break;
+    case 'send-homebrew': r = Chars.sendHomebrew(p.name, c, msg.hb, msg.note); break;
+    case 'ask': r = Chars.ask(p.name, c, String(msg.text || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, MAX_TEXT)); break;
+    case 'suggestion': r = Chars.answerSuggestion(p.name, c, msg.sid, msg.answer, String(msg.text || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, MAX_TEXT)); break;
+    default: return json(res, 400, { error: 'Unknown action.' });
+  }
+  if (r.error) return json(res, 400, { error: r.error });
+  Chars.save(c);
+  return json(res, 200, Object.assign(Chars.view(c), { result: r }));
+}
+const page = (res, name) => send(res, 200, 'text/html; charset=utf-8', fs.readFileSync(path.join(__dirname, name)));
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  // Old links (/?seat=..., /?dm) still open the map; plain / is the home page.
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    return send(res, 200, 'text/html; charset=utf-8', fs.readFileSync(path.join(__dirname, 'viewer.html')));
+    if (url.searchParams.has('seat') || url.searchParams.has('dm') || url.searchParams.has('3d')) return page(res, 'viewer.html');
+    return page(res, 'home.html');
+  }
+  if (url.pathname === '/play') return page(res, 'viewer.html');
+  if (url.pathname === '/build') return page(res, 'builder.html');
+  // The rules and power modules run in the builder too.
+  const libMod = /^\/lib\/(rules|power)\.js$/.exec(url.pathname);
+  if (libMod) return send(res, 200, 'text/javascript; charset=utf-8', fs.readFileSync(path.join(__dirname, 'lib', libMod[1] + '.js')));
+  if (url.pathname === '/api/login' && req.method === 'POST') {
+    return readBody(req, 1024, (body) => {
+      let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
+      const p = profileFor(req, msg.code);
+      if (p && p.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes.' });
+      if (!p) return json(res, 404, { error: 'No player has that code. Check it, or create a new player.' });
+      return json(res, 200, homeFor(req, p));
+    });
+  }
+  if (url.pathname === '/api/register' && req.method === 'POST') {
+    return readBody(req, 1024, (body) => {
+      let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
+      const ip = req.socket.remoteAddress;
+      const recent = (lastReg.get(ip) || []).filter((t) => Date.now() - t < 3600e3);
+      if (recent.length >= 10) return json(res, 429, { error: 'Too many new players from here. Try again later.' });
+      const p = Chars.register(msg.name);
+      if (p.error) return json(res, 400, p);
+      lastReg.set(ip, recent.concat(Date.now()));
+      return json(res, 200, homeFor(req, p));
+    });
+  }
+  if (url.pathname === '/api/me') {
+    const p = profileFor(req, url.searchParams.get('token'));
+    if (p && p.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes.' });
+    if (!p) return json(res, 403, { error: 'Sign in again.' });
+    return json(res, 200, homeFor(req, p));
+  }
+  if (url.pathname === '/api/game') {
+    // For the home page before sign-in: is there a game on, and what is it called.
+    const s = C.loadState();
+    return json(res, 200, s ? { name: s.name, round: s.round, local: isLocal(req) } : { name: null, local: isLocal(req) });
+  }
+  if (url.pathname === '/api/char' && req.method === 'GET') {
+    const p = profileFor(req, url.searchParams.get('token'));
+    if (!p || p.locked) return json(res, 403, { error: 'Sign in first.' });
+    const c = Chars.load(url.searchParams.get('id'));
+    if (!c || c.owner !== p.name) return json(res, 404, { error: 'No such character.' });
+    return json(res, 200, Chars.view(c));
+  }
+  if (url.pathname === '/api/char' && req.method === 'POST') {
+    return readBody(req, 64 * 1024, (body) => {
+      let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
+      const ip = req.socket.remoteAddress;
+      if (Date.now() - (lastAct.get('char:' + ip) || 0) < 100) return json(res, 429, { error: 'Easy.' });
+      lastAct.set('char:' + ip, Date.now());
+      try { return charApi(req, res, msg); } catch (e) { return json(res, 500, { error: e.message }); }
+    });
   }
   // The 3D map's modules. Only plain file names inside viewer/, nothing else on disk.
   const mod = /^\/viewer\/([a-z0-9-]+\.js)$/.exec(url.pathname);
@@ -146,7 +258,7 @@ const server = http.createServer((req, res) => {
   const join = /^\/j\/([^/]+)$/.exec(url.pathname);
   if (join) {
     let code = ''; try { code = C.normCode(decodeURIComponent(join[1])); } catch { /* bad escape */ }
-    res.writeHead(302, { Location: '/?seat=' + encodeURIComponent(code) });
+    res.writeHead(302, { Location: '/play?seat=' + encodeURIComponent(code) });
     return res.end();
   }
   if (url.pathname === '/api/state') {
@@ -302,14 +414,15 @@ function notify() {
   pending = setTimeout(() => { for (const c of clients) c.write('data: change\n\n'); }, 60);
 }
 // watchFile polls, which survives the engine's write-then-rename saves.
-for (const f of [C.STATE, C.LOG, C.INTENTS]) fs.watchFile(f, { interval: 200 }, notify);
+for (const f of [C.STATE, C.LOG, C.INTENTS, Chars.STAMP]) fs.watchFile(f, { interval: 200 }, notify);
 // listening.json is touched every second while the DM listens, so push only when presence flips.
 let wasListening = false;
 setInterval(() => { const now = C.dmPresence().listening; if (now !== wasListening) { wasListening = now; notify(); } }, 1000);
 setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
 
 server.listen(PORT, HOST, () => {
-  console.log(`Battlemap viewer: http://localhost:${PORT}`);
-  console.log(`DM view (spoilers, this machine only): http://localhost:${PORT}/?dm`);
+  console.log(`Home (sign in, character builder, games): http://localhost:${PORT}`);
+  console.log(`Battlemap: http://localhost:${PORT}/play`);
+  console.log(`DM view (spoilers, this machine only): http://localhost:${PORT}/play?dm`);
   console.log('Remote players: node engine.js seat <player> <id> prints their personal link.');
 });
