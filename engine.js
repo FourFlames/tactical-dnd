@@ -1246,7 +1246,7 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
   if (verb === 'say') {
     const text = rest.join(' ').trim();
     if (!text) fail('say needs the words, in quotes.');
-    const st = { do: 'say', text, to: flags.to && flags.to !== 'all' ? String(flags.to).split(',') : 'all', channel: flags.channel || 'speech', kind: flags.kind || 'report' };
+    const st = { do: 'say', text, to: flags.to && flags.to !== 'all' ? String(flags.to).split(',') : 'all', channel: flags.channel || 'speech', kind: flags.kind || 'report', certainty: flags.certainty, persuade: flags.persuasion !== undefined ? (flags.persuasion === true ? true : Number(flags.persuasion)) : undefined };
     const err = Minds.checkStep(s, m, st);
     if (err) fail(err);
     const r = Minds.speak(s, id, st);
@@ -1314,7 +1314,7 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
   return s;
 });
 
-cmd('speak', 'speak <id> "<words>" [--channel speech|shout|whisper] [--to <id,id>] [--as <npc-id>] [--deception <total>]   a character speaks aloud; NPC minds in earshot hear it (clearly, muffled or faintly). --as: pretending to be that NPC (roll Deception first)', (s, { pos, flags }) => {
+cmd('speak', 'speak <id> "<words>" [--channel speech|shout|whisper] [--to <id,id>] [--kind order|warning|report] [--certainty sure|fairly sure|unsure|0-1] [--bluff] [--persuasion [<total>]] [--as <npc-id>] [--deception <total>]   a character speaks aloud; NPC minds in earshot hear it (clearly, muffled or faintly). --bluff: overselling or lying (Deception vs each listener Insight; rolled unless --deception given). --persuasion: put their weight behind an honest claim (rolled unless a total is given). --kind order: a task order to those who rank below the speaker (they accept or decline). --as: pretending to be that NPC (roll Deception first)', (s, { pos, flags }) => {
   need(s);
   const id = pos[0];
   who(s, id);
@@ -1322,7 +1322,10 @@ cmd('speak', 'speak <id> "<words>" [--channel speech|shout|whisper] [--to <id,id
   if (!text) fail('speak needs the words, in quotes.');
   const channel = flags.channel || 'speech';
   if (flags.as && !s.creatures[flags.as]) fail(`No creature "${flags.as}" to pretend to be.`);
-  const r = Minds.speak(s, id, { text, channel, kind: flags.kind || 'report', to: flags.to ? String(flags.to).split(',') : 'all', as: flags.as || undefined, deception: flags.deception !== undefined ? Number(flags.deception) : undefined });
+  const kind = flags.kind || 'report';
+  const orderId = kind === 'order' ? `ord${(s.mseq = (s.mseq || 0) + 1)}` : undefined; // a party leader's spoken order is filed like an officer's
+  const r = Minds.speak(s, id, { text, channel, kind, orderId, to: flags.to ? String(flags.to).split(',') : 'all', as: flags.as || undefined, deception: flags.deception !== undefined ? Number(flags.deception) : undefined,
+    certainty: flags.certainty !== undefined ? flags.certainty : undefined, bluff: !!flags.bluff, persuade: flags.persuasion !== undefined ? (flags.persuasion === true ? true : Number(flags.persuasion)) : undefined });
   if (r.error) fail(r.error);
   console.log(`${s.creatures[id].name} ${channel === 'shout' ? 'shouts' : channel === 'whisper' ? 'whispers' : 'says'}: “${text}”. Heard by: ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}.`);
   return s;

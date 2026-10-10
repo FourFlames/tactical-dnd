@@ -1,0 +1,964 @@
+{
+  "name": "Greyhold Barracks",
+  "intro": "A grey autumn morning at the Greyhold border garrison. Five new recruits, three weeks in, are scattered through the barracks: one making his bunk, one swinging a wooden sword in the yard, one mending a strap at the mess table, one staring at the stew pot, one reading. Corporal Hennick stirs the pot and keeps an eye on the larder. They are yours to make soldiers of, Commander.",
+  "dmNotes": "Not a fight: a sandbox for giving orders. The player is the Commander (cmdr). Everyone is on the same side; nobody starts hostile. GIVING ORDERS: the Commander has no mind (the player is the mind); every mind knows them as rank 5. A task order: speak cmdr \"<words>\" --kind order --to pell (several: --to dace,mags; --channel shout for the yard or through walls; speech carries 30 ft). Plain talk: speak cmdr \"...\" without --kind. A rule that holds until lifted (\"nobody leaves the yard\"): speak it with --kind order --to all; it is taken in as a standing order. Then tick: minds with news think on their own through OpenRouter (DeepSeek, per minds.config.json; needs OPENROUTER_API_KEY, otherwise they fall back to accepting and waiting) and carry out their plans. Repeat tick until the job is done; minds shows tokens and cost. Ranks: Commander 5 > Hennick 3 > rookies 1. Hennick can give the rookies orders too. Rookies can only ask each other. FETCHING: there is no carry command. When a rookie ends a turn next to the item, narrate the pick-up and record it with describe <rookie> \"carrying a loaf and a bowl of stew\"; when they reach the Commander, describe <rookie> --clear and hand it over. Food: stew pot on the hearth P2 (bowls on the mantel; Hennick serves), larder Q2:T5 behind the larder door (bread Q2, cheese R2, salted pork S2, onions/turnips T2, apple barrel T3, flour T4, ale cask T5). Water barrel J2. Hennick challenges anyone taking from the larder unless they say it is for the Commander. Tobin carrying food: DC 12 Wisdom save or he takes a bite (nobody notices unless adjacent). SPARRING: the ring is E12:H15 (sand). Practice gear on the rack C10:D10. Everyone carries a practice sword already. Sparring is to first touch or first yield, not to the death: resolve with attack <a> <b> \"Practice sword\" (or let a mind attack step do it). A drop to 0 HP is knocked flat, not dying: heal them 1 and condition add prone. Dace fights dirty if losing (ruling: sand in the eyes, DC 12 Dex save or blinded 1 round; the Commander may notice with Perception vs his Sleight of Hand). Mags beats Dace about half the time. Tobin wants out of the ring. SECRETS: Tobin is the apple thief (five apples in his footlocker F6, DC 12 Investigation). Ilse suspects him (saw cores). Hennick suspects him. Tobin believes the well (Q14) is haunted and balks at an order to draw water from it (DC 13 Intimidation or Persuasion from the Commander overrides). Commander's chest T6: dispatches, 12 gp petty cash. Armory B7:C9 is locked (keys: Commander, Hennick): real steel, spears, shields, two crossbows. If rookies see one attack another outside sparring, the engine may flag it as hostile and stop \"tick\" for initiative; that is a real brawl, run it or have the Commander bark them apart.",
+  "lighting": {
+    "ambient": "bright"
+  },
+  "mindConfig": {
+    "deliberateAt": 2,
+    "calm": true
+  },
+  "legend": {
+    "g": {
+      "name": "grass",
+      "tags": []
+    },
+    ".": {
+      "name": "plank floor",
+      "tags": []
+    },
+    ",": {
+      "name": "packed dirt",
+      "tags": []
+    },
+    "o": {
+      "name": "sparring ring (raked sand)",
+      "tags": [],
+      "look": "A square of raked sand roped off with old cord. Scuffed footprints everywhere."
+    },
+    "B": {
+      "name": "bunk",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "climbable"
+      ],
+      "object": {
+        "kind": "bunk",
+        "height": 5
+      },
+      "look": "A double bunk, straw mattresses, blankets folded (mostly)."
+    },
+    "f": {
+      "name": "footlocker",
+      "tags": [
+        "difficult"
+      ],
+      "object": {
+        "kind": "chest",
+        "height": 2
+      },
+      "look": "A rookie's footlocker, initials scratched in the lid."
+    },
+    "t": {
+      "name": "mess table",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "table",
+        "height": 3
+      },
+      "look": "A long trestle table with benches, scarred by knives and dice."
+    },
+    "w": {
+      "name": "water barrel",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "barrel",
+        "height": 4
+      },
+      "look": "A water barrel with a tin ladle on a hook. Fresh this morning."
+    },
+    "F": {
+      "name": "hearth",
+      "tags": [
+        "impassable"
+      ],
+      "object": {
+        "kind": "hearth",
+        "height": 5
+      },
+      "look": "A stone hearth; a black iron pot of barley-and-mutton stew simmers on the hook. Wooden bowls stacked on the mantel."
+    },
+    "L": {
+      "name": "larder shelves",
+      "tags": [
+        "impassable",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "shelf",
+        "height": 6
+      },
+      "look": "Shelves of rations: loaves of brown bread, a wheel of hard cheese, a side of salted pork, strings of onions and turnips."
+    },
+    "b": {
+      "name": "apple barrel",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "barrel",
+        "height": 4
+      },
+      "look": "A barrel of autumn apples, about half full."
+    },
+    "s": {
+      "name": "flour sacks",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "sacks",
+        "height": 3
+      },
+      "look": "Sacks of flour and oats, stacked."
+    },
+    "k": {
+      "name": "ale cask",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "barrel",
+        "height": 4
+      },
+      "look": "A cask of small beer, tapped. A chalk tally on the side."
+    },
+    "c": {
+      "name": "commander's chest",
+      "tags": [
+        "difficult"
+      ],
+      "object": {
+        "kind": "chest",
+        "height": 3
+      },
+      "look": "An iron-bound chest, locked."
+    },
+    "d": {
+      "name": "commander's desk",
+      "tags": [
+        "impassable",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "desk",
+        "height": 3
+      },
+      "look": "A heavy desk under a spread map of the border roads, weighted with a dagger and an inkpot."
+    },
+    "A": {
+      "name": "weapon racks",
+      "tags": [
+        "impassable"
+      ],
+      "object": {
+        "kind": "rack",
+        "height": 6
+      },
+      "look": "Racks of real steel: spears, arming swords, round shields, two crossbows."
+    },
+    "r": {
+      "name": "practice rack",
+      "tags": [
+        "impassable"
+      ],
+      "object": {
+        "kind": "rack",
+        "height": 5
+      },
+      "look": "Wooden practice swords, two quarterstaves, padded helmets that smell of old sweat."
+    },
+    "x": {
+      "name": "training dummy",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "dummy",
+        "height": 6
+      },
+      "look": "A straw-stuffed dummy on a post, hacked half to pieces."
+    },
+    "h": {
+      "name": "hay bales",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "climbable",
+        "flammable"
+      ],
+      "object": {
+        "kind": "hay",
+        "height": 4
+      }
+    },
+    "W": {
+      "name": "well",
+      "tags": [
+        "impassable",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "well",
+        "height": 3
+      },
+      "look": "An old stone well with a bucket and crank. The rope creaks in the wind."
+    }
+  },
+  "rows": [
+    "gggggggggggggggggggggg",
+    "gBB.BB.BBw.....FLLLLgg",
+    "gff.ff.ff..........bgg",
+    "g.........ttt......sgg",
+    "g...BB.BB..........kgg",
+    "g...ff.ff..........cgg",
+    "gAA.........ttt..d..gg",
+    "g................d..gg",
+    "gAA.................gg",
+    "g,rr,,,,,,,,,,,,,,,,,g",
+    "g,,,,,,,,,,,,,,,,,,hhg",
+    "g,,,oooo,,,x,x,,,,,,,g",
+    "g,,,oooo,,,,,,,,,,,,,g",
+    "g,,,oooo,,,x,,,,W,,,,g",
+    "g,,,oooo,,,,,,,,,,,,,g",
+    "gggggggggggggggggggggg"
+  ],
+  "walls": [
+    "B2-U2",
+    "B2-B10",
+    "U2-U10",
+    "B10-K10",
+    {
+      "from": "K10",
+      "to": "L10",
+      "kind": "door",
+      "id": "front",
+      "name": "barracks door",
+      "open": true
+    },
+    "L10-U10",
+    "J2-J5",
+    {
+      "from": "J5",
+      "to": "J6",
+      "kind": "door",
+      "id": "bunks",
+      "name": "bunk room door",
+      "open": true
+    },
+    "J6-J10",
+    "B7-D7",
+    "D7-D8",
+    {
+      "from": "D8",
+      "to": "D9",
+      "kind": "door",
+      "id": "armory",
+      "name": "armory door",
+      "locked": true
+    },
+    "D9-D10",
+    "Q2-Q3",
+    {
+      "from": "Q3",
+      "to": "Q4",
+      "kind": "door",
+      "id": "larder",
+      "name": "larder door"
+    },
+    "Q4-Q6",
+    "Q6-U6",
+    "Q6-Q7",
+    {
+      "from": "Q7",
+      "to": "Q8",
+      "kind": "door",
+      "id": "office",
+      "name": "office door",
+      "open": true
+    },
+    "Q8-Q10"
+  ],
+  "creatures": {
+    "cmdr": {
+      "name": "Commander",
+      "side": "party",
+      "controller": "player",
+      "pos": "S8",
+      "hp": 44,
+      "ac": 16,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 16,
+        "dex": 12,
+        "con": 14,
+        "int": 12,
+        "wis": 13,
+        "cha": 14
+      },
+      "saves": {
+        "str": 6,
+        "con": 5
+      },
+      "skills": {
+        "athletics": 6,
+        "intimidation": 5,
+        "insight": 4,
+        "perception": 4,
+        "persuasion": 5
+      },
+      "attacks": [
+        {
+          "name": "Longsword",
+          "bonus": 6,
+          "damage": "1d8+3",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Practice sword",
+          "bonus": 6,
+          "damage": "1d4+3",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "keys": [
+        "armory",
+        "larder",
+        "office"
+      ],
+      "notes": "Fighter 5 (veteran officer). Extra Attack. Second Wind 1d10+5 (1/rest). Action Surge (1/rest). Carries the keys to the armory and the chest. Gives orders to the rookies through their minds (see dmNotes).",
+      "descr": "the garrison commander, in a worn breastplate"
+    },
+    "hennick": {
+      "name": "Corporal Hennick",
+      "side": "party",
+      "controller": "dm",
+      "pos": "P3",
+      "hp": 22,
+      "ac": 12,
+      "speed": 25,
+      "initBonus": 0,
+      "stats": {
+        "str": 14,
+        "dex": 10,
+        "con": 14,
+        "int": 11,
+        "wis": 13,
+        "cha": 9
+      },
+      "skills": {
+        "perception": 4,
+        "insight": 3,
+        "intimidation": 1
+      },
+      "attacks": [
+        {
+          "name": "Iron ladle",
+          "bonus": 4,
+          "damage": "1d4+2",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 4,
+          "damage": "3",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "keys": [
+        "larder",
+        "armory"
+      ],
+      "notes": "Quartermaster and cook. Bad knee (speed 25). Thirty years in. Counts every loaf.",
+      "descr": "a stout grey corporal in a stained apron",
+      "mind": {
+        "role": "quartermaster and cook",
+        "faction": "the Greyhold garrison",
+        "rank": 3,
+        "tier": "elite",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "P3",
+        "facing": "W",
+        "personality": [
+          "Gruff, sardonic, secretly fond of the rookies. Calls everyone \"lad\" or \"lass\".",
+          "The larder is his kingdom. Rations are counted; nobody takes so much as an apple without him knowing why.",
+          "Respects the Commander completely, but will grumble about it.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "cooking",
+          "counting stores",
+          "spotting a lie",
+          "old war stories"
+        ],
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.6,
+          "obedience": 0.85,
+          "curiosity": 0.4,
+          "impulsiveness": 0.2,
+          "sociability": 0.6
+        },
+        "motivations": [
+          "Keep the stew on and the larder honest.",
+          {
+            "description": "Anyone fetching food from the larder must say who it is for; if it is for the Commander, give it gladly.",
+            "priority": 1
+          },
+          {
+            "description": "Somebody has been pinching apples. Find out who.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "cmdr": {
+            "trust": 0.9,
+            "loyalty": 0.9,
+            "authority": 1
+          },
+          "tobin": {
+            "trust": 0.3,
+            "notes": [
+              "Crumbs on his shirt every morning. Prime suspect for the apples."
+            ]
+          },
+          "mags": {
+            "trust": 0.8,
+            "notes": [
+              "Sensible girl. Would make corporal."
+            ]
+          },
+          "dace": {
+            "trust": 0.4,
+            "notes": [
+              "All mouth."
+            ]
+          }
+        }
+      }
+    },
+    "pell": {
+      "side": "party",
+      "controller": "dm",
+      "hp": 12,
+      "ac": 11,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 13,
+        "dex": 10,
+        "con": 14,
+        "int": 9,
+        "wis": 9,
+        "cha": 11
+      },
+      "skills": {
+        "athletics": 3,
+        "perception": 2
+      },
+      "attacks": [
+        {
+          "name": "Practice sword",
+          "bonus": 3,
+          "damage": "1d4+1",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 3,
+          "damage": "2",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "name": "Pell Ashby",
+      "pos": "D3",
+      "notes": "Farm boy, 17. Eager and clumsy (DM: whenever he carries anything spillable or fragile, a natural 1-5 on a Dex check means he drops or spills it).",
+      "descr": "a gangly, freckled recruit",
+      "mind": {
+        "role": "recruit",
+        "faction": "the Greyhold garrison",
+        "rank": 1,
+        "tier": "minion",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "D3",
+        "facing": "E",
+        "personality": [
+          "Desperately eager to please the Commander. Says \"Yes, Commander!\" a little too loud.",
+          "Clumsy; trips over his own boots. Asks one follow-up question too many.",
+          "Worships Dace and copies him.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "hauling things",
+          "farm work",
+          "enthusiasm"
+        ],
+        "disposition": {
+          "vigilance": 0.4,
+          "courage": 0.6,
+          "obedience": 0.95,
+          "curiosity": 0.6,
+          "impulsiveness": 0.6,
+          "sociability": 0.8
+        },
+        "motivations": [
+          "Impress the Commander.",
+          {
+            "description": "Get Dace to think he is all right.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "dace": {
+            "trust": 0.9,
+            "loyalty": 0.8
+          },
+          "cmdr": {
+            "trust": 0.9,
+            "loyalty": 0.9,
+            "authority": 1
+          }
+        }
+      }
+    },
+    "dace": {
+      "side": "party",
+      "controller": "dm",
+      "hp": 13,
+      "ac": 12,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 15,
+        "dex": 14,
+        "con": 12,
+        "int": 10,
+        "wis": 8,
+        "cha": 13
+      },
+      "skills": {
+        "athletics": 4,
+        "perception": 1,
+        "intimidation": 3,
+        "sleight-of-hand": 4
+      },
+      "attacks": [
+        {
+          "name": "Practice sword",
+          "bonus": 4,
+          "damage": "1d4+2",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 4,
+          "damage": "3",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "name": "Dace Kettle",
+      "pos": "F13",
+      "notes": "Tavern brawler, 19. Best fighter of the lot and knows it. Shows off; fights dirty if he is losing (DM: a trip, sand in the eyes).",
+      "descr": "a cocky recruit with a broken nose, swinging a wooden sword",
+      "mind": {
+        "role": "recruit",
+        "faction": "the Greyhold garrison",
+        "rank": 1,
+        "tier": "minion",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "F13",
+        "facing": "N",
+        "personality": [
+          "Cocky, mouthy, quick with a joke at someone else's expense.",
+          "Obeys the Commander, slowly, and with a remark. Hates chores; loves sparring.",
+          "Bullies Tobin when nobody is looking.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "brawling",
+          "swordplay",
+          "dice"
+        ],
+        "disposition": {
+          "vigilance": 0.4,
+          "courage": 0.8,
+          "obedience": 0.4,
+          "curiosity": 0.4,
+          "impulsiveness": 0.75,
+          "sociability": 0.7
+        },
+        "motivations": [
+          "Be the best fighter in the barracks, and be seen to be.",
+          {
+            "description": "Avoid fetching and carrying; that is for Pell.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "tobin": {
+            "trust": 0.2,
+            "loyalty": 0.1,
+            "notes": [
+              "Soft. Easy target."
+            ]
+          },
+          "mags": {
+            "trust": 0.5,
+            "notes": [
+              "Beat him once in the ring. He has not forgotten."
+            ]
+          },
+          "pell": {
+            "trust": 0.6
+          }
+        }
+      }
+    },
+    "mags": {
+      "side": "party",
+      "controller": "dm",
+      "hp": 12,
+      "ac": 12,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 14,
+        "dex": 13,
+        "con": 13,
+        "int": 11,
+        "wis": 13,
+        "cha": 9
+      },
+      "skills": {
+        "athletics": 4,
+        "perception": 3,
+        "survival": 3,
+        "medicine": 3
+      },
+      "attacks": [
+        {
+          "name": "Practice sword",
+          "bonus": 4,
+          "damage": "1d4+2",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 4,
+          "damage": "3",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "name": "Margit \"Mags\" Holt",
+      "pos": "K7",
+      "notes": "Shepherd's daughter, 22. Steady and quiet. Knows some field medicine (Medicine +3). The one you would trust with a job.",
+      "descr": "a broad-shouldered recruit mending a strap at the table",
+      "mind": {
+        "role": "recruit",
+        "faction": "the Greyhold garrison",
+        "rank": 1,
+        "tier": "minion",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "K7",
+        "facing": "E",
+        "personality": [
+          "Quiet, practical, few words. Does the job properly the first time.",
+          "Protective of Tobin; has no patience for Dace's mouth.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "patience",
+          "field medicine",
+          "sparring defensively"
+        ],
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.65,
+          "obedience": 0.75,
+          "curiosity": 0.4,
+          "impulsiveness": 0.2,
+          "sociability": 0.35
+        },
+        "motivations": [
+          "Do the job well and keep the others out of trouble."
+        ],
+        "relationships": {
+          "tobin": {
+            "trust": 0.7,
+            "loyalty": 0.7
+          },
+          "dace": {
+            "trust": 0.3
+          },
+          "ilse": {
+            "trust": 0.7
+          }
+        }
+      }
+    },
+    "tobin": {
+      "side": "party",
+      "controller": "dm",
+      "hp": 10,
+      "ac": 10,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 11,
+        "dex": 12,
+        "con": 11,
+        "int": 10,
+        "wis": 11,
+        "cha": 12
+      },
+      "skills": {
+        "stealth": 3,
+        "perception": 2,
+        "sleight-of-hand": 3
+      },
+      "attacks": [
+        {
+          "name": "Practice sword",
+          "bonus": 2,
+          "damage": "1d4",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 2,
+          "damage": "1",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "name": "Tobin Fairweather",
+      "pos": "M5",
+      "notes": "Baker's son, 16 (lied about his age). Timid, always hungry. He is the apple thief: five apples hidden in his footlocker (F6), DC 12 Investigation to find under his spare shirts.",
+      "descr": "a round-faced young recruit eyeing the stew pot",
+      "mind": {
+        "role": "recruit",
+        "faction": "the Greyhold garrison",
+        "rank": 1,
+        "tier": "minion",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "M5",
+        "facing": "E",
+        "personality": [
+          "Timid, eager to avoid trouble, terrified of the ring.",
+          "Always hungry. Food sent with him may arrive lighter than it left (a nibble).",
+          "Believes the old well in the yard is haunted by a drowned soldier and will not go near it if he can help it.",
+          "Is hiding stolen apples in his footlocker and is scared Hennick knows.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "baking",
+          "sneaking food",
+          "staying out of sight"
+        ],
+        "disposition": {
+          "vigilance": 0.4,
+          "courage": 0.25,
+          "obedience": 0.8,
+          "curiosity": 0.3,
+          "impulsiveness": 0.5,
+          "sociability": 0.5,
+          "superstition": 0.7
+        },
+        "motivations": [
+          "Stay out of trouble and out of the sparring ring.",
+          {
+            "description": "Keep Hennick from finding the apples.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Eat.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "dace": {
+            "trust": 0.1,
+            "notes": [
+              "Pushes him around."
+            ]
+          },
+          "mags": {
+            "trust": 0.9,
+            "loyalty": 0.8
+          },
+          "hennick": {
+            "trust": 0.4,
+            "authority": 0.9,
+            "notes": [
+              "Watches him like a hawk."
+            ]
+          }
+        }
+      }
+    },
+    "ilse": {
+      "side": "party",
+      "controller": "dm",
+      "hp": 9,
+      "ac": 11,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 10,
+        "dex": 14,
+        "con": 10,
+        "int": 15,
+        "wis": 12,
+        "cha": 11
+      },
+      "skills": {
+        "perception": 3,
+        "investigation": 4,
+        "history": 4,
+        "insight": 3
+      },
+      "attacks": [
+        {
+          "name": "Practice sword",
+          "bonus": 4,
+          "damage": "1d4+2",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Unarmed strike",
+          "bonus": 2,
+          "damage": "1",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "name": "Ilse Varga",
+      "pos": "H6",
+      "notes": "Clerk's daughter, 20, literate (rare here). Quick with a blade (uses Dex). Questions orders that do not make sense, politely but persistently.",
+      "descr": "a thin recruit reading a battered book on her bunk",
+      "mind": {
+        "role": "recruit",
+        "faction": "the Greyhold garrison",
+        "rank": 1,
+        "tier": "minion",
+        "knows": {
+          "cmdr": {
+            "name": "Commander",
+            "role": "garrison commander",
+            "rank": 5,
+            "post": "S8"
+          }
+        },
+        "post": "H6",
+        "facing": "S",
+        "personality": [
+          "Clever, precise, a little superior. Asks \"why\" before \"how\".",
+          "Will follow a sensible order at once; asks the reason for a silly one, and suggests a better way.",
+          "Reads everything she can find, including things she should not.",
+          "You know the barracks by heart: the stew pot hangs on the hearth (P2) and Corporal Hennick dishes it out (bowls on the mantel); bread, cheese, salt pork, onions and apples are in the larder (Q2:T5, behind the larder door at Q3, Hennick's domain: he wants to know who food is for); the water barrel is at J2 and the old well out in the yard at Q14; wooden practice swords, staves and padded helmets hang on the rack at C10:D10; the sparring ring is the sand at E12:H15; the Commander's office is Q6:T9. You can carry things in your hands (say what you pick up or hand over); sparring is with practice swords, to a touch or a yield, never to really hurt."
+        ],
+        "competencies": [
+          "reading and writing",
+          "figures",
+          "noticing details",
+          "fencing"
+        ],
+        "disposition": {
+          "vigilance": 0.6,
+          "courage": 0.5,
+          "obedience": 0.5,
+          "curiosity": 0.85,
+          "impulsiveness": 0.3,
+          "sociability": 0.4
+        },
+        "motivations": [
+          "Earn a post that uses her head, not just her sword arm.",
+          {
+            "description": "Figure out who is stealing the apples (she suspects, but will not tell unless asked).",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "mags": {
+            "trust": 0.8
+          },
+          "dace": {
+            "trust": 0.3
+          },
+          "tobin": {
+            "trust": 0.5,
+            "notes": [
+              "Saw apple cores under his bunk."
+            ]
+          }
+        }
+      }
+    }
+  }
+}

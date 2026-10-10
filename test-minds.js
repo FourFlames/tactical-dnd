@@ -268,7 +268,8 @@ try {
   const shout = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => /Stranger at/.test(e.text)).pop();
   expect('think: what the model shouts uses place names', shout && /the crack/.test(shout.text) && !/M21/.test(shout.text), shout ? shout.text : 'no shout logged');
   run('load', 'goblin-warren-caves');
-  decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger at M21!', about: { at: 'M21' } }] });
+  setup((s) => { s.minds.gob4.tracks.x9 = { key: 'x9', label: 'a stranger (an intruder)', side: 'hostile', level: 'identified', cell: 'M21', t: s.mtime || 0, direct: true, src: 'saw it yourself', inView: false, history: [] }; }); // Pip really saw someone
+  decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger at M21!', about: { subject: 'x9', at: 'M21' } }] });
   const holdScript = `
     const C = require('./lib/core'), Minds = require('./lib/minds');
     const s = C.loadState();
@@ -372,6 +373,7 @@ try {
   // ---------- split take-in: the goblin's own facts, and nothing it couldn't know ----------
   run('load', 'goblin-warren-caves');
   run('place', 'gob15', 'F15');
+  setup((s) => { s.minds.gob15.tracks.gob14.downSeen = true; }); // Grub saw Snore lying motionless (asleep, as it happens): reason enough to believe it
   decide('gob15', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Snore is dead! Big paw prints going north toward the grotto!' }] });
   const tp = (id) => spawnSync('node', ['-e', `const C=require('./lib/core'),T=require('./lib/think');console.log(T.takePrompt(C.loadState(),'${id}'))`], { cwd: __dirname, encoding: 'utf8' }).stdout;
   const heardIt = Object.keys(S().minds).filter((id) => (M(id).claims || []).some((c) => /paw prints/.test(c.text)));
@@ -390,6 +392,61 @@ try {
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
   expect('npc agent may not read the state or the map', hook('cat state.json') === 2 && hook('node engine.js show') === 2 && hook('node engine.js mind bram brief; cat state.json') === 2, '');
+
+  // ---------- a calm barracks: orders, talk and doors among comrades don't stampede anyone ----------
+  r = run('load', 'barracks');
+  expect('barracks loads with six minds (the Commander is the player, no mind)', r.ok && !S().minds.cmdr && Object.keys(S().minds).length === 6, r.out);
+  r = run('speak', 'cmdr', 'Pell! Stew and bread, to my office.', '--channel', 'shout', '--to', 'pell', '--kind', 'order');
+  expect('a party leader\'s spoken order is filed as an order', r.ok && M('pell').orders.some((o) => o.issuer === 'cmdr' && o.status === 'received'), JSON.stringify(M('pell').orders));
+  expect('a comrade\'s order raises no alarm in a calm lair', ['pell', 'mags', 'tobin', 'hennick'].every((id) => M(id).alarm.level === 'routine'), JSON.stringify(['pell', 'mags', 'tobin', 'hennick'].map((id) => [id, M(id).alarm.intensity])));
+  r = decide('hennick', { say: [{ to: ['tobin'], channel: 'speech', kind: 'warning', text: 'Who\'s that food for, lad?' }] });
+  expect('a "warning" from a comrade with no threat in mind is just talk', r.ok && M('tobin').obs.some((o) => o.msgKind === 'warning') && M('tobin').alarm.level === 'routine', r.out + ' ' + M('tobin').alarm.intensity);
+  r = run('door', 'larder', 'open', '--by', 'hennick');
+  const doorNews = Object.values(S().minds).flatMap((m) => m.obs.filter((o) => /door larder/.test(o.text) && o.sig >= 2).map((o) => m.id));
+  expect('a comrade opening a door is not news', r.ok && !doorNews.length, doorNews.join(','));
+  expect('...and whoever watched it knows who did it', Object.values(S().minds).some((m) => m.obs.some((o) => /Corporal Hennick opened the door larder/.test(o.text))), JSON.stringify(Object.values(S().minds).map((m) => m.obs.slice(-2).map((o) => o.text))));
+  for (let i = 0; i < 4; i++) run('mind', 'tobin', 'notice', 'Something feels wrong.', '--sig', '3');
+  expect('with nothing hostile in mind, a calm lair tops out at curious', M('tobin').alarm.level === 'curious', M('tobin').alarm.intensity);
+  r = run('spawn', JSON.stringify({ id: 'thief', name: 'Thief', side: 'enemy', pos: 'N6', hp: 9, ac: 12, speed: 30, attacks: [{ name: 'Dagger', bonus: 4, damage: '1d4+2', type: 'piercing', reach: 5 }] }));
+  expect('a real intruder in sight lifts the ceiling', r.ok && ['alert', 'combat'].includes(M('tobin').alarm.level), r.out + ' ' + M('tobin').alarm.level);
+  run('remove', 'thief');
+  r = decide('hennick', { intention: { objective: 'Send Pell for water', plan: [{ do: 'say', to: ['pell'], channel: 'shout', kind: 'order', text: 'Pell! Water from the barrel, now.' }, { do: 'wait' }] } });
+  expect('an order in a plan step to a subordinate is sent as an order', r.ok && /sent as an order to pell/.test(r.out) && M('pell').orders.some((o) => o.issuer === 'hennick'), r.out);
+  r = decide('tobin', { intention: { objective: 'Fetch Pell', plan: [{ do: 'say', to: ['pell'], channel: 'shout', kind: 'order', text: 'Pell, the Commander wants you.' }] } });
+  expect('an order in a plan step to an equal is passed on as a report', r.ok && /passing word on/.test(r.out) && !/warning/.test(r.out), r.out);
+  expect('the brief says what a warning is for', /"warning" only for danger you have evidence of/.test(brief('mags')), '');
+
+  r = decide('tobin', { intention: { objective: 'Fetch stew', plan: [{ do: 'move', to: 'P2' }] } });
+  const stewAt = (M('tobin').intentions[0] || { plan: [{}] }).plan[0].to;
+  expect('aiming at the hearth stops beside it in the room, not outside the wall', r.ok && ['O2', 'O3', 'P3'].includes(stewAt), `${stewAt}: ${r.out}`);
+
+  // ---------- credibility: stated certainty, bluffs, persuasion ----------
+  const lastHeard = (id, from) => M(id).obs.filter((o) => o.kind === 'message' && o.from === from).pop(); // the latest thing they heard from that speaker (words may be muffled)
+  r = run('load', 'barracks');
+  setup((s) => { s.minds.hennick.tracks.x7 = { key: 'x7', label: 'a stranger (an intruder)', side: 'hostile', level: 'identified', cell: 'T5', t: s.mtime || 0, direct: true, src: 'saw it yourself', inView: false, history: [] }; });
+  r = decide('hennick', { say: [{ to: 'all', channel: 'speech', kind: 'warning', text: 'Stranger in the larder, by the ale cask!', about: { subject: 'x7', at: 'T5' } }] });
+  let heardSay = lastHeard('tobin', 'hennick');
+  expect('an honest warning backed by a clear sighting sounds certain', r.ok && heardSay && /They sounded certain\./.test(heardSay.text), heardSay ? heardSay.text : r.out);
+  expect('...and with no reason to doubt the speaker, it alarms at once', ['alert', 'combat'].includes(M('tobin').alarm.level), M('tobin').alarm.intensity);
+  setup((s) => { s.creatures.pell.skills.deception = 20; });
+  r = decide('pell', { say: [{ to: 'all', channel: 'speech', kind: 'report', text: 'I saw a white stag out by the well, I swear it!', about: { at: 'Q14' }, certainty: 'sure' }] });
+  heardSay = lastHeard('ilse', 'pell');
+  expect('a bluff that beats Insight sounds certain even with no evidence', r.ok && heardSay && /They sounded certain\./.test(heardSay.text) && !heardSay.caught, heardSay ? heardSay.text : r.out);
+  expect('the bluff is rolled and logged for the DM', /a bluff, Deception/.test(fs.readFileSync(C.LOG, 'utf8')), '');
+  setup((s) => { s.creatures.pell.skills.deception = -20; });
+  r = decide('pell', { say: [{ to: 'all', channel: 'speech', kind: 'report', text: 'Corporal Hennick keeps gold coins hidden under the flour sacks.', about: { at: 'T4' }, certainty: 'sure' }] });
+  heardSay = lastHeard('ilse', 'pell');
+  expect('a bluff that fails Insight is heard as overselling', r.ok && heardSay && heardSay.caught && /overselling it: you doubt they really believe it/.test(heardSay.text), heardSay ? heardSay.text : r.out);
+  run('place', 'cmdr', 'N5');
+  r = run('speak', 'cmdr', 'Enemy riders on the north road, I saw them myself!', '--kind', 'warning', '--certainty', 'sure', '--bluff', '--deception', '1');
+  heardSay = lastHeard('tobin', 'cmdr');
+  expect('a player\'s bluff is contested too (--bluff --deception N)', r.ok && heardSay && heardSay.caught, heardSay ? heardSay.text : r.out);
+  setup((s) => { s.minds.dace.relationships.mags.trust = 0.1; s.minds.mags.tracks.x8 = { key: 'x8', label: 'a stranger (an intruder)', side: 'hostile', level: 'identified', cell: 'Q14', t: s.mtime || 0, direct: true, src: 'saw it yourself', inView: false, history: [] }; });
+  decide('mags', { say: [{ to: ['dace'], channel: 'shout', kind: 'warning', text: 'Someone is at the well, Dace!', about: { subject: 'x8', at: 'Q14' } }] });
+  const plain = (lastHeard('dace', 'mags') || {}).credence;
+  decide('mags', { say: [{ to: ['dace'], channel: 'shout', kind: 'warning', text: 'Trust me on this, Kettle: an armed man crouches near that bucket crank!', about: { subject: 'x8', at: 'Q14' }, persuade: 40 }] });
+  const pushed = (lastHeard('dace', 'mags') || {}).credence;
+  expect('persuasion gets an honest word past a listener\'s distrust', plain !== undefined && pushed > plain, `${plain} → ${pushed}`);
 
   // ---------- encounters without minds are untouched ----------
   r = run('load', 'rope-bridge');
