@@ -261,6 +261,18 @@ try {
   expect('think: tokens and cost are counted per model', res.usage && res.usage['deepseek/deepseek-v4.1-flash'].calls === 2 && res.usage['deepseek/deepseek-v4.1-flash'].prompt === 2000, JSON.stringify(res.usage));
   const shout = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => /Stranger at/.test(e.text)).pop();
   expect('think: what the model shouts uses place names', shout && /the crack/.test(shout.text) && !/M21/.test(shout.text), shout ? shout.text : 'no shout logged');
+  run('load', 'goblin-warren-caves');
+  decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger at M21!', about: { at: 'M21' } }] });
+  const holdScript = `
+    const C = require('./lib/core'), Minds = require('./lib/minds');
+    const s = C.loadState();
+    const held = Minds.intentionFor(s, 'gob8', { hold: true }), chased = Minds.intentionFor(s, 'gob8');
+    console.log(JSON.stringify({ held, chased, pending: s.minds.gob8.pending.length }));`;
+  const hr = spawnSync('node', ['-e', holdScript], { cwd: __dirname, encoding: 'utf8' });
+  let hold = {};
+  try { hold = JSON.parse(hr.stdout.trim()); } catch { hold = { err: hr.stdout + hr.stderr }; }
+  expect('hold: a DeepSeek sentry who hears a shout mid-tick holds and watches', hold.held && hold.held.source === 'hold' && hold.held.plan[0].do === 'watch', JSON.stringify(hold));
+  expect('hold: without hold it would have gone chasing', hold.chased && hold.chased.source === 'fallback' && hold.chased.plan.some((st) => st.do === 'investigate'), JSON.stringify(hold.chased));
   r = run('think');
   expect('think: without a key the command says so', !r.ok && /OPENROUTER_API_KEY/.test(r.out), r.out);
 

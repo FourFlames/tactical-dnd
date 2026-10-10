@@ -1162,13 +1162,13 @@ function runStep(s, id, m, st) {
   }
 }
 // One turn of an NPC's current plan: as many steps as its movement and action allow.
-function mindAct(s, id) {
+function mindAct(s, id, opts = {}) {
   const c = who(s, id), m = mindOf(s, id);
   if (c.hp <= 0) return [`${c.name} is down.`];
   if (hasCond(c, 'asleep')) return [`${c.name} is asleep.`];
   if (['paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k))) return [`${c.name} can't act.`];
   const out = [];
-  const it = Minds.intentionFor(s, id);
+  const it = Minds.intentionFor(s, id, opts);
   CAP.actor = id;
   try {
     for (let n = 0; n < 5 && it.step < it.plan.length; n++) {
@@ -1279,7 +1279,8 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
       s.turn = s.turn || {};
       s.turn[id] = { used: 0, dash: false, disengage: false };
       delete c.reactionUsed;
-      const lines = mindAct(s, id);
+      // News mid-tick: OpenRouter minds hold and think about it next tick instead of chasing it on the fallback.
+      const lines = mindAct(s, id, { hold: !!process.env.OPENROUTER_API_KEY && !flags['no-think'] });
       if (lines.length) console.log(lines.join('\n'));
       perceiveNow(s);
       const m = s.minds[id];
