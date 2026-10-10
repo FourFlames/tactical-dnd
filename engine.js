@@ -1086,6 +1086,7 @@ function runStep(s, id, m, st) {
     case 'say': {
       const r = Minds.speak(s, id, st);
       if (r.error) return { failed: true, text: r.error };
+      if (r.repeat) return { done: true, text: 'skipped: you already said that' };
       if (st.kind === 'warning' && st.about && st.about.subject) m.warned[st.about.subject] = true;
       return { done: true, text: `heard by ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}` };
     }

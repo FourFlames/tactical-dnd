@@ -79,7 +79,7 @@ try {
   const reps = Object.values(hk2.tracks).filter((t) => !t.direct);
   expect('C: two incompatible reports are both kept', reps.length >= 2 && new Set(reps.map((t) => t.cell)).size >= 2, JSON.stringify(reps));
   b = brief('hask');
-  expect('C: the brief shows both, each with its source', /reported by Bram/.test(b) && /reported by Tilly/.test(b), b.split('WHAT YOU HAVE PERCEIVED')[0]);
+  expect('C: the brief shows both, each with its source', /reported by Bram|told by Bram/.test(b) && /told by Tilly|reported by Tilly/.test(b), b.split('WHAT YOU HAVE PERCEIVED')[0]);
 
   // ---------- Scenario D: same evidence, different temperaments ----------
   run('load', 'tollhouse');
@@ -255,7 +255,7 @@ try {
   const tr2 = spawnSync('node', ['-e', thinkScript], { cwd: __dirname, encoding: 'utf8' });
   let res = {};
   try { res = JSON.parse(tr2.stdout.trim().split('\n').pop()); } catch { res = { err: tr2.stdout + tr2.stderr }; }
-  expect('think: minions on an OpenRouter model are due to think', (res.due || []).includes('gob4') && !(res.due || []).includes('snikka'), JSON.stringify(res));
+  expect('think: minds on OpenRouter models (minions and the boss) are due to think', (res.due || []).includes('gob4') && (res.due || []).includes('snikka'), JSON.stringify(res));
   expect('think: an unusable answer is retried once', (res.seen || []).length === 2 && res.seen.every((x) => x === 'deepseek/deepseek-v4.1-flash'), JSON.stringify(res));
   expect('think: the decision lands as the mind\'s plan', res.plan && res.plan.source === 'model' && res.plan.plan.some((st) => st.do === 'flee' && st.to), JSON.stringify(res.plan));
   expect('think: tokens and cost are counted per model', res.usage && res.usage['deepseek/deepseek-v4.1-flash'].calls === 2 && res.usage['deepseek/deepseek-v4.1-flash'].prompt === 2000, JSON.stringify(res.usage));
@@ -275,6 +275,36 @@ try {
   expect('hold: without hold it would have gone chasing', hold.chased && hold.chased.source === 'fallback' && hold.chased.plan.some((st) => st.do === 'investigate'), JSON.stringify(hold.chased));
   r = run('think');
   expect('think: without a key the command says so', !r.ok && /OPENROUTER_API_KEY/.test(r.out), r.out);
+
+  // ---------- bodies: a question from afar, an answer up close ----------
+  run('load', 'goblin-warren-caves');
+  run('evidence', 'gob14', 'Throat torn out by one huge bite.');
+  run('damage', 'gob14', '30', 'slashing');
+  let grub = M('gob15'), seen = grub.obs.filter((o) => /Snore/.test(o.text));
+  expect('bodies: from 25 ft Grub can\'t tell if Snore is asleep or dead', seen.length === 1 && /can't tell/.test(seen[0].text) && !/Throat/.test(seen[0].text) && grub.alarm.level !== 'combat', JSON.stringify([seen, grub.alarm]));
+  run('move', 'gob15', 'D17');
+  grub = M('gob15'); seen = grub.obs.filter((o) => /Snore/.test(o.text));
+  expect('bodies: up close he sees Snore is dead, and how', seen.some((o) => /is dead/.test(o.text) && /Throat torn out/.test(o.text)), JSON.stringify(seen));
+
+  // ---------- stories: known news is kept once; a second witness confirms it ----------
+  run('load', 'goblin-warren-caves');
+  const say = (id, text) => decide(id, { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text }] });
+  say('gob15', 'Snore is dead in the sleeping nook, torn up by big claws!');
+  const msgs = (id) => M(id).obs.filter((o) => o.kind === 'message').length;
+  const before6 = msgs('gob6'), before7 = msgs('gob7');
+  say('gob4', 'Grub says Snore is dead in the sleeping nook, torn up by big claws!');
+  let nub = M('gob6');
+  expect('stories: a relay of known news adds no new message', msgs('gob6') === before6 && msgs('gob7') === before7 && nub.claims[0].relays.includes('Pip'), JSON.stringify(nub.claims));
+  expect('stories: gullible Nub takes the retelling as confirmation; sharp-eyed Gix doesn\'t', nub.claims[0].confirmed && !M('gob7').claims[0].confirmed, JSON.stringify([M('gob6').disposition, M('gob7').disposition]));
+  r = say('gob15', 'Snore is dead in the sleeping nook, torn up by big claws!');
+  expect('stories: nobody says the same thing twice', /not said again/.test(r.out), r.out);
+  say('gob7', 'I saw it too: Snore dead in the nook, claws all over him!');
+  nub = M('gob6');
+  expect('stories: a second witness makes it "everyone\'s saying it"', nub.claims[0].sources.length === 2 && nub.obs.some((o) => o.kind === 'claim'), JSON.stringify(nub.claims));
+  b = brief('gob6');
+  expect('stories: the brief tells each story once, with how it spread', /STORIES GOING AROUND/.test(b) && /Passed on by Pip/.test(b), b.split('WHAT YOU HAVE PERCEIVED')[0].slice(-800));
+  const site = Object.values(M('gob6').tracks).find((t) => t.static);
+  expect('sites: news about a spot is pinned there, not tracked as a mover', !site || !/could have reached/.test(b.split('PLACES YOU HAVE NEWS')[1] || ''), b);
 
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;

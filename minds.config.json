@@ -1,6 +1,8 @@
 {
   "models": {
-    "minion": "deepseek/deepseek-v4.1-flash"
+    "minion": "deepseek/deepseek-v4.1-flash",
+    "elite": "deepseek/deepseek-v4.1-flash",
+    "commander": "deepseek/deepseek-v4.1-flash"
   },
   "openrouter": {
     "reasoning": { "enabled": false },

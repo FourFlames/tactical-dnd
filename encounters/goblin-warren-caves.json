@@ -881,7 +881,7 @@
       }
     },
     "gob6": {
-      "name": "Goblin",
+      "name": "Nub",
       "side": "enemy",
       "controller": "dm",
       "pos": "I13",
@@ -984,7 +984,7 @@
       }
     },
     "gob7": {
-      "name": "Goblin",
+      "name": "Gix",
       "side": "enemy",
       "controller": "dm",
       "pos": "K15",
