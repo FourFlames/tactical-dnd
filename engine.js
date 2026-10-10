@@ -789,6 +789,23 @@ cmd('describe', 'describe <id|cell> "<fact>" [--clear]   record something the pa
   return s;
 });
 
+cmd('evidence', 'evidence <id|cell> "<what anyone looking closely would find>" [--clear]   physical clues (claw marks on a body, tracks in the mud): NPCs find them by looking within 10 ft or searching nearby', (s, { pos, flags }) => {
+  need(s);
+  let key = pos[0];
+  if (!s.creatures[key]) {
+    const p = C.parseCell(key || '');
+    if (!C.inBounds(s, p.x, p.y)) fail(`"${key}" is neither a creature id nor a square on the map.`);
+    key = C.cellId(p.x, p.y);
+  }
+  s.evidence = s.evidence || {};
+  if (flags.clear) { delete s.evidence[key]; console.log(`Cleared the evidence at ${key}.`); return s; }
+  const text = pos.slice(1).join(' ').trim();
+  if (!text) fail('evidence needs what there is to find, in quotes.');
+  s.evidence[key] = [...(s.evidence[key] || []), text];
+  console.log(`Evidence at ${key}: ${text}`);
+  return s;
+});
+
 cmd('look', 'look <from-id> <id|cell> [--z <ft>]   what <from-id> can tell about a creature or square (what players see when they inspect)', (s, { pos, flags }) => {
   need(s);
   who(s, pos[0]);
