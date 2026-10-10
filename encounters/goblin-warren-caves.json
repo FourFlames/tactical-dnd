@@ -1,0 +1,2005 @@
+{
+  "name": "The Goblin Warren: Caves",
+  "intro": "Beyond the rope bridge the cliff swallows the path in a crack of black stone, and a breath of wood smoke and old meat drifts out of it. Somewhere deep inside, a thin voice keeps calling a name over and over: Grall. Beneath it you hear dripping and the rush of running water, and from far above, a dry, restless chittering like a thousand small hinges. The dark ahead is not empty, and it is not quiet.",
+  "dmNotes": "SITUATION. Grall, the old warchief, is gone (dead, fled, or taken by something worse; leave it open). Boss Snikka has taken the warren and is not secure in it. Marta (miller's widow) and her son Tam (9) are tied in the stake pen (P12-T14, gate R14), meant as ransom. The warren is the heart of a cave complex of 8 zones (see goblin-warren-caves.zones.md). Goblins: snikka (L12, commander, Opus), gob4 Pip (L18 by the crack), gob5 lookout (U15 shelf), gob6 Nub and gob7 Gix (cookfire I13/K15), gob8 east post sentry (X17), gob9 east patrol (Y27 loop), gob10 trapper (Y25, resets the tripline), gob11 shaman (X13, storeroom, powder kegs), gob12 bat-cave watcher (Q7), gob13 mushroom farmer (G7, non-combatant), gob14 bored sleeper (D16), gob15 midden scavenger (C21, keen scent).\n\nALERT CASCADE. Bell (tripline X26-Y26): the flank post, trapper and Snikka's room hear it; gob8 and gob10 go to combat, Snikka sends gob6 to the flank door V18. Pip shouting: everyone in the warren and the approach goes alert, Snikka holds the fire line and shouts for the bat watcher and east patrol. Bats waking (any noise over ~40 ft of the roost R3-U4, a fire arrow, a shaman blast): a swarm boils out of the roost, the bat cave and bridge are unusable for 3 rounds, and every goblin hears the chittering as a warning (noise at the cave, loud 90). Shaman blasting: the storeroom shakes, noise loud 90, bats wake, kegs risk setting off. Snikka falls or surrenders: every goblin rolls Wis DC 10 or flees by the nearest exit; the sentries and patrol flee last. Run with mind <id> act and let them speak: panicked goblins shout.\n\nENVIRONMENTAL HOOKS (use ruling first, then commands).\n- Spiked pit X24: first creature steps in, DEX DC 13 or fall X24 --feet 10 (1d6 plus spikes 1d6 piercing); Perception DC 13 spots it; terrain X24 add pit after. NPCs skirt it.\n- Tripline X26-Y26: Perception DC 13 spots; if tripped run noise Y26 \"a sharp bell clangs\" --loud 80. The trapper resets it.\n- Wedged boulder T27: Athletics DC 12 or cutting the prop frees it; creatures in S28-U28 make DEX DC 14 or take 3d6 bludgeoning, tunnel blocked with rubble (terrain S28:U28 add difficult).\n- Marsh gas B3-C4 (methane): a spark or fire arrow detonates it: damage on creatures within 10 ft, DEX DC 13, 4d6 fire half on save; the farmer panics at flame.\n- Powder kegs W11-W12: 4d6 fire in 15 ft, DEX DC 14 half, ignites the crates Z11-Z12. Shaman guards them. Setting them off also wakes the bats and crushes the hidden alcove V14.\n- Oil barrels G16-H17: original, 3d6 fire DEX 13 half, 10 ft, then burning; bedding G11-H12 catches.\n- Stalactite cluster X9 over Y9-Y10: Athletics DC 13 or a thrown missile; DEX DC 13, 2d6 bludgeoning, chokepoint blocked.\n- Rotten bridge K5-N5: Acrobatics DC 12 each crossing if running or in heavy armour; fail, planks break, fall 30 ft to the chasm (3d6 total, 1d6 per 10 ft). Burning it cuts the route; bat-cave goblins are stranded.\n- Flooded passage H19-H23: Athletics DC 10 or hold breath (Con DC 10 after 1 minute); gear soaked, arrows ruined, no light. Gives a route under the wall at H19, right beside the oil barrels.\n- Hidden door U14|V14: Perception DC 15 either side; door secret open --force. Opens onto the pen and the storeroom alcove.\n- Brazier Y17: tip it (Athletics DC 12) onto crates W16/Y21 to light the guard post; the sentry's torch is the only light.\n- Ledge drop I10/J10 to I11/J11: fall id I11 (1d6). Archers on the ledge get cover-3q and an angle into the warren; they are silhouetted against the lit fungus patch I6.\n\nAPPROACHES AND TRADE-OFFS. Front crack M20: fast, Pip and Snikka are right there, chain mail is loud. West tunnel and rubble D13-E13: quiet if cleared slowly (DC 12 Stealth), noisy if pulled down. Flooded passage: stealthy but soaks gear. Ledge: high-ground sniping, exposed to the lookout and the bats. East flank: pit, tripline, boulder, torchlight, but it gets you at the captives from the back door. Bat cave: the bridge is rotten and bats are the alarm; high risk, high reward (stalactite trap). Bottom line: every quiet route has a cost; the loud one has numbers against it.\n\nTURNING GOBLINS AGAINST EACH OTHER. Nub (gob6) cheats at knucklebones and Gix (gob7) is sure he is being robbed; a coin, a rigged die or a loud insult (mind <id> notice) starts a fight and both ignore the alarm for a round. Pip would surrender to anyone kind, and tells everything he knows (the pit, the tripline). The lookout dozes: a thrown stone sends him to investigate alone. Snikka distrusts the shaman (gob11) as Grall's spy: Deception DC 14 can set them quarrelling. The bored sleeper can be bribed or left asleep; the scavenger sniffs out hidden characters through walls. The farmer will run from fire or give up the methane location for his life.\n\nRUNNING MINDS. Out of combat: players act, then tick. Run minds each tick: commander (Snikka) uses Opus, elites (gob10 trapper, gob11 shaman) Sonnet, everyone else Haiku or mind <id> fallback. When tick halts on someone who means to fight, roll initiative. In combat use mind <id> act on each goblin's turn; deliberate only for Snikka, the shaman, the trapper and anyone with fresh news. Never reveal minds' private thoughts; narrate only shouts and visible reactions.\n\nOUTCOMES. Win: Snikka dead, surrendered or fled with the goblins routed, and the captives freed (Marta fierce, Tam silent). Snikka bargains: she will trade a captive for safe passage, but cannot be trusted. Loot: Grall's chest in the storeroom (Z11-Z12), silver, blasting powder (the kegs), the shaman's mushroom stash (a drug), maps in the guard post. Consequences: freed goblins regroup elsewhere, the village owes the party, and the bats and fungus remain a lure for later. If the captives die, the miller's kin turn hostile; if Snikka lives, she returns with a grudge and the knowledge of every trick the party used.",
+  "lighting": {
+    "ambient": "dark",
+    "areas": {
+      "E10:V22": "dim",
+      "B2:J8": "dim"
+    }
+  },
+  "mindConfig": {
+    "deliberateAt": 2,
+    "calm": true
+  },
+  "legend": {
+    ".": {
+      "name": "cave floor",
+      "tags": []
+    },
+    "#": {
+      "name": "rock wall",
+      "tags": [
+        "wall"
+      ]
+    },
+    "n": {
+      "name": "narrow crack",
+      "tags": [
+        "narrow"
+      ]
+    },
+    "f": {
+      "name": "cookfire",
+      "tags": [
+        "impassable",
+        "fire-source",
+        "cover-half",
+        "can-topple"
+      ]
+    },
+    "h": {
+      "name": "bedding heap",
+      "tags": [
+        "difficult",
+        "flammable"
+      ]
+    },
+    "x": {
+      "name": "stake fence",
+      "tags": [
+        "impassable",
+        "cover-half",
+        "flammable"
+      ]
+    },
+    "g": {
+      "name": "pen gate",
+      "tags": [
+        "impassable",
+        "cover-half",
+        "flammable",
+        "can-topple"
+      ]
+    },
+    "L": {
+      "name": "rock shelf",
+      "tags": [
+        "difficult",
+        "climbable",
+        "cover-half",
+        "high-ground"
+      ]
+    },
+    "b": {
+      "name": "oil barrels",
+      "tags": [
+        "impassable",
+        "cover-half",
+        "flammable",
+        "explosive",
+        "can-topple"
+      ]
+    },
+    ",": {
+      "name": "rubble",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ]
+    },
+    "w": {
+      "name": "shallow stream",
+      "tags": [
+        "water",
+        "slick"
+      ],
+      "depth": 1
+    },
+    "W": {
+      "name": "flooded passage",
+      "tags": [
+        "water",
+        "narrow"
+      ],
+      "depth": 5
+    },
+    ":": {
+      "name": "slick moss",
+      "tags": [
+        "slick"
+      ]
+    },
+    "m": {
+      "name": "glowing fungus",
+      "tags": [
+        "lit"
+      ]
+    },
+    "M": {
+      "name": "marsh-gas hollow",
+      "tags": [
+        "difficult",
+        "flammable",
+        "explosive"
+      ]
+    },
+    "j": {
+      "name": "mushroom beds",
+      "tags": [
+        "difficult",
+        "flammable",
+        "cover-half"
+      ]
+    },
+    "S": {
+      "name": "stalagmite cluster",
+      "tags": [
+        "impassable",
+        "cover-half"
+      ]
+    },
+    "T": {
+      "name": "stalactite cluster",
+      "tags": [
+        "impassable",
+        "cover-half",
+        "can-topple"
+      ]
+    },
+    "q": {
+      "name": "wedged boulder",
+      "tags": [
+        "impassable",
+        "opaque",
+        "cover-3q",
+        "can-topple"
+      ]
+    },
+    "C": {
+      "name": "chasm",
+      "tags": [
+        "chasm",
+        "impassable"
+      ],
+      "elev": -30
+    },
+    "B": {
+      "name": "rotten plank bridge",
+      "tags": [
+        "bridge",
+        "narrow",
+        "flammable"
+      ]
+    },
+    "e": {
+      "name": "high ledge",
+      "tags": [
+        "high-ground"
+      ],
+      "elev": 10
+    },
+    "d": {
+      "name": "goblin midden",
+      "tags": [
+        "difficult",
+        "flammable"
+      ]
+    },
+    "k": {
+      "name": "crates",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "climbable",
+        "flammable"
+      ],
+      "object": {
+        "kind": "crate",
+        "height": 4
+      }
+    },
+    "K": {
+      "name": "powder kegs",
+      "tags": [
+        "impassable",
+        "cover-half",
+        "flammable",
+        "explosive",
+        "can-topple"
+      ],
+      "object": {
+        "kind": "keg",
+        "height": 4
+      }
+    },
+    "F": {
+      "name": "torch brazier",
+      "tags": [
+        "impassable",
+        "fire-source",
+        "cover-half",
+        "can-topple"
+      ],
+      "object": {
+        "kind": "brazier",
+        "height": 3
+      }
+    },
+    "R": {
+      "name": "collapsed tunnel rubble",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "can-topple"
+      ]
+    },
+    "G": {
+      "name": "guano pile",
+      "tags": [
+        "difficult",
+        "slick"
+      ]
+    },
+    "V": {
+      "name": "bat roost",
+      "tags": [
+        "dark"
+      ]
+    },
+    "t": {
+      "name": "plank table",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "table",
+        "height": 3
+      }
+    }
+  },
+  "rows": [
+    "##########################",
+    "#S.......SCCCCS.........S#",
+    "#MM.......CCCC...VVVV....#",
+    "#MM..mmj..CCCC...VVVV..m.#",
+    "#....mm...BBBB..GGGGG....#",
+    "#..jjj..m.CCCC..GGGGGG...#",
+    "#..jjj....CCCC.m..S...S..#",
+    "#........SCCCC...........#",
+    "#..####eeeeeeee########Tn#",
+    "#..#####ee##############n#",
+    "#..###hh.......xxxxx##K..k",
+    "#..###hh.......x...x##K..k",
+    "#..RR..........x...x.#....",
+    "#..##....f.....xxgxx....k.",
+    "#..h#..............LL#....",
+    "#..h#.bb...........LL#k..#",
+    "#..h#.bb.....,,......#..F#",
+    "#...##.......,,..........#",
+    "#..####.............##..t#",
+    "#d.d###W####n#########...#",
+    "#ddd###W####n#########..k#",
+    "#d.d###W####n##########..#",
+    "#..####W###...#########..#",
+    "##S...www#m.....S######..#",
+    "##.m::www#m......######..#",
+    "##..:.www#....SS.######..#",
+    "##wwwwwww#.......##q###..#",
+    "##wwwwwwwn.......nnn.....#",
+    "##.......#.S.....#########",
+    "##WW.S...#......m#########",
+    "##WW....S#.......#########",
+    "###########...############",
+    "###########...############",
+    "############n#############",
+    "############n#############",
+    "##########################"
+  ],
+  "walls": [
+    {
+      "id": "flank",
+      "kind": "door",
+      "from": "W18",
+      "to": "W19",
+      "name": "flank door"
+    },
+    {
+      "id": "store",
+      "kind": "door",
+      "from": "X16",
+      "to": "Y16",
+      "name": "storeroom door"
+    },
+    {
+      "id": "secret",
+      "kind": "door",
+      "from": "V14",
+      "to": "V15",
+      "name": "hidden slab door",
+      "hidden": true
+    },
+    {
+      "kind": "low",
+      "from": "E6",
+      "to": "H6"
+    }
+  ],
+  "creatures": {
+    "rook": {
+      "name": "Rook",
+      "side": "party",
+      "controller": "player",
+      "pos": "N32",
+      "hp": 28,
+      "ac": 18,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 16,
+        "dex": 12,
+        "con": 14,
+        "int": 10,
+        "wis": 12,
+        "cha": 10
+      },
+      "saves": {
+        "str": 5,
+        "con": 4
+      },
+      "skills": {
+        "athletics": 5,
+        "perception": 3,
+        "intimidation": 2
+      },
+      "attacks": [
+        {
+          "name": "Longsword",
+          "bonus": 5,
+          "damage": "1d8+3",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Javelin",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "range": [
+            30,
+            120
+          ]
+        }
+      ],
+      "resources": {
+        "secondWind": 1,
+        "actionSurge": 1,
+        "javelins": 3,
+        "superiority": 4,
+        "heroic inspiration": 0,
+        "lamp oil": 2,
+        "potion of healing": 1,
+        "alchemist's fire": 1,
+        "silver": 4,
+        "charcoal and vellum": 1,
+        "meditation sigil": 1
+      },
+      "notes": "Human Fighter 3 (Battle Master). Chain mail: disadvantage on Stealth. Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action. Background: Hawthdorn University scholar (statistics, philosophy); reads and chants Misakha; speaks Dvergr, Sylvari, Draconic, rough Undercommon.",
+      "persona": "Scholar turned sellsword. Brilliant, self-describedly hypocritical, prefers killing to thinking because thinking makes him sad. Loves fire."
+    },
+    "wren": {
+      "name": "Wren",
+      "side": "party",
+      "controller": "llm",
+      "pos": "M32",
+      "hp": 16,
+      "maxHp": 20,
+      "ac": 14,
+      "speed": 25,
+      "stats": {
+        "str": 8,
+        "dex": 16,
+        "con": 12,
+        "int": 13,
+        "wis": 12,
+        "cha": 14
+      },
+      "saves": {
+        "dex": 5,
+        "int": 3
+      },
+      "skills": {
+        "stealth": 7,
+        "acrobatics": 5,
+        "sleight-of-hand": 5,
+        "perception": 3,
+        "deception": 4
+      },
+      "attacks": [
+        {
+          "name": "Shortbow",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        },
+        {
+          "name": "Shortsword",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "resources": {
+        "arrows": 15,
+        "silver": 4,
+        "goblin tooth": 1
+      },
+      "notes": "Halfling Rogue 3. Sneak Attack +2d6 once per turn with advantage or an ally adjacent to the target (use --extra 2d6). Cunning Action: bonus-action Dash, Disengage, or Hide.",
+      "persona": "Wiry, sardonic, allergic to fair fights. Prefers high ground, flanks, and anything involving fire. Will loot mid-combat if she thinks nobody's looking. Has decided Rook is her favorite person."
+    },
+    "ash": {
+      "name": "Brother Ash",
+      "side": "party",
+      "controller": "llm",
+      "pos": "M33",
+      "hp": 27,
+      "ac": 18,
+      "speed": 25,
+      "stats": {
+        "str": 14,
+        "dex": 10,
+        "con": 14,
+        "int": 10,
+        "wis": 16,
+        "cha": 12
+      },
+      "saves": {
+        "wis": 5,
+        "cha": 3
+      },
+      "skills": {
+        "medicine": 5,
+        "insight": 5,
+        "religion": 2
+      },
+      "attacks": [
+        {
+          "name": "Mace",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "bludgeoning",
+          "reach": 5
+        },
+        {
+          "name": "Spiritual Weapon",
+          "bonus": 5,
+          "damage": "1d8+3",
+          "type": "force",
+          "range": [
+            60,
+            60
+          ]
+        }
+      ],
+      "resources": {
+        "slots1": 2,
+        "slots2": 1,
+        "silver": 1
+      },
+      "notes": "Dwarf Life Cleric 3. Sacred Flame (cantrip): target in 60 ft makes DC 13 DEX save or takes 1d8 radiant (use: damage <id> 1d8 radiant --save dex --dc 13). Spells: Bless, Cure Wounds, Healing Word, Shield of Faith, Spiritual Weapon (2nd, bonus action), Hold Person (2nd, DC 13 WIS). Life domain: healing spells add 2 + spell level.",
+      "persona": "Gravelly, patient, deeply suspicious of bridges. Keeps everyone alive first, smites second. Quotes scripture nobody else has heard of (the Books of Cinders). Has grown fond of Rook and worries about him. Has forbidden burning anything until he gives the word, especially near captives."
+    },
+    "snikka": {
+      "name": "Boss Snikka",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "L12",
+      "hp": 21,
+      "ac": 17,
+      "speed": 30,
+      "stats": {
+        "str": 10,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 10
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Javelin",
+          "bonus": 2,
+          "damage": "1d6",
+          "type": "piercing",
+          "range": [
+            30,
+            120
+          ]
+        }
+      ],
+      "notes": "Goblin Boss. Multiattack: two scimitar attacks (second at disadvantage). Nimble Escape: bonus-action Disengage or Hide. Redirect Attack (reaction): when hit, swap places with a goblin within 5 ft and it takes the hit. Speaks Goblin and Common. Surrenders below 8 HP.",
+      "mind": {
+        "identity": "Boss Snikka",
+        "role": "warren boss",
+        "faction": "the Grall's-Gone goblins",
+        "rank": 4,
+        "tier": "commander",
+        "post": "L12",
+        "facing": "S",
+        "personality": [
+          "Ruthless but pragmatic: she kills when it pays and bargains when it pays more.",
+          "Took the warren after Grall vanished and fears someone will take it from her in turn.",
+          "Treats captives as coin; will drag one to the gate and bargain for her own escape.",
+          "Surrenders rather than die: below 8 HP she yields and offers whatever she has."
+        ],
+        "competencies": [
+          "tactics",
+          "bargaining",
+          "intimidation"
+        ],
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.55,
+          "obedience": 0.3,
+          "curiosity": 0.4,
+          "impulsiveness": 0.3,
+          "sociability": 0.5
+        },
+        "motivations": [
+          "Hold the warren and the ransom captives.",
+          {
+            "description": "Never be seen weak by the shaman or the other goblins.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Survive; trade a captive and walk away if it comes to that.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob4": {
+            "trust": 0.4,
+            "loyalty": 0.3,
+            "authority": 0.9,
+            "notes": [
+              "Pip is a coward but he shouts loudly; useful as an alarm."
+            ]
+          },
+          "gob5": {
+            "trust": 0.5,
+            "loyalty": 0.4
+          },
+          "gob6": {
+            "trust": 0.5,
+            "loyalty": 0.5
+          },
+          "gob7": {
+            "trust": 0.5,
+            "loyalty": 0.5
+          },
+          "gob8": {
+            "trust": 0.5
+          },
+          "gob9": {
+            "trust": 0.5
+          },
+          "gob10": {
+            "trust": 0.7,
+            "notes": [
+              "The trapper keeps the east back door safe."
+            ]
+          },
+          "gob11": {
+            "trust": 0.3,
+            "loyalty": 0.2,
+            "notes": [
+              "Suspects the shaman is Grall's spy."
+            ]
+          },
+          "gob12": {
+            "trust": 0.4
+          },
+          "gob13": {
+            "trust": 0.5
+          },
+          "gob14": {
+            "trust": 0.3
+          },
+          "gob15": {
+            "trust": 0.4
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        },
+        "senses": {
+          "darkvision": 60
+        }
+      }
+    },
+    "gob4": {
+      "name": "Pip",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "L18",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "notes": "Young and terrified. Was calling for Grall. Flees toward Snikka shouting the alarm the moment he spots an intruder. Would surrender to anyone who let him.",
+      "descr": "A thin, young goblin hovering near the crack, ears twitching.",
+      "mind": {
+        "identity": "Pip",
+        "role": "nervous sentry",
+        "faction": "the Grall's-Gone goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "L18",
+        "facing": "S",
+        "personality": [
+          "Young and terrified; keeps calling for Grall because nobody told him he is gone.",
+          "Flees to Snikka shouting the alarm the moment he sees an intruder.",
+          "Would surrender to anyone who lets him."
+        ],
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.15,
+          "obedience": 0.8,
+          "curiosity": 0.3,
+          "impulsiveness": 0.7,
+          "sociability": 0.7,
+          "superstition": 0.8
+        },
+        "motivations": [
+          "Find Grall, or at least hear him answer.",
+          {
+            "description": "If anything strange appears, run to Snikka at L12 and shout the alarm.",
+            "source": "duty",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "snikka": {
+            "trust": 0.4,
+            "authority": 0.9
+          },
+          "gob6": {
+            "trust": 0.6
+          },
+          "gob7": {
+            "trust": 0.4
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        },
+        "senses": {
+          "darkvision": 60
+        }
+      }
+    },
+    "gob5": {
+      "name": "Goblin Lookout",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "U15",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        },
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "notes": "Nimble Escape. On the rock shelf; dozing (disadvantage on Perception until the alarm).",
+      "descr": "A goblin slumped on the rock shelf with a shortbow across its knees, head nodding.",
+      "mind": {
+        "identity": "the Lookout",
+        "role": "lookout",
+        "faction": "the Grall's-Gone goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "U15",
+        "facing": "W",
+        "personality": [
+          "Dozing on duty and knows it; will deny it to anyone who asks.",
+          "A fair shot when awake; likes high ground and half cover."
+        ],
+        "competencies": [
+          "archery"
+        ],
+        "disposition": {
+          "vigilance": 0.25,
+          "courage": 0.5,
+          "obedience": 0.5,
+          "curiosity": 0.6,
+          "impulsiveness": 0.4,
+          "sociability": 0.3
+        },
+        "motivations": [
+          "Watch the warren from the shelf and shoot anything that does not belong.",
+          {
+            "description": "Keep Snikka from seeing him asleep.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "snikka": {
+            "trust": 0.4,
+            "authority": 0.9
+          },
+          "gob6": {
+            "trust": 0.5
+          },
+          "gob7": {
+            "trust": 0.5
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        },
+        "senses": {
+          "darkvision": 60
+        }
+      }
+    },
+    "gob6": {
+      "name": "Goblin",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "I13",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        }
+      ],
+      "notes": "Nimble Escape. At the cookfire.",
+      "descr": "A sly goblin with greasy fingers and a stack of knucklebones in front of him.",
+      "mind": {
+        "identity": "Nub",
+        "role": "cookfire goblin",
+        "faction": "the Grall's-Gone goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "I13",
+        "facing": "E",
+        "personality": [
+          "Sly gambler: cheats at knucklebones with a loaded bone and wins most rounds.",
+          "Bickers constantly with Gix; hates being called a cheat but is one.",
+          "Will take a bribe over a fight, but not over his winnings."
+        ],
+        "disposition": {
+          "vigilance": 0.35,
+          "courage": 0.4,
+          "obedience": 0.5,
+          "curiosity": 0.5,
+          "impulsiveness": 0.5,
+          "sociability": 0.8
+        },
+        "motivations": [
+          "Keep the cookfire alive and win the next round of knucklebones.",
+          {
+            "description": "Stay out of the front line if Snikka calls for a fight.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob7": {
+            "trust": 0.2,
+            "notes": [
+              "Gix accuses Nub of cheating; he is right."
+            ]
+          },
+          "gob4": {
+            "trust": 0.6
+          },
+          "snikka": {
+            "trust": 0.5,
+            "authority": 0.9
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        },
+        "senses": {
+          "darkvision": 60
+        }
+      }
+    },
+    "gob7": {
+      "name": "Goblin",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "K15",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        }
+      ],
+      "notes": "Nimble Escape. At the cookfire.",
+      "descr": "A hot-headed goblin glowering at the dice and gripping a scimitar.",
+      "mind": {
+        "identity": "Gix",
+        "role": "cookfire goblin",
+        "faction": "the Grall's-Gone goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "K15",
+        "facing": "W",
+        "personality": [
+          "Hot-tempered and a sore loser: sure Nub is cheating and wants to prove it.",
+          "Brave when angry and wants to be seen so, mostly to show up Nub.",
+          "Quick to take a swing at an intruder to prove himself to Snikka."
+        ],
+        "disposition": {
+          "vigilance": 0.4,
+          "courage": 0.65,
+          "obedience": 0.45,
+          "curiosity": 0.4,
+          "impulsiveness": 0.75,
+          "sociability": 0.5
+        },
+        "motivations": [
+          "Catch Nub cheating and win back his teeth.",
+          {
+            "description": "Prove to Snikka he is worth more than Nub.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob6": {
+            "trust": 0.15,
+            "notes": [
+              "Convinced Nub cheats at dice."
+            ]
+          },
+          "snikka": {
+            "trust": 0.5,
+            "authority": 0.9
+          },
+          "gob4": {
+            "trust": 0.4
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        },
+        "senses": {
+          "darkvision": 60
+        }
+      }
+    },
+    "marta": {
+      "name": "Marta",
+      "side": "neutral",
+      "controller": "dm",
+      "pos": "Q12",
+      "hp": 4,
+      "ac": 10,
+      "speed": 30,
+      "stats": {
+        "str": 10,
+        "dex": 10,
+        "con": 10,
+        "int": 10,
+        "wis": 12,
+        "cha": 11
+      },
+      "conditions": [
+        {
+          "name": "restrained"
+        }
+      ],
+      "notes": "Captive villager, tied up. A miller's widow from the valley below. Fierce, furious, and protective of Tam."
+    },
+    "tam": {
+      "name": "Tam",
+      "side": "neutral",
+      "controller": "dm",
+      "pos": "S12",
+      "hp": 2,
+      "ac": 10,
+      "speed": 30,
+      "stats": {
+        "str": 6,
+        "dex": 12,
+        "con": 8,
+        "int": 10,
+        "wis": 10,
+        "cha": 10
+      },
+      "conditions": [
+        {
+          "name": "restrained"
+        }
+      ],
+      "notes": "Captive, Marta's son, about nine. Tied up. Very quiet."
+    },
+    "gob8": {
+      "name": "Nib",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "X17",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6,
+        "perception": 3
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        }
+      ],
+      "light": 20,
+      "descr": "a goblin sentry holding a guttering torch",
+      "notes": "East post sentry. Nimble Escape. Torch makes him easy to spot and ruins his own night sight. Stamps, mutters, and loves to be called \"corporal\". Bribable with food; panics if he sees a large foe.",
+      "mind": {
+        "role": "east post sentry",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "X17",
+        "facing": "S",
+        "fov": "cone",
+        "personality": [
+          "Self-appointed \"Corporal Nib\": puffs his chest, barks challenges at shadows, reports everything twice.",
+          "Torch-blind: stares into his own light and swears he sees everything.",
+          "Hates Gruk the trapper for calling him \"candle-boy\"."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.55,
+          "courage": 0.35,
+          "obedience": 0.85,
+          "curiosity": 0.5,
+          "impulsiveness": 0.6,
+          "sociability": 0.8
+        },
+        "motivations": [
+          "Keep anything from reaching the guard post and the store door.",
+          {
+            "description": "Get promoted off torch duty before his hand blisters again.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Eat something that is not mushroom. Anything.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "gob9": {
+            "trust": 0.5,
+            "loyalty": 0.6
+          },
+          "gob10": {
+            "trust": 0.2,
+            "loyalty": 0.3,
+            "notes": [
+              "calls me candle-boy"
+            ]
+          },
+          "gob11": {
+            "trust": 0.6,
+            "notes": [
+              "smells of smoke but gives orders with confidence"
+            ]
+          },
+          "snikka": {
+            "trust": 0.8,
+            "loyalty": 0.7
+          }
+        },
+        "bark": true,
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob9": {
+      "name": "Skrit",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "Y27",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        }
+      ],
+      "descr": "a lanky goblin on patrol with a bow",
+      "notes": "East patrol, route 1. Nimble Escape. Lazy: dawdles at the far end (P29). Folds if outnumbered; will defect for a good meal.",
+      "mind": {
+        "role": "east flank patrol",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "Y27",
+        "facing": "N",
+        "fov": "cone",
+        "patrol": [
+          "Y22",
+          "Y23",
+          "Y24",
+          "Y25",
+          "Y26",
+          "Y27",
+          "S28",
+          "P29",
+          "S28",
+          "Y27",
+          "Y26",
+          "Y25",
+          "Y24",
+          "Y23"
+        ],
+        "personality": [
+          "Lazy and whistling; walks the loop like a man counting steps to lunch.",
+          "Will gladly stop to chat with anyone not clearly hostile.",
+          "Gambles knucklebones with Nib and owes him three shinies."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.3,
+          "courage": 0.4,
+          "obedience": 0.5,
+          "curiosity": 0.6,
+          "impulsiveness": 0.5,
+          "sociability": 0.9
+        },
+        "motivations": [
+          "Walk the east loop and report anything strange.",
+          {
+            "description": "Be offered real food: roast meat, apples, anything. He would walk away from this post for a hot meal.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Not die for the Boss and her cave.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "gob8": {
+            "trust": 0.6
+          },
+          "gob10": {
+            "trust": 0.7,
+            "notes": [
+              "Gruk shares his dried bat"
+            ]
+          },
+          "gob12": {
+            "trust": 0.3
+          },
+          "snikka": {
+            "trust": 0.4,
+            "loyalty": 0.3
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob10": {
+      "name": "Gruk",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "Y25",
+      "hp": 14,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 15,
+        "con": 10,
+        "int": 11,
+        "wis": 11,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6,
+        "perception": 4
+      },
+      "attacks": [
+        {
+          "name": "Sling",
+          "bonus": 4,
+          "damage": "1d4+2",
+          "type": "bludgeoning",
+          "range": [
+            30,
+            120
+          ]
+        },
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "descr": "a wiry goblin in a patchwork leather coat, hidden at the bend",
+      "notes": "Trapper (elite). Knows the spiked pit at X24 and the tripline/bell at X26-Y26 and re-sets the tripline after anything trips it. Nimble Escape. Opens with Sling from behind the bend, then falls back so pursuers cross X24.",
+      "mind": {
+        "role": "trapper",
+        "faction": "the Fangmaw goblins",
+        "rank": 2,
+        "tier": "elite",
+        "post": "Y25",
+        "facing": "S",
+        "fov": "cone",
+        "personality": [
+          "Quiet, methodical, proud of his work; names every trap (\"Mother\", \"Biter\").",
+          "Hates sloppy sentries who tread on his cords; hates being watched while he works.",
+          "Pats the bell cord when nervous."
+        ],
+        "competencies": [
+          "knows the pit at X24 and the tripline at X26-Y26",
+          "resets the tripline when it is sprung",
+          "never steps on X24; routes around via column Y"
+        ],
+        "senses": {
+          "darkvision": 60,
+          "keen": true
+        },
+        "disposition": {
+          "vigilance": 0.85,
+          "courage": 0.55,
+          "obedience": 0.6,
+          "curiosity": 0.7,
+          "impulsiveness": 0.2,
+          "sociability": 0.3
+        },
+        "motivations": [
+          "Keep the pit at X24 and tripline at X26-Y26 armed and unbroken.",
+          {
+            "description": "Prove to Snikka the traps are worth more than three sentries.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Nib is a fool; get him off the torch before his light shows the traps.",
+            "source": "personal",
+            "priority": 3
+          }
+        ],
+        "relationships": {
+          "gob8": {
+            "trust": 0.2,
+            "loyalty": 0.3,
+            "notes": [
+              "candle-boy ruins my night-eyes"
+            ]
+          },
+          "gob9": {
+            "trust": 0.6
+          },
+          "gob11": {
+            "trust": 0.5
+          },
+          "snikka": {
+            "trust": 0.7,
+            "loyalty": 0.6
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob11": {
+      "name": "Mogwa",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "X13",
+      "hp": 13,
+      "ac": 13,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 12,
+        "wis": 12,
+        "cha": 12
+      },
+      "skills": {
+        "stealth": 4,
+        "perception": 3,
+        "arcana": 3
+      },
+      "attacks": [
+        {
+          "name": "Hex Powder",
+          "bonus": 4,
+          "damage": "2d4",
+          "type": "necrotic",
+          "range": [
+            30,
+            30
+          ]
+        },
+        {
+          "name": "Staff",
+          "bonus": 2,
+          "damage": "1d6",
+          "type": "bludgeoning",
+          "reach": 5
+        }
+      ],
+      "descr": "a goblin in a feathered shawl, smelling of smoke and mushrooms",
+      "notes": "Shaman (elite). Hex Powder: thrown pinch of glittering ash, 30 ft. Mushroom-smoked: distracted, sees omens. Sits beside the powder kegs W11-W12 (4d6 blast); would sooner scare an intruder with theatrics than fight, and bargains for spirit-mushrooms or flattery.",
+      "mind": {
+        "role": "shaman",
+        "faction": "the Fangmaw goblins",
+        "rank": 3,
+        "tier": "elite",
+        "post": "X13",
+        "facing": "E",
+        "fov": "cone",
+        "personality": [
+          "Dreamy, theatrical, speaks in omens; half the omens are nonsense.",
+          "Smokes glowing mushrooms in a clay pipe; high on a good day, sharp on a bad one.",
+          "Thinks Snikka is a mortal fool and the kegs are \"the god breath\"."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.35,
+          "courage": 0.55,
+          "obedience": 0.4,
+          "curiosity": 0.9,
+          "impulsiveness": 0.5,
+          "sociability": 0.6,
+          "superstition": 0.5
+        },
+        "motivations": [
+          "Guard the powder kegs and the storeroom loot.",
+          {
+            "description": "Become the real power in the warren once Snikka falls.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Secretly knows the hidden slab door at U14|V14 and uses it to slip to the pen and the loot.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "gob8": {
+            "trust": 0.5
+          },
+          "gob10": {
+            "trust": 0.5
+          },
+          "gob12": {
+            "trust": 0.3
+          },
+          "gob13": {
+            "trust": 0.5,
+            "notes": [
+              "supplies her with spore-caps"
+            ]
+          },
+          "snikka": {
+            "trust": 0.4,
+            "loyalty": 0.3,
+            "authority": 0.5
+          },
+          "gob4": {
+            "trust": 0.7,
+            "notes": [
+              "Pip brings her mushrooms; she is kind to him"
+            ]
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob12": {
+      "name": "Dribble",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "Q7",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        }
+      ],
+      "descr": "a bored goblin sitting in the guano, holding a stick",
+      "notes": "Bat-cave watcher. Nimble Escape. Loathes the bats. Loud noise here wakes the colony (DM ruling). Wants out of this post; grumbles to anyone who talks to him.",
+      "mind": {
+        "role": "bat-cave watcher",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "Q7",
+        "facing": "E",
+        "fov": "cone",
+        "personality": [
+          "Whiny, bored and filthy: hates the bats, the guano and the smell, in that order.",
+          "Throws pebbles at the roost to pass the time, then regrets it.",
+          "Hums to cover his fear."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.2,
+          "courage": 0.3,
+          "obedience": 0.45,
+          "curiosity": 0.7,
+          "impulsiveness": 0.7,
+          "sociability": 0.8,
+          "superstition": 0.6
+        },
+        "motivations": [
+          "Watch the bridge and the stalactite chokepoint; yell if anything comes.",
+          {
+            "description": "Get reassigned off bat duty.",
+            "source": "personal",
+            "priority": 1
+          },
+          {
+            "description": "Keep the bats asleep. If they wake he is the first to be bitten.",
+            "source": "personal",
+            "priority": 2
+          }
+        ],
+        "relationships": {
+          "gob13": {
+            "trust": 0.6,
+            "notes": [
+              "Bog brings spare mushroom stew"
+            ]
+          },
+          "gob9": {
+            "trust": 0.4
+          },
+          "gob11": {
+            "trust": 0.3
+          },
+          "snikka": {
+            "trust": 0.3,
+            "loyalty": 0.3
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob13": {
+      "name": "Bog",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "G7",
+      "hp": 5,
+      "ac": 12,
+      "speed": 30,
+      "stats": {
+        "str": 7,
+        "dex": 12,
+        "con": 10,
+        "int": 10,
+        "wis": 11,
+        "cha": 8
+      },
+      "skills": {
+        "perception": 2
+      },
+      "attacks": [
+        {
+          "name": "Trowel",
+          "bonus": 2,
+          "damage": "1d4",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "descr": "a plump goblin in a stained apron with a basket of mushrooms",
+      "notes": "Mushroom farmer, near-non-combatant. Flees combat; surrenders readily. Tends the beds on route 4. Terrified of fire (marsh gas hollow B3-C4 is nearby).",
+      "mind": {
+        "role": "mushroom farmer",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "G7",
+        "facing": "N",
+        "fov": "cone",
+        "patrol": [
+          "F5",
+          "E8",
+          "H8",
+          "H4",
+          "F5"
+        ],
+        "personality": [
+          "Gentle, fussy, talks to the mushrooms.",
+          "Flinches at fire and bright light; trembles at the thought of the marsh gas igniting.",
+          "Would rather bribe an intruder with stew than fight."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.5,
+          "courage": 0.1,
+          "obedience": 0.7,
+          "curiosity": 0.5,
+          "impulsiveness": 0.3,
+          "sociability": 0.8,
+          "superstition": 0.7
+        },
+        "motivations": [
+          "Tend the fungus garden; the Fangmaw eat because of him.",
+          {
+            "description": "Never be in a fight again. He saw what Snikka did to the last deserter.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob11": {
+            "trust": 0.6,
+            "notes": [
+              "she smokes my best caps"
+            ]
+          },
+          "gob12": {
+            "trust": 0.6
+          },
+          "gob7": {
+            "trust": 0.5
+          },
+          "snikka": {
+            "trust": 0.5,
+            "loyalty": 0.4
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob14": {
+      "name": "Snore",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "D16",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "conditions": [
+        {
+          "name": "asleep"
+        }
+      ],
+      "descr": "a goblin sprawled on a cot, snoring",
+      "notes": "Bored sleeper on the cots. Nimble Escape. Slept through his shift again; blusters when woken.",
+      "mind": {
+        "role": "off-duty watch",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "D16",
+        "facing": "E",
+        "fov": "cone",
+        "personality": [
+          "Chronically late, chronically sleepy, talks in his sleep.",
+          "Cheerfully dishonest about his shift.",
+          "Dreams of snoring in a warm bed in the sun."
+        ],
+        "senses": {
+          "darkvision": 60
+        },
+        "disposition": {
+          "vigilance": 0.1,
+          "courage": 0.35,
+          "obedience": 0.35,
+          "curiosity": 0.4,
+          "impulsiveness": 0.4,
+          "sociability": 0.6,
+          "superstition": 0.3
+        },
+        "motivations": [
+          "Sleep. Wake only for something he cannot ignore.",
+          {
+            "description": "Not be caught asleep by Grub the scavenger, who squeals.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob15": {
+            "trust": 0.2,
+            "notes": [
+              "Grub squeals on me to Snikka"
+            ]
+          },
+          "gob9": {
+            "trust": 0.5
+          },
+          "snikka": {
+            "trust": 0.3,
+            "loyalty": 0.3
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    },
+    "gob15": {
+      "name": "Grub",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "C21",
+      "hp": 7,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 10,
+        "cha": 8
+      },
+      "skills": {
+        "stealth": 6,
+        "perception": 4
+      },
+      "attacks": [
+        {
+          "name": "Scimitar",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "descr": "a stooped goblin rooting through the midden",
+      "notes": "Midden scavenger, keen scent, walks the west tunnel (route 3). Nimble Escape. Smells strangers within 30 ft even through walls. Tattletale.",
+      "mind": {
+        "role": "midden scavenger",
+        "faction": "the Fangmaw goblins",
+        "rank": 1,
+        "tier": "minion",
+        "post": "C21",
+        "facing": "N",
+        "fov": "cone",
+        "patrol": [
+          "C23",
+          "C13",
+          "C10",
+          "C13",
+          "C19",
+          "C21"
+        ],
+        "personality": [
+          "Sniffs everything twice; proud of his nose.",
+          "A tattletale; reports slackers, especially Snore.",
+          "Hoards scraps in his pockets."
+        ],
+        "senses": {
+          "darkvision": 60,
+          "scent": 30,
+          "keen": true
+        },
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.4,
+          "obedience": 0.7,
+          "curiosity": 0.8,
+          "impulsiveness": 0.5,
+          "sociability": 0.4
+        },
+        "motivations": [
+          "Sniff out strangers and food, report to whoever outranks him.",
+          {
+            "description": "Catch Snore napping and watch him get flogged.",
+            "source": "personal",
+            "priority": 1
+          }
+        ],
+        "relationships": {
+          "gob14": {
+            "trust": 0.1,
+            "loyalty": 0.2,
+            "notes": [
+              "lazy cot-hog"
+            ]
+          },
+          "gob6": {
+            "trust": 0.6
+          },
+          "snikka": {
+            "trust": 0.7,
+            "loyalty": 0.6
+          }
+        },
+        "knows": {
+          "marta": {
+            "name": "Marta",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          },
+          "tam": {
+            "name": "Tam",
+            "role": "captive",
+            "rank": 0,
+            "post": "the pen"
+          }
+        }
+      }
+    }
+  }
+}

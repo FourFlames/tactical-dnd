@@ -1,0 +1,144 @@
+{
+  "name": "The Goblin Warren",
+  "intro": "The crack behind the rope bridge opens into a smoky cave. A cookfire gutters in the middle, bedding is heaped in the far corner, and a crude stake pen leans against the north wall. Somebody inside is still calling for Grall.",
+  "dmNotes": "Boss Snikka (goblin boss) runs the warren now that Grall is gone, and she knows it. Pip (gob4) is the nervous one who has been calling for Grall; he stands near the crack and flees screaming to Snikka the moment he sees anyone. Lookout (gob5) sits on the rock shelf (P6-Q6) with a shortbow and half cover; goblins have passive Perception 9. Two goblins (gob6, gob7) are at the cookfire. Captives: two villagers (Marta and her son Tam) tied up in the pen (L2-P5, gate at N5), restrained. Snikka's plan if attacked: hold the line at the fire, and once 2 goblins are down she drags a captive to the gate and threatens them (knife to the throat) to bargain for escape. She surrenders below 8 HP. Fire hooks: the cookfire (F5) is a fire-source; the oil barrels (C7-D7) explode if lit (3d6 fire, DEX 13 half, 10 ft radius, then burning); the bedding (C2-D3) and the stake pen are flammable, and the captives are inside the pen. Goblins rout once Snikka falls or surrenders.",
+  "legend": {
+    ".": { "name": "cave floor", "tags": [] },
+    "#": { "name": "rock wall", "tags": ["wall"] },
+    "n": { "name": "narrow crack", "tags": ["narrow"] },
+    "f": { "name": "cookfire", "tags": ["impassable", "fire-source", "cover-half", "can-topple"] },
+    "h": { "name": "bedding heap", "tags": ["difficult", "flammable"] },
+    "x": { "name": "stake fence", "tags": ["impassable", "cover-half", "flammable"] },
+    "g": { "name": "pen gate", "tags": ["impassable", "cover-half", "flammable", "can-topple"] },
+    "L": { "name": "rock shelf", "tags": ["difficult", "climbable", "cover-half", "high-ground"] },
+    "b": { "name": "oil barrels", "tags": ["impassable", "cover-half", "flammable", "explosive", "can-topple"] },
+    ",": { "name": "rubble", "tags": ["difficult", "cover-half"] }
+  },
+  "rows": [
+    "##################",
+    "##hh.......xxxxx##",
+    "##hh.......x...x##",
+    "#..........x...x.#",
+    "#....f.....xxgxx.#",
+    "#..............LL#",
+    "#.bb...........LL#",
+    "#.bb.....,,......#",
+    "##.......,,.....##",
+    "###.............##",
+    "########n#########",
+    "########n#########",
+    "########n#########"
+  ],
+  "creatures": {
+    "rook": {
+      "name": "Rook", "side": "party", "controller": "player", "pos": "I12",
+      "hp": 28, "ac": 18, "speed": 30, "initBonus": 1,
+      "stats": { "str": 16, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10 },
+      "saves": { "str": 5, "con": 4 },
+      "skills": { "athletics": 5, "perception": 3, "intimidation": 2 },
+      "attacks": [
+        { "name": "Longsword", "bonus": 5, "damage": "1d8+3", "type": "slashing", "reach": 5 },
+        { "name": "Javelin", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [30, 120] }
+      ],
+      "resources": { "secondWind": 1, "actionSurge": 1, "javelins": 3, "superiority": 4, "heroic inspiration": 0, "lamp oil": 2, "potion of healing": 1, "alchemist's fire": 1, "silver": 4, "charcoal and vellum": 1, "meditation sigil": 1 },
+      "notes": "Human Fighter 3 (Battle Master). Chain mail: disadvantage on Stealth. Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action. Background: Hawthdorn University scholar (statistics, philosophy); reads and chants Misakha; speaks Dvergr, Sylvari, Draconic, rough Undercommon.",
+      "persona": "Scholar turned sellsword. Brilliant, self-describedly hypocritical, prefers killing to thinking because thinking makes him sad. Loves fire."
+    },
+    "wren": {
+      "name": "Wren", "side": "party", "controller": "llm", "pos": "I11",
+      "hp": 16, "maxHp": 20, "ac": 14, "speed": 25,
+      "stats": { "str": 8, "dex": 16, "con": 12, "int": 13, "wis": 12, "cha": 14 },
+      "saves": { "dex": 5, "int": 3 },
+      "skills": { "stealth": 7, "acrobatics": 5, "sleight-of-hand": 5, "perception": 3, "deception": 4 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 5, "damage": "1d6+3", "type": "piercing", "range": [80, 320] },
+        { "name": "Shortsword", "bonus": 5, "damage": "1d6+3", "type": "piercing", "reach": 5 }
+      ],
+      "resources": { "arrows": 15, "silver": 4, "goblin tooth": 1 },
+      "notes": "Halfling Rogue 3. Sneak Attack +2d6 once per turn with advantage or an ally adjacent to the target (use --extra 2d6). Cunning Action: bonus-action Dash, Disengage, or Hide.",
+      "persona": "Wiry, sardonic, allergic to fair fights. Prefers high ground, flanks, and anything involving fire. Will loot mid-combat if she thinks nobody's looking. Has decided Rook is her favorite person."
+    },
+    "ash": {
+      "name": "Brother Ash", "side": "party", "controller": "llm", "pos": "I13",
+      "hp": 27, "ac": 18, "speed": 25,
+      "stats": { "str": 14, "dex": 10, "con": 14, "int": 10, "wis": 16, "cha": 12 },
+      "saves": { "wis": 5, "cha": 3 },
+      "skills": { "medicine": 5, "insight": 5, "religion": 2 },
+      "attacks": [
+        { "name": "Mace", "bonus": 4, "damage": "1d6+2", "type": "bludgeoning", "reach": 5 },
+        { "name": "Spiritual Weapon", "bonus": 5, "damage": "1d8+3", "type": "force", "range": [60, 60] }
+      ],
+      "resources": { "slots1": 2, "slots2": 1, "silver": 1 },
+      "notes": "Dwarf Life Cleric 3. Sacred Flame (cantrip): target in 60 ft makes DC 13 DEX save or takes 1d8 radiant (use: damage <id> 1d8 radiant --save dex --dc 13). Spells: Bless, Cure Wounds, Healing Word, Shield of Faith, Spiritual Weapon (2nd, bonus action), Hold Person (2nd, DC 13 WIS). Life domain: healing spells add 2 + spell level.",
+      "persona": "Gravelly, patient, deeply suspicious of bridges. Keeps everyone alive first, smites second. Quotes scripture nobody else has heard of (the Books of Cinders). Has grown fond of Rook and worries about him. Has forbidden burning anything until he gives the word, especially near captives."
+    },
+    "snikka": {
+      "name": "Boss Snikka", "side": "enemy", "controller": "dm", "pos": "H3",
+      "hp": 21, "ac": 17, "speed": 30,
+      "stats": { "str": 10, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 10 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 },
+        { "name": "Javelin", "bonus": 2, "damage": "1d6", "type": "piercing", "range": [30, 120] }
+      ],
+      "notes": "Goblin Boss. Multiattack: two scimitar attacks (second at disadvantage). Nimble Escape: bonus-action Disengage or Hide. Redirect Attack (reaction): when hit, swap places with a goblin within 5 ft and it takes the hit. Speaks Goblin and Common. Surrenders below 8 HP."
+    },
+    "gob4": {
+      "name": "Pip", "side": "enemy", "controller": "dm", "pos": "H9",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Young and terrified. Was calling for Grall. Flees toward Snikka shouting the alarm the moment he spots an intruder. Would surrender to anyone who let him."
+    },
+    "gob5": {
+      "name": "Goblin Lookout", "side": "enemy", "controller": "dm", "pos": "Q6",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] },
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 }
+      ],
+      "notes": "Nimble Escape. On the rock shelf; dozing (disadvantage on Perception until the alarm)."
+    },
+    "gob6": {
+      "name": "Goblin", "side": "enemy", "controller": "dm", "pos": "E4",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 },
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] }
+      ],
+      "notes": "Nimble Escape. At the cookfire."
+    },
+    "gob7": {
+      "name": "Goblin", "side": "enemy", "controller": "dm", "pos": "G6",
+      "hp": 7, "ac": 15, "speed": 30,
+      "stats": { "str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8 },
+      "skills": { "stealth": 6 },
+      "attacks": [
+        { "name": "Scimitar", "bonus": 4, "damage": "1d6+2", "type": "slashing", "reach": 5 },
+        { "name": "Shortbow", "bonus": 4, "damage": "1d6+2", "type": "piercing", "range": [80, 320] }
+      ],
+      "notes": "Nimble Escape. At the cookfire."
+    },
+    "marta": {
+      "name": "Marta", "side": "neutral", "controller": "dm", "pos": "M3",
+      "hp": 4, "ac": 10, "speed": 30,
+      "stats": { "str": 10, "dex": 10, "con": 10, "int": 10, "wis": 12, "cha": 11 },
+      "conditions": [{ "name": "restrained" }],
+      "notes": "Captive villager, tied up. A miller's widow from the valley below. Fierce, furious, and protective of Tam."
+    },
+    "tam": {
+      "name": "Tam", "side": "neutral", "controller": "dm", "pos": "O3",
+      "hp": 2, "ac": 10, "speed": 30,
+      "stats": { "str": 6, "dex": 12, "con": 8, "int": 10, "wis": 10, "cha": 10 },
+      "conditions": [{ "name": "restrained" }],
+      "notes": "Captive, Marta's son, about nine. Tied up. Very quiet."
+    }
+  }
+}
