@@ -33,6 +33,7 @@
     --mono: 'IBM Plex Mono', ui-monospace, monospace;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
   .app { display: grid; grid-template-columns: 1fr 360px; height: 100vh; }
   @media (max-width: 900px) { .app { grid-template-columns: 1fr; height: auto; } }
@@ -111,14 +112,148 @@
   .act .who { font-size: 13px; color: var(--ink-dim); margin-bottom: 8px; }
   .act .who b { color: var(--gold); font-weight: 600; }
   .act .bar2 { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-  .act button { background: var(--gold); color: #1b1a15; border: 0; border-radius: 6px; padding: 7px 16px; font: 600 13px var(--sans); cursor: pointer; }
-  .act button:disabled { opacity: .5; cursor: default; }
+  .act #actSend { background: var(--gold); color: #1b1a15; border: 0; border-radius: 6px; padding: 7px 16px; font: 600 13px var(--sans); cursor: pointer; }
+  .act #actSend:disabled { opacity: .5; cursor: default; }
   .act .err { color: var(--enemy); font-size: 12px; }
   .act .sent { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
   .act .sent div { font-size: 12px; color: var(--ink-dim); }
   .act .sent span { font-family: var(--mono); font-size: 10px; margin-left: 6px; color: var(--ink-faint); }
   .act .sent .pend span { color: var(--gold); }
   .empty code { font-family: var(--mono); font-size: 13px; color: var(--gold); }
+  .act .pres { font-size: 10px; letter-spacing: .1em; }
+  .act .pres.on { color: #6fbf73; }
+  .act .pres.off { color: var(--ink-faint); }
+  .act .receipt { margin-top: 8px; font-size: 12px; color: var(--party); line-height: 1.4; }
+  .act .pointing { margin-top: 6px; font-size: 12px; color: var(--ink-dim); }
+  .act .pointing b { color: var(--gold); font-weight: 500; }
+  .act .pointing a { color: var(--ink-faint); cursor: pointer; margin-left: 6px; }
+  .act .msg { padding: 6px 0; border-top: 1px dashed #2c2a23; font-size: 12px; color: var(--ink-dim); }
+  .act .msg .st { font-family: var(--mono); font-size: 10px; margin-left: 6px; color: var(--ink-faint); white-space: nowrap; }
+  .act .msg .st.wait { color: var(--gold); }
+  .act .msg .st.ok { color: #6fbf73; }
+  .act .msg .q { color: var(--secret); font-family: var(--mono); font-size: 10px; margin-right: 4px; }
+  .act .msg .rp { margin-top: 3px; color: var(--ink); font-size: 12px; }
+  .act .msg .rp::before { content: 'DM '; font-family: var(--mono); font-size: 10px; color: var(--gold); }
+
+  /* cursor + inspect */
+  .curbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: var(--ink-dim); font: 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; padding: 4px 11px; cursor: pointer; }
+  .seg button.on { background: var(--panel-2); color: var(--ink); }
+  .zctl { display: flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
+  .zctl button, .ghost { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; font: 12px var(--sans); cursor: pointer; padding: 3px 8px; }
+  .zctl button:hover, .ghost:hover { background: var(--panel-2); }
+  .zctl input { width: 44px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font: 12px var(--mono); padding: 3px 4px; text-align: right; }
+  .look { margin-top: 10px; font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .look h3 { margin: 0 0 2px; font-family: var(--display); font-size: 20px; color: var(--ink); font-weight: 500; letter-spacing: .03em; }
+  .look h3 small { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: 6px; letter-spacing: 0; }
+  .look .ln { margin: 2px 0; }
+  .look .atks { margin-top: 6px; font-family: var(--mono); font-size: 12px; }
+  .look .atks .y { color: #6fbf73; }
+  .look .atks .m { color: var(--gold); }
+  .look .atks .n { color: var(--ink-faint); }
+  .look .facts { margin-top: 8px; border-left: 2px solid var(--gold); padding-left: 8px; color: var(--ink); }
+  .look .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .look .ask { display: flex; gap: 6px; margin-top: 8px; }
+  .look .ask input { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: 13px var(--sans); }
+  .look .ask input:focus { outline: none; border-color: var(--gold); }
+  .hint { font-size: 11px; color: var(--ink-faint); margin-top: 8px; line-height: 1.5; }
+  .hint kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--ink-dim); }
+  .ping { animation: ping 1s ease-out 3; transform-box: fill-box; transform-origin: center; }
+  @keyframes ping { 0% { transform: scale(.3); opacity: 1 } 100% { transform: scale(1.7); opacity: 0 } }
+  .pinglabel { animation: fade 3.2s forwards; }
+
+  /* floating panels over the map */
+  .mapzone { position: relative; flex: 1; min-height: 360px; display: flex; }
+  .mapzone .mapwrap { flex: 1; }
+  .float { position: absolute; z-index: 5; background: rgba(28, 27, 22, .9); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, .45); padding: 10px 12px; }
+  .fhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .caret { background: none; border: 0; color: var(--ink-dim); font-size: 13px; width: 20px; height: 20px; padding: 0; cursor: pointer; border-radius: 4px; transition: transform .15s; }
+  .caret:hover { color: var(--ink); background: var(--panel-2); }
+  .float.closed .caret { transform: rotate(-90deg); }
+  .lookfloat { top: 10px; right: 10px; width: 310px; max-height: calc(100% - 20px); overflow-y: auto; }
+  .lookfloat.closed .look { display: none; }
+  .actfloat { left: 10px; bottom: 10px; width: min(400px, calc(100% - 20px)); }
+  .actfloat .who { flex: 1; margin: 0; font-size: 12px; line-height: 1.35; }
+  .actfloat .pres { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+  .actfloat .sent { max-height: 150px; overflow-y: auto; margin: 8px 0 0; }
+  .actfloat.closed .sent { display: none; }
+  .actfloat .compose { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+  .actfloat textarea { min-height: 40px; max-height: 140px; flex: 1; }
+  .actfloat .err:empty { display: none; }
+  .actfloat .err { margin-top: 6px; }
+  @media (max-width: 900px) {
+    .mapzone { flex-direction: column; min-height: 0; }
+    .float { position: static; width: auto; max-height: none; margin-top: 10px; }
+  }
+
+  /* turn tracker (top left) */
+  .turnfloat { top: 10px; left: 10px; width: 300px; }
+  .turnfloat .tn { font-family: var(--display); font-size: 18px; color: var(--gold); }
+  .pips { display: flex; gap: 6px; margin: 6px 0; }
+  .pip { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--gold); color: var(--gold); }
+  .pip.spent { border-color: var(--line); color: var(--ink-faint); text-decoration: line-through; }
+  .mvbar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 4px 0 2px; }
+  .mvbar i { display: block; height: 100%; background: var(--party); transition: width .3s; }
+  .mvtxt { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+  .btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; font: 12px var(--sans); padding: 4px 9px; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: var(--gold); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.gold { background: var(--gold); color: #1b1a15; border-color: var(--gold); font-weight: 600; }
+  .btn.warn { border-color: var(--enemy); color: #f0a08a; }
+  .btn small { color: var(--ink-faint); margin-left: 3px; }
+  .btn.gold small { color: #4a4027; }
+  .tmsg { font-size: 12px; margin-top: 6px; color: var(--ink-dim); min-height: 0; }
+  .tmsg.err { color: var(--enemy); }
+  .movebox { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; }
+  .movebox label { color: var(--ink-dim); margin-right: 10px; cursor: pointer; }
+  .movebox .warn { color: #f0a08a; margin-top: 4px; }
+  .movebox .dcs { color: var(--gold); margin-top: 4px; }
+  .look select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; font: 12px var(--sans); padding: 3px 4px; }
+
+  /* dice + hits */
+  .dicetray { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+  .roll { display: flex; align-items: center; gap: 10px; background: rgba(20, 19, 15, .92); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px 8px 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    animation: rollin .25s cubic-bezier(.2, 1.4, .4, 1); }
+  .roll.out { animation: rollout .35s forwards; }
+  @keyframes rollin { from { transform: translateY(-14px) scale(.9); opacity: 0 } }
+  @keyframes rollout { to { transform: translateY(-10px); opacity: 0 } }
+  .die { width: 46px; height: 46px; position: relative; display: grid; place-items: center; font: 700 19px var(--mono); color: #1b1a15; }
+  .die svg { position: absolute; inset: 0; }
+  .die span { position: relative; }
+  .die.spin { animation: spin .55s cubic-bezier(.3, .6, .4, 1); }
+  @keyframes spin { 0% { transform: rotate(-200deg) scale(.6) } 70% { transform: rotate(15deg) scale(1.12) } 100% { transform: rotate(0) scale(1) } }
+  .die.nat20 { filter: drop-shadow(0 0 8px #ffd56b); }
+  .die.nat1 svg polygon { fill: #8a3b2e; }
+  .roll .rt { font-size: 13px; color: var(--ink); line-height: 1.3; }
+  .roll .rt small { display: block; color: var(--ink-dim); font-family: var(--mono); font-size: 11px; }
+  .roll .res { font-weight: 700; letter-spacing: .06em; }
+  .roll .res.hit { color: #f07b5f; } .roll .res.ok { color: #6fbf73; } .roll .res.miss { color: var(--ink-faint); } .roll .res.crit { color: #ffd56b; }
+  .tok .inner { transform-box: fill-box; }
+  .tok.flash .inner { animation: shake .38s; }
+  .tok.flash circle:first-of-type + circle { stroke: #ff6b4f; }
+  @keyframes shake { 0%, 100% { transform: translate(0, 0) } 20% { transform: translate(-4px, 1px) } 40% { transform: translate(4px, -1px) } 60% { transform: translate(-3px, 0) } 80% { transform: translate(2px, 1px) } }
+  .dmgnum { font: 800 20px Inter, sans-serif; paint-order: stroke; stroke: #14130f; stroke-width: 4px; animation: rise 1.3s forwards; }
+  .dmgnum.big { font-size: 28px; }
+  @keyframes rise { 0% { transform: translateY(6px) scale(.6); opacity: 0 } 15% { transform: translateY(0) scale(1.15); opacity: 1 } 70% { opacity: 1 } 100% { transform: translateY(-26px); opacity: 0 } }
+  .hitflash { animation: hf .35s forwards; }
+  @keyframes hf { from { opacity: .7 } to { opacity: 0 } }
+
+  /* offer dialog */
+  .offer { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(10, 9, 7, .45); }
+  .offer .box { width: min(380px, calc(100% - 32px)); background: var(--panel); border: 1px solid var(--gold); border-radius: 12px; padding: 16px 18px; box-shadow: 0 16px 40px rgba(0, 0, 0, .6); }
+  .offer h4 { margin: 0 0 6px; font-family: var(--display); font-size: 20px; color: var(--gold); font-weight: 500; }
+  .offer p { margin: 0 0 10px; line-height: 1.45; color: var(--ink); }
+  .offer .dc { font-family: var(--mono); font-size: 12px; color: var(--gold); margin-bottom: 12px; }
+
+  /* chronicle tabs */
+  .logtabs { display: flex; gap: 4px; padding: 12px 18px 0; border-bottom: 1px solid var(--line); }
+  .logtabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-faint); font: 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; padding: 4px 8px 8px; cursor: pointer; position: relative; }
+  .logtabs button.on { color: var(--ink); border-bottom-color: var(--gold); }
+  .logtabs button i { display: none; position: absolute; top: 2px; right: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
+  .logtabs button.new i { display: block; }
 </style>
 </head>
 <body>
@@ -141,20 +276,47 @@
         <a id="tDm" class="dm">DM</a>
       </div>
     </div>
-    <div class="mapwrap" id="mapwrap"></div>
+    <div class="mapzone">
+      <div class="mapwrap" id="mapwrap"></div>
+      <!-- Floating over the map: the cursor card (top right) and the player's input (bottom left). -->
+      <div class="float lookfloat" id="curSec" hidden>
+        <div class="fhead">
+          <button class="caret" id="lookCaret" title="Show / hide the card">▾</button>
+          <div class="seg"><button id="mSquare" title="Point at a square (M)">Square</button><button id="mEntity" title="Point at a creature (M)">Entity</button></div>
+          <div class="zctl" id="zctl" hidden title="Height of the cursor in feet ([ and ])">
+            <button id="zDn">−</button><input id="zIn" type="number" step="5"><span>ft</span><button id="zUp">+</button><button id="zFloor" title="Back to the floor">floor</button>
+          </div>
+        </div>
+        <div class="look" id="look"></div>
+      </div>
+      <div class="float turnfloat" id="turnSec" hidden></div>
+      <div class="dicetray" id="dice"></div>
+      <div class="offer" id="offerSec" hidden></div>
+      <div class="float act actfloat" id="actSec" hidden>
+        <div class="fhead">
+          <button class="caret" id="actCaret" title="Show / hide your messages">▾</button>
+          <div class="who" id="actWho"></div>
+          <span class="pres" id="pres"></span>
+        </div>
+        <div class="sent" id="actSent"></div>
+        <div class="receipt" id="actReceipt" hidden></div>
+        <div class="pointing" id="actPoint" hidden></div>
+        <div class="compose">
+          <textarea id="actText" maxlength="600" rows="2" placeholder="What do you do? (Enter sends, Shift+Enter for a new line)"></textarea>
+          <button id="actSend" title="Send to the DM (Enter)">Send</button>
+        </div>
+        <div class="err" id="actErr"></div>
+      </div>
+    </div>
     <div class="hover" id="hover"></div>
   </main>
   <aside class="side">
     <div class="section"><div class="label">Initiative</div><div class="order" id="order"></div></div>
-    <div class="section act" id="actSec" hidden>
-      <div class="label">Your move</div>
-      <div class="who" id="actWho"></div>
-      <textarea id="actText" maxlength="600" placeholder="What do you do? e.g. I dash across the bridge and swing at the archer."></textarea>
-      <div class="bar2"><button id="actSend">Send to DM</button><span class="err" id="actErr"></span></div>
-      <div class="sent" id="actSent"></div>
-    </div>
     <div class="section" id="cardSec" hidden><div class="card" id="card"></div></div>
-    <div class="label" style="padding: 14px 18px 0">Chronicle</div>
+    <div class="logtabs" id="logtabs">
+      <button data-tab="story">Narration<i></i></button>
+      <button data-tab="combat">Combat<i></i></button>
+    </div>
     <div class="log" id="log"></div>
   </aside>
 </div>
@@ -163,6 +325,8 @@ const params = new URLSearchParams(location.search);
 const SEAT = params.get('seat');
 const DM = !SEAT && params.has('dm');
 const THREE_D = params.has('3d');
+// Who this viewer acts as: a seat, or (on the DM's machine, player view) the local player.
+const TOKEN = SEAT || (DM ? null : 'local');
 // Seated players keep their seat when switching 2D/3D; they never get the DM toggle.
 const href = (dm, td) => '/' + [SEAT && 'seat=' + encodeURIComponent(SEAT), dm && 'dm', td && '3d'].filter(Boolean).join('&').replace(/^./, (c) => '?' + c);
 document.getElementById('tPlayer').href = href(false, THREE_D);
@@ -226,16 +390,23 @@ function buildSvg(v) {
   fxLayer = el('g', { id: 'fx' }, svg);
   tokLayer = el('g', { id: 'tokens' }, svg);
   el('g', { id: 'fog' }, svg);
-  svg.addEventListener('mousemove', (e) => {
+  el('g', { id: 'cursor', 'pointer-events': 'none' }, svg);
+  el('g', { id: 'pings', 'pointer-events': 'none' }, svg);
+  el('g', { id: 'pathfx', 'pointer-events': 'none' }, svg);
+  el('g', { id: 'hitfx', 'pointer-events': 'none' }, svg);
+  const cellAt = (e) => {
     const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    hoverCell(Math.floor(p.x / CELL), Math.floor(p.y / CELL));
-  });
-  svg.addEventListener('mouseleave', () => (document.getElementById('hover').textContent = ''));
+    return { x: Math.floor(p.x / CELL), y: Math.floor(p.y / CELL) };
+  };
+  svg.addEventListener('mousemove', (e) => { const c = cellAt(e); hoverCell(c.x, c.y); });
+  svg.addEventListener('click', (e) => { const c = cellAt(e); pointCell(c.x, c.y); });
+  svg.addEventListener('mouseleave', () => { document.getElementById('hover').textContent = ''; hoverPath(-1, -1); });
   wrap.appendChild(svg);
 }
 
 function hoverCell(x, y) {
+  hoverPath(x, y);
   const h = document.getElementById('hover');
   if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) { h.textContent = ''; return; }
   const c = state.cells[y][x];
@@ -326,27 +497,28 @@ function drawTokens(v) {
     if (!g) {
       g = el('g', { class: 'tok', 'data-id': c.id }, tokLayer);
       g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
-      g.addEventListener('click', () => select(c.id));
+      g.addEventListener('click', (e) => { e.stopPropagation(); pointCreature(c.id); });
     }
     g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
     g.innerHTML = '';
+    const inner = el('g', { class: 'inner' }, g);
     const down = (c.hp !== undefined ? c.hp <= 0 : c.health === 'down');
     const color = SIDE_COLOR[c.side] || SIDE_COLOR.neutral;
     const cx = CELL / 2, cy = CELL / 2, R = CELL * .36;
-    if (state.current === c.id) el('circle', { cx, cy, r: R + 6, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 2, class: 'ring-turn' }, g);
-    if (selected === c.id) el('circle', { cx, cy, r: R + 9, fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1, 'stroke-dasharray': '3 3' }, g);
-    el('circle', { cx, cy: cy + 2, r: R, fill: '#000', opacity: .45 }, g);
-    el('circle', { cx, cy, r: R, fill: '#1b1a15', stroke: color, 'stroke-width': 3, 'stroke-dasharray': c.hidden ? '4 3' : null, opacity: down ? .5 : 1 }, g);
+    if (state.current === c.id) el('circle', { cx, cy, r: R + 6, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 2, class: 'ring-turn' }, inner);
+    if (selected === c.id) el('circle', { cx, cy, r: R + 9, fill: 'none', stroke: 'var(--ink)', 'stroke-width': 1, 'stroke-dasharray': '3 3' }, inner);
+    el('circle', { cx, cy: cy + 2, r: R, fill: '#000', opacity: .45 }, inner);
+    el('circle', { cx, cy, r: R, fill: '#1b1a15', stroke: color, 'stroke-width': 3, 'stroke-dasharray': c.hidden ? '4 3' : null, opacity: down ? .5 : 1 }, inner);
     // HP arc when known
     if (c.hp !== undefined && c.maxHp) {
       const f = Math.max(0, Math.min(1, c.hp / c.maxHp)), circ = 2 * Math.PI * (R - 5);
-      el('circle', { cx, cy, r: R - 5, fill: 'none', stroke: f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a', 'stroke-width': 2, 'stroke-dasharray': `${circ * f} ${circ}`, transform: `rotate(-90 ${cx} ${cy})`, opacity: .9 }, g);
+      el('circle', { cx, cy, r: R - 5, fill: 'none', stroke: f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a', 'stroke-width': 2, 'stroke-dasharray': `${circ * f} ${circ}`, transform: `rotate(-90 ${cx} ${cy})`, opacity: .9 }, inner);
     }
-    const t = el('text', { x: cx, y: cy + 5, 'text-anchor': 'middle', fill: 'var(--ink)', 'font-family': 'Cormorant SC', 'font-weight': 700, 'font-size': 17, opacity: down ? .5 : 1 }, g);
+    const t = el('text', { x: cx, y: cy + 5, 'text-anchor': 'middle', fill: 'var(--ink)', 'font-family': 'Cormorant SC', 'font-weight': 700, 'font-size': 17, opacity: down ? .5 : 1 }, inner);
     t.textContent = labels[c.id];
-    if (down) el('path', { d: `M${cx - 10} ${cy - 10} L${cx + 10} ${cy + 10} M${cx + 10} ${cy - 10} L${cx - 10} ${cy + 10}`, stroke: '#d25b4a', 'stroke-width': 3 }, g);
+    if (down) el('path', { d: `M${cx - 10} ${cy - 10} L${cx + 10} ${cy + 10} M${cx + 10} ${cy - 10} L${cx - 10} ${cy + 10}`, stroke: '#d25b4a', 'stroke-width': 3 }, inner);
     const conds = (c.conditions || []).filter((x) => !['unconscious'].includes(x.name) || !down);
-    if (conds.length) { el('circle', { cx: CELL - 8, cy: 8, r: 6, fill: 'var(--secret)' }, g); }
+    if (conds.length) { el('circle', { cx: CELL - 8, cy: 8, r: 6, fill: 'var(--secret)' }, inner); }
   }
   tokLayer.querySelectorAll('.tok').forEach((g) => { if (!seen.has(g.dataset.id)) g.remove(); });
 }
@@ -375,55 +547,582 @@ function drawSide(v) {
       <span class="dot" style="background:${SIDE_COLOR[c.side]}"></span>
       <span class="nm">${esc(c.name)}<small>${c.pos}${tag(c)}${c.hidden ? ' · hidden' : ''}</small></span>${hpCell(c)}</div>`;
   }).join('');
-  document.querySelectorAll('.row').forEach((r) => r.addEventListener('click', () => select(r.dataset.id)));
+  document.querySelectorAll('.row').forEach((r) => r.addEventListener('click', () => pointCreature(r.dataset.id, true)));
   drawCard();
-  const log = document.getElementById('log');
-  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  log.innerHTML = v.log.map((e) => `<div class="entry ${e.type}">${e.type === 'turn' ? '' : `<span class="r">R${e.round}</span>`}${esc(e.text)}</div>`).join('');
-  if (atBottom || v.log.length !== lastLogLen) log.scrollTop = log.scrollHeight;
+  drawLog(v);
   if (v.log.length !== lastLogLen && !THREE_D) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
   lastLogLen = v.log.length;
 }
+
+// The chronicle in two tabs: the story (scene, narration, what players declared, rulings) and
+// the mechanics (turns, moves, rolls, damage). Rulings are both. A dot marks news on the other tab.
+const STORY = new Set(['scene', 'narration', 'declare', 'ruling', 'secret']);
+const COMBAT = (e) => !STORY.has(e.type) || e.type === 'ruling';
+let logTab = (() => { try { return localStorage.getItem('logTab') || 'story'; } catch { return 'story'; } })();
+const seenT = { story: 0, combat: 0 };
+function drawLog(v) {
+  const log = document.getElementById('log');
+  const inTab = (e, tab) => (tab === 'story' ? STORY.has(e.type) : COMBAT(e));
+  const entries = v.log.filter((e) => inTab(e, logTab));
+  const atTop = log.scrollTop < 40;
+  const key = logTab + ':' + (entries.length ? entries[entries.length - 1].t : 0) + ':' + entries.length;
+  if (log.dataset.key !== key) {
+    log.innerHTML = entries.slice().reverse().map((e) => `<div class="entry ${e.type}">${e.type === 'turn' ? '' : `<span class="r">R${e.round}</span>`}${esc(e.text)}</div>`).join('');
+    if (atTop || log.dataset.tab !== logTab) log.scrollTop = 0;
+    log.dataset.key = key; log.dataset.tab = logTab;
+  }
+  const latest = (tab) => Math.max(0, ...v.log.filter((e) => inTab(e, tab)).map((e) => e.t || 0));
+  if (!seenT.story && !seenT.combat) { seenT.story = latest('story'); seenT.combat = latest('combat'); } // first load: nothing is "new"
+  seenT[logTab] = latest(logTab);
+  document.querySelectorAll('#logtabs button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.tab === logTab);
+    b.classList.toggle('new', b.dataset.tab !== logTab && latest(b.dataset.tab) > seenT[b.dataset.tab]);
+  });
+}
+document.querySelectorAll('#logtabs button').forEach((b) => b.addEventListener('click', () => {
+  logTab = b.dataset.tab;
+  try { localStorage.setItem('logTab', logTab); } catch { /* private window */ }
+  if (state && state.log) drawLog(state);
+}));
+
+// The caret on each floating panel folds it; the choice is remembered per browser.
+function foldable(panelId, caretId, key) {
+  const panel = document.getElementById(panelId);
+  try { if (localStorage.getItem(key) === 'closed') panel.classList.add('closed'); } catch { /* ignore */ }
+  document.getElementById(caretId).addEventListener('click', () => {
+    panel.classList.toggle('closed');
+    try { localStorage.setItem(key, panel.classList.contains('closed') ? 'closed' : 'open'); } catch { /* ignore */ }
+  });
+}
+foldable('curSec', 'lookCaret', 'lookFold');
+foldable('actSec', 'actCaret', 'actFold');
 
 function tag(c) {
   if (me) return me.creatures.includes(c.id) ? ' · you' : c.player ? ' · ' + esc(c.player) : '';
   return c.player ? ' · ' + esc(c.player) : c.controller === 'player' ? ' · you' : '';
 }
 
+// Each message shows where it is: sent (with the server's instant receipt), seen by the DM, the
+// DM's one-line answers, and done.
+let lastReceipt = null;
+const ago = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`; };
+function msgStatus(e) {
+  if (e.done) return '<span class="st ok">done ✓</span>';
+  if (e.replies.length) return '<span class="st ok">answered</span>';
+  if (e.handled) return `<span class="st ok">DM has it${e.seenAt ? ' · ' + ago(e.seenAt) + ' ago' : ''}</span>`;
+  return `<span class="st wait">sent ${ago(e.t)} ago</span>`;
+}
 function drawAct() {
   const sec = document.getElementById('actSec');
-  if (!SEAT) return;
-  sec.hidden = false;
+  sec.hidden = !(me && !me.error && me.creatures.length);
+  if (sec.hidden) return;
   const who = document.getElementById('actWho');
   if (!me) { who.textContent = 'Checking your seat…'; return; }
   if (me.error) { who.textContent = me.error; document.getElementById('actSend').disabled = true; return; }
   const names = me.creatures.map((id) => (state && state.creatures && state.creatures[id] ? state.creatures[id].name : id));
   const mine = state && me.creatures.includes(state.current);
-  who.innerHTML = mine ? `<b>Your turn, ${esc(state.creatures[state.current].name)}.</b> Tell the DM what you do.`
-    : `Playing ${names.map(esc).join(', ')}, ${esc(me.player)}. Not your turn, but you can send a note.`;
-  document.getElementById('actSent').innerHTML = me.intents.slice().reverse().map((e) =>
-    `<div class="${e.handled ? '' : 'pend'}">${esc(e.text)}<span>${e.handled ? 'DM has it' : 'waiting for DM'}</span></div>`).join('');
+  who.innerHTML = mine ? `<b>Your turn, ${esc(state.creatures[state.current].name)}.</b>`
+    : `${names.map(esc).join(', ')} · not your turn`;
+  const pres = document.getElementById('pres');
+  pres.className = 'pres ' + (me.dm && me.dm.listening ? 'on' : 'off');
+  pres.textContent = me.dm && me.dm.listening ? '● DM listening' : '○ DM busy';
+  const point = document.getElementById('actPoint'), label = pointLabel();
+  point.hidden = !label;
+  point.innerHTML = label ? `Pointing at <b>${esc(label)}</b> (sent with your message)<a id="unpoint" title="Stop pointing">✕</a>` : '';
+  if (label) document.getElementById('unpoint').onclick = clearCursor;
+  const rec = document.getElementById('actReceipt');
+  const pending = lastReceipt && me.intents.find((e) => e.id === lastReceipt.id && !e.handled);
+  rec.hidden = !pending; rec.textContent = pending ? lastReceipt.text : '';
+  const sent = document.getElementById('actSent');
+  const stick = sent.scrollHeight - sent.scrollTop - sent.clientHeight < 30;
+  sent.innerHTML = me.intents.map((e) => {
+    const at = e.target ? (state.creatures[e.target] ? state.creatures[e.target].name : e.target) : e.cell ? e.cell + (e.z ? ` @${e.z} ft` : '') : '';
+    return `<div class="msg">${e.kind === 'inspect' ? '<span class="q">ASK</span>' : ''}${esc(e.text)}${at ? ` <span class="st">→ ${esc(at)}</span>` : ''}${msgStatus(e)}`
+      + e.replies.map((r) => `<div class="rp">${esc(r.text)}</div>`).join('') + '</div>';
+  }).join('');
+  if (stick) sent.scrollTop = sent.scrollHeight;
 }
 
+async function postIntent(body) {
+  const r = await fetch('/api/intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN }, body)) });
+  const out = await r.json();
+  if (!r.ok) throw new Error(out.error || 'Could not send.');
+  lastReceipt = { id: out.id, text: out.receipt };
+  return out;
+}
 async function sendAct() {
   const box = document.getElementById('actText'), btn = document.getElementById('actSend'), err = document.getElementById('actErr');
   const text = box.value.trim();
   if (!text) return;
   btn.disabled = true; err.textContent = '';
-  try {
-    const r = await fetch('/api/intent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: SEAT, text }) });
-    const out = await r.json();
-    if (!r.ok) err.textContent = out.error || 'Could not send.'; else box.value = '';
-  } catch (e) { err.textContent = 'Could not reach the table.'; }
+  try { await postIntent(Object.assign({ text }, pointPayload())); box.value = ''; }
+  catch (e) { err.textContent = e.message === 'Failed to fetch' ? 'Could not reach the table.' : e.message; }
   btn.disabled = false;
   refresh();
 }
 document.getElementById('actSend').addEventListener('click', sendAct);
-document.getElementById('actText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendAct(); });
+// Enter sends; Shift+Enter is a new line (and IME composition is left alone).
+document.getElementById('actText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendAct(); }
+});
+
+// ---------- cursor ----------
+// Square mode points at a square (and a height above it); entity mode at a creature. Either way
+// the panel shows what your character can tell about it, and you can ask the DM for more.
+const cursor = { mode: 'entity', cell: null, z: null, id: null };
+let look = null, lookKey = null, lookTimer = null;
+const cellName = (x, y) => String.fromCharCode(65 + x) + (y + 1);
+function floorAt(id) {
+  const p = parseCell(id), c = state && state.cells[p.y] && state.cells[p.y][p.x];
+  if (!c || c.fog === 'unknown') return 0;
+  return (c.h || 0) + (c.obj && c.obj.stand ? c.obj.height : 0);
+}
+function creatureAtCell(id) { return state ? Object.values(state.creatures).find((c) => c.pos === id) : null; }
+function pointLabel() {
+  if (cursor.id && state && state.creatures[cursor.id]) return state.creatures[cursor.id].name;
+  if (cursor.cell) return cursor.cell + (cursor.z !== null ? ` @ ${cursor.z} ft` : '');
+  return null;
+}
+function pointPayload() {
+  if (cursor.id) return { target: cursor.id };
+  if (cursor.cell) return { cell: cursor.cell, z: cursor.z !== null ? cursor.z : undefined };
+  return {};
+}
+function setMode(m) {
+  cursor.mode = m;
+  if (m === 'square' && cursor.id && state.creatures[cursor.id]) { cursor.cell = state.creatures[cursor.id].pos; cursor.id = null; }
+  if (m === 'entity' && cursor.cell) { const c = creatureAtCell(cursor.cell); if (c) { cursor.id = c.id; cursor.cell = null; } }
+  cursorChanged();
+}
+function pointCreature(id, fromList) {
+  const c = state && state.creatures[id];
+  if (!c) return;
+  if (cursor.mode === 'square' && !fromList) { pointSquare(c.pos); return; }
+  if (cursor.id === id) return clearCursor();
+  cursor.mode = 'entity'; cursor.id = id; cursor.cell = null; cursor.z = null;
+  cursorChanged();
+}
+function pointSquare(id, keepZ) {
+  cursor.id = null; cursor.cell = id;
+  if (!keepZ) cursor.z = null;
+  cursorChanged();
+}
+function pointCell(x, y) {
+  if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) return;
+  const id = cellName(x, y), c = creatureAtCell(id);
+  if (cursor.mode === 'entity' && c) return pointCreature(c.id);
+  if (cursor.cell === id && cursor.z === null) return clearCursor();
+  pointSquare(id);
+}
+function clearCursor() { cursor.id = null; cursor.cell = null; cursor.z = null; cursorChanged(); }
+function setZ(z) { if (!cursor.cell) return; cursor.z = z === null || Number.isNaN(z) ? null : Math.round(z / 5) * 5; cursorChanged(); }
+function cursorChanged() { selected = cursor.id; render(); fetchLook(); }
+
+function fetchLook() {
+  const key = JSON.stringify([cursor.id, cursor.cell, cursor.z]);
+  if (!cursor.id && !cursor.cell) { look = null; lookKey = key; drawLook(); return; }
+  clearTimeout(lookTimer);
+  lookTimer = setTimeout(async () => {
+    const q = new URLSearchParams(cursor.id ? { id: cursor.id } : { cell: cursor.cell });
+    if (!cursor.id && cursor.z !== null) q.set('z', cursor.z);
+    if (SEAT) q.set('token', SEAT);
+    try {
+      const r = await fetch('/api/look?' + q);
+      const out = await r.json();
+      if (JSON.stringify([cursor.id, cursor.cell, cursor.z]) !== key) return; // moved on meanwhile
+      look = r.ok ? out : { error: out.error }; lookKey = key;
+    } catch { look = { error: 'Could not reach the table.' }; }
+    drawLook();
+  }, 90);
+}
+
+function drawLook() {
+  const sec = document.getElementById('curSec');
+  if (!state || state.empty || state.error) { sec.hidden = true; return; }
+  sec.hidden = false;
+  document.getElementById('mSquare').classList.toggle('on', cursor.mode === 'square');
+  document.getElementById('mEntity').classList.toggle('on', cursor.mode === 'entity');
+  const zctl = document.getElementById('zctl'), zin = document.getElementById('zIn');
+  zctl.hidden = !cursor.cell;
+  if (cursor.cell && document.activeElement !== zin) zin.value = cursor.z !== null ? cursor.z : floorAt(cursor.cell);
+  const box = document.getElementById('look');
+  if (!cursor.id && !cursor.cell || !look || look.error) box.dataset.html = '';
+  if (!cursor.id && !cursor.cell) {
+    box.innerHTML = `<div class="hint">Click the map to point at ${cursor.mode === 'entity' ? 'a creature' : 'a square'}.<br>`
+      + '<kbd>M</kbd> switch mode · <kbd>←↑↓→</kbd> move · <kbd>[</kbd> <kbd>]</kbd> height · <kbd>P</kbd> ping · <kbd>Esc</kbd> clear</div>';
+    return;
+  }
+  if (!look) { box.innerHTML = '<div class="hint">Looking…</div>'; return; }
+  if (look.error) { box.innerHTML = `<div class="hint">${esc(look.error)}</div>`; return; }
+  const atk = (look.attacks || []).map((a) => `<div class="${/^in /.test(a.verdict) ? 'y' : /long/.test(a.verdict) ? 'm' : 'n'}">${esc(a.name)}: ${esc(a.verdict)}</div>`).join('');
+  const facts = look.facts.length ? `<div class="facts">${look.facts.map((f) => `<div>${esc(f)}</div>`).join('')}</div>` : '';
+  const where = look.cell + (look.z ? ` · ${look.z} ft` : '');
+  const html = `<h3>${esc(look.name)}<small>${esc(where)}</small></h3>`
+    + `<div class="hint" style="margin:0 0 4px">As ${esc(look.from.name)} sees it</div>`
+    + look.lines.map((l) => `<div class="ln">${esc(l)}</div>`).join('')
+    + (atk ? `<div class="atks"><div class="hint" style="margin:0">${esc(look.from.name)}'s attacks against it</div>${atk}</div>` : '') + facts
+    + `<div class="acts"><button class="ghost" id="lkPing" title="Flash this spot on everyone's map (P)">Ping</button></div>`
+    + lookActions()
+    + (canTalk() ? `<div class="ask"><input id="askText" maxlength="300" placeholder="Ask the DM about ${esc(look.name)}…"><button class="ghost" id="askSend">Ask</button></div>` : '');
+  if (box.dataset.html === html) return; // unchanged: leave the ask box alone mid-typing
+  box.innerHTML = html; box.dataset.html = html;
+  document.getElementById('lkPing').onclick = sendPing;
+  wireLookActions();
+  if (canTalk()) {
+    const send = async () => {
+      const inp = document.getElementById('askText');
+      const text = inp.value.trim() || `What can I tell about ${look.name}?`;
+      try { await postIntent(Object.assign({ kind: 'inspect', text }, pointPayload())); inp.value = ''; }
+      catch (e) { document.getElementById('actErr').textContent = e.message; }
+      refresh();
+    };
+    document.getElementById('askSend').onclick = send;
+    document.getElementById('askText').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  }
+}
+document.getElementById('mSquare').addEventListener('click', () => setMode('square'));
+document.getElementById('mEntity').addEventListener('click', () => setMode('entity'));
+document.getElementById('zUp').addEventListener('click', () => setZ((cursor.z !== null ? cursor.z : floorAt(cursor.cell)) + 5));
+document.getElementById('zDn').addEventListener('click', () => setZ((cursor.z !== null ? cursor.z : floorAt(cursor.cell)) - 5));
+document.getElementById('zFloor').addEventListener('click', () => setZ(null));
+document.getElementById('zIn').addEventListener('change', (e) => setZ(e.target.value === '' ? null : Number(e.target.value)));
+
+document.addEventListener('keydown', (e) => {
+  if (!state || state.empty || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+  const k = e.key;
+  const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[k];
+  if (step) {
+    const from = cursor.cell || (cursor.id && state.creatures[cursor.id] && state.creatures[cursor.id].pos) || (state.current && state.creatures[state.current] && state.creatures[state.current].pos) || 'A1';
+    const p = parseCell(from), x = Math.max(0, Math.min(state.width - 1, p.x + step[0])), y = Math.max(0, Math.min(state.height - 1, p.y + step[1]));
+    const c = creatureAtCell(cellName(x, y));
+    if (cursor.mode === 'entity' && c) pointCreature(c.id); else pointSquare(cellName(x, y), true);
+  } else if (k === 'm' || k === 'M') setMode(cursor.mode === 'square' ? 'entity' : 'square');
+  else if (k === ']' && cursor.cell) setZ((cursor.z !== null ? cursor.z : floorAt(cursor.cell)) + 5);
+  else if (k === '[' && cursor.cell) setZ((cursor.z !== null ? cursor.z : floorAt(cursor.cell)) - 5);
+  else if (k === 'p' || k === 'P') sendPing();
+  else if (k === 'Escape') clearCursor();
+  else return;
+  e.preventDefault();
+});
+
+function drawCursor2D() {
+  const g = svg && svg.querySelector('#cursor');
+  if (!g) return;
+  g.innerHTML = '';
+  if (!cursor.cell) return;
+  const p = parseCell(cursor.cell), X = p.x * CELL, Y = p.y * CELL, k = 12;
+  el('rect', { x: X + 2, y: Y + 2, width: CELL - 4, height: CELL - 4, fill: 'var(--gold)', opacity: .14 }, g);
+  const d = [[X, Y + k, X, Y, X + k, Y], [X + CELL - k, Y, X + CELL, Y, X + CELL, Y + k], [X + CELL, Y + CELL - k, X + CELL, Y + CELL, X + CELL - k, Y + CELL], [X + k, Y + CELL, X, Y + CELL, X, Y + CELL - k]]
+    .map(([a, b, c, d2, e, f]) => `M${a} ${b} L${c} ${d2} L${e} ${f}`).join(' ');
+  el('path', { d, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3 }, g);
+  if (cursor.z !== null && cursor.z !== floorAt(cursor.cell)) {
+    el('rect', { x: X + CELL / 2 - 20, y: Y - 16, width: 40, height: 15, rx: 3, fill: '#14130f', stroke: 'var(--gold)' }, g);
+    const t = el('text', { x: X + CELL / 2, y: Y - 5, 'text-anchor': 'middle', fill: 'var(--gold)', 'font-family': 'IBM Plex Mono', 'font-size': 10 }, g);
+    t.textContent = `${cursor.z} ft`;
+  }
+}
+
+// ---------- your turn: tracker, buttons, click-to-move ----------
+// Buttons run engine commands through /api/act for the creature whose turn it is. Plain moves,
+// dashes and the like are filed quietly for the DM; rolls and End turn wake the DM.
+const canTalk = () => !!(me && !me.error && me.creatures && me.creatures.length);
+const myTurn = () => (canTalk() && me.turn) || null;
+const nameOf = (id) => (state && state.creatures[id] ? state.creatures[id].name : 'Someone');
+const SKILL_LIST = ['perception', 'investigation', 'insight', 'athletics', 'acrobatics', 'stealth', 'arcana', 'history', 'nature', 'religion', 'medicine', 'survival', 'sleight-of-hand', 'animal-handling', 'intimidation', 'persuasion', 'deception', 'performance'];
+let turnMsg = { text: '', err: false };
+function setTurnMsg(text, err) { turnMsg = { text, err: !!err }; drawTurn(); }
+
+async function act(action, extra = {}) {
+  setTurnMsg('…');
+  try {
+    const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action }, extra)) });
+    const out = await r.json();
+    if (!r.ok) setTurnMsg(out.error || 'Refused.', true);
+    else setTurnMsg(out.quiet ? out.text : `${out.text} (DM notified)`);
+    await refresh();
+    return r.ok;
+  } catch { setTurnMsg('Could not reach the table.', true); return false; }
+}
+
+function drawTurn() {
+  const sec = document.getElementById('turnSec');
+  const t = myTurn();
+  sec.hidden = !t;
+  if (!t) { turnMsg = { text: '', err: false }; return; }
+  const f = t.features, bonusMoves = f.cunningAction || f.nimbleEscape;
+  const pip = (label, spent) => `<span class="pip ${spent ? 'spent' : ''}">${label}</span>`;
+  const b = (label, action, { as, disabled, cls = '', small = '' } = {}) =>
+    `<button class="btn ${cls}" data-act="${action}"${as ? ` data-as="${as}"` : ''}${disabled ? ' disabled' : ''}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
+  const attacksLeft = t.attacksPerAction > 1 && !t.action ? ` · ${t.attacksPerAction - t.attacks} attacks left` : '';
+  sec.innerHTML = `<div class="tn">${esc(t.name)}'s turn</div>`
+    + `<div class="pips">${pip('Action', t.action)}${pip('Bonus', t.bonus)}${pip('Reaction', t.reaction)}</div>`
+    + `<div class="mvbar"><i style="width:${t.budget ? (t.left / t.budget) * 100 : 0}%"></i></div>`
+    + `<div class="mvtxt">${t.left} / ${t.budget} ft to move${t.dash ? ' · dashing' : ''}${t.disengage ? ' · disengaged' : ''}${attacksLeft}</div>`
+    + '<div class="btns">'
+    + b('Dash', 'dash', { disabled: t.action || t.dash }) + (bonusMoves ? b('Dash', 'dash', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.dash }) : '')
+    + b('Disengage', 'disengage', { disabled: t.action || t.disengage }) + (bonusMoves ? b('Disengage', 'disengage', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.disengage }) : '')
+    + b('Dodge', 'dodge', { disabled: t.action })
+    + b('Hide', 'hide', bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action })
+    + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
+    + b('End turn', 'end', { cls: 'gold' })
+    + '</div>'
+    + `<div class="tmsg ${turnMsg.err ? 'err' : ''}">${esc(turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.'))}</div>`;
+}
+document.getElementById('turnSec').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || btn.disabled) return;
+  const action = btn.dataset.act;
+  if (action === 'end') {
+    const t = myTurn();
+    if (t && !t.action && !confirm('End your turn without using your action?')) return;
+  }
+  act(action, btn.dataset.as ? { as: btn.dataset.as } : {});
+});
+
+// Route preview: the hovered square (or the cursor's), asked of the server, drawn on the map.
+let pathHover = null, pathData = null, pathKey = null, pathTimer = null;
+const moveOpts = { jump: false, fastClimb: false };
+function hoverPath(x, y) {
+  const id = myTurn() && cursor.mode === 'square' && state && x >= 0 && y >= 0 && x < state.width && y < state.height ? cellName(x, y) : null;
+  if (id === pathHover) return;
+  pathHover = id;
+  updatePath();
+}
+const pathTarget = () => pathHover || (myTurn() && cursor.mode === 'square' && cursor.cell) || null;
+function updatePath() {
+  const cell = pathTarget(), t = myTurn();
+  const key = JSON.stringify([cell, moveOpts, t && t.used, t && state.creatures[t.id] && state.creatures[t.id].pos, t && t.dash]);
+  if (key === pathKey) return;
+  pathKey = key;
+  clearTimeout(pathTimer);
+  if (!cell) { pathData = null; drawPath(); return; }
+  pathTimer = setTimeout(async () => {
+    const q = new URLSearchParams({ token: TOKEN, cell });
+    if (moveOpts.jump) q.set('jump', '1');
+    if (moveOpts.fastClimb) q.set('fastClimb', '1');
+    try {
+      const r = await fetch('/api/path?' + q);
+      const out = await r.json();
+      if (pathTarget() !== cell) return;
+      pathData = r.ok ? Object.assign(out, { cell }) : null;
+    } catch { pathData = null; }
+    drawPath();
+    if (cursor.cell === cell) drawLook();
+  }, 60);
+}
+function drawPath() {
+  const cells = pathData && pathData.path, ok = pathData && pathData.ok;
+  if (THREE_D) { if (map3d) map3d.setPath(cells, ok); return; }
+  const g = svg && svg.querySelector('#pathfx');
+  if (!g) return;
+  g.innerHTML = '';
+  if (!cells || cells.length < 2) return;
+  const color = ok ? 'var(--gold)' : '#d25b4a';
+  el('polyline', { points: cells.map(parseCell).map((p) => `${p.x * CELL + CELL / 2},${p.y * CELL + CELL / 2}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 3, 'stroke-dasharray': '6 5', 'stroke-linecap': 'round' }, g);
+  const e = parseCell(cells[cells.length - 1]);
+  const t = el('text', { x: e.x * CELL + CELL / 2, y: e.y * CELL + CELL + 13, 'text-anchor': 'middle', fill: color, 'font-family': 'IBM Plex Mono', 'font-size': 11, 'font-weight': 500, stroke: '#14130f', 'stroke-width': 3, 'paint-order': 'stroke' }, g);
+  t.textContent = `${pathData.cost} ft` + (ok ? ` · ${pathData.left - pathData.cost} left` : pathData.dashLeft && pathData.cost <= pathData.dashLeft ? ' · dash' : ' · too far');
+}
+
+// The inspect card's buttons: move (squares), attacks (enemies), and a skill check (anything).
+function lookActions() {
+  const t = myTurn();
+  if (!t || !look) return '';
+  let html = '';
+  if (look.kind === 'square' && pathData && pathData.cell === look.cell && pathData.reason !== 'here') {
+    const p = pathData;
+    if (!p.path) html += `<div class="movebox">${p.reason === 'occupied' ? 'Someone is standing there.' : 'You see no way to walk there.'}</div>`;
+    else {
+      const bonusDash = (t.features.cunningAction || t.features.nimbleEscape) && !t.bonus;
+      const dashAs = !t.action ? 'action' : bonusDash ? 'bonus' : null;
+      const dashFits = !p.ok && dashAs && p.dashLeft && p.cost <= p.dashLeft;
+      const what = { jump: 'jump', leap: 'leap up', grab: 'haul yourself up', climb: 'climb fast' };
+      html += '<div class="movebox">'
+        + `<label><input type="checkbox" id="mvJump"${moveOpts.jump ? ' checked' : ''}> jump</label><label><input type="checkbox" id="mvFast"${moveOpts.fastClimb ? ' checked' : ''}> climb fast</label>`
+        + (p.checks.length ? `<div class="dcs">On the way: ${p.checks.map((c) => `Athletics DC ${c.dc} to ${what[c.kind] || c.kind} at ${c.to}`).join('; ')}</div>` : '')
+        + (p.provokers.length ? `<div class="warn">Leaving ${esc(p.provokers.join(', '))}'s reach: opportunity attack.</div>` : '')
+        + '<div class="btns">'
+        + (p.ok ? `<button class="btn gold" id="mvGo">Move here<small>${p.cost} ft</small></button>`
+          : dashFits ? `<button class="btn gold" id="mvDash" data-as="${dashAs}">Dash${dashAs === 'bonus' ? ' (bonus)' : ''} &amp; move<small>${p.cost} ft</small></button>`
+          : `<button class="btn" disabled>Too far<small>${p.cost} ft, ${p.left} left</small></button>`)
+        + '</div></div>';
+    }
+  }
+  if (look.kind === 'creature' && look.side !== 'party' && (look.attacks || []).some((a) => a.ok)) {
+    const sneak = look.attacks.find((a) => a.ok && a.sneak);
+    html += '<div class="movebox"><div class="btns">'
+      + look.attacks.filter((a) => a.ok).map((a) => `<button class="btn gold" data-atk="${esc(a.name)}"${t.action ? ' disabled' : ''}>${esc(a.name)}<small>${a.mode === 'adv' ? 'adv · ' : a.mode === 'dis' ? 'dis · ' : ''}${esc(a.damage || '')}</small></button>`).join('')
+      + '</div>'
+      + (sneak ? `<label style="display:block;margin-top:6px"><input type="checkbox" id="atkSneak" checked> Sneak Attack (+${esc(sneak.sneak)})</label>` : '')
+      + (t.action ? '<div class="warn">Your action is spent.</div>' : '')
+      + '</div>';
+  }
+  html += `<div class="movebox"><select id="chkSkill">${SKILL_LIST.map((k) => `<option value="${k}">${k.replace(/-/g, ' ')}</option>`).join('')}</select> <button class="btn" id="chkGo">Roll check</button></div>`;
+  return html;
+}
+function wireLookActions() {
+  const on = (id, ev, fn) => { const n = document.getElementById(id); if (n) n.addEventListener(ev, fn); };
+  on('mvJump', 'change', (e) => { moveOpts.jump = e.target.checked; updatePath(); });
+  on('mvFast', 'change', (e) => { moveOpts.fastClimb = e.target.checked; updatePath(); });
+  const go = async (dashAs) => {
+    const p = pathData;
+    if (p.provokers.length && !confirm(`Moving out of ${p.provokers.join(', ')}'s reach provokes an opportunity attack. Move anyway?`)) return;
+    if (dashAs && !(await act('dash', dashAs === 'bonus' ? { as: 'bonus' } : {}))) return;
+    await act('move', { cell: p.cell, jump: moveOpts.jump, fastClimb: moveOpts.fastClimb });
+  };
+  on('mvGo', 'click', () => go(null));
+  on('mvDash', 'click', (e) => go(e.currentTarget.dataset.as));
+  document.querySelectorAll('#look [data-atk]').forEach((b) => b.addEventListener('click', () => {
+    const sneak = document.getElementById('atkSneak');
+    act('attack', { target: look.id, weapon: b.dataset.atk, sneak: !!(sneak && sneak.checked) });
+  }));
+  on('chkGo', 'click', () => {
+    const skill = document.getElementById('chkSkill').value;
+    act('check', { skill, about: `${skill.replace(/-/g, ' ')} at ${look.name} (${look.cell})` });
+  });
+}
+
+// ---------- the DM's offers ----------
+let offerShown = null;
+function drawOffer() {
+  const sec = document.getElementById('offerSec');
+  const o = canTalk() && me.offers && me.offers[me.offers.length - 1];
+  sec.hidden = !o;
+  if (!o) { offerShown = null; return; }
+  if (offerShown === o.offer) return;
+  offerShown = o.offer;
+  const skill = o.ruling ? o.ruling.skill.replace(/-/g, ' ') : '';
+  sec.innerHTML = `<div class="box"><h4>The DM asks${state && state.creatures[o.creature] ? ', ' + esc(state.creatures[o.creature].name) : ''}</h4><p>${esc(o.text)}</p>`
+    + (o.ruling ? `<div class="dc">${esc(skill[0].toUpperCase() + skill.slice(1))} check, DC ${o.ruling.dc}</div>` : '')
+    + `<div class="btns"><button class="btn gold" id="ofYes">${o.ruling ? 'Roll it' : 'Do it'}</button><button class="btn" id="ofNo">Never mind</button></div></div>`;
+  const answer = (accept) => { sec.hidden = true; act('answer', { offer: o.offer, accept }); };
+  document.getElementById('ofYes').onclick = () => answer(true);
+  document.getElementById('ofNo').onclick = () => answer(false);
+}
+
+// ---------- dice and hits ----------
+// New log entries with roll data play in order: the d20 lands, the shot flies (or the attacker
+// lunges), then the target flashes and the damage rises off it.
+let fxT = null, fxBusy = false;
+const fxQueue = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function queueFx(log) {
+  const latest = Math.max(0, ...log.map((e) => e.t || 0));
+  if (fxT === null) { fxT = latest; return; } // first load: history doesn't replay
+  for (const e of log) if ((e.t || 0) > fxT && e.data && ['attack', 'damage', 'heal', 'roll', 'ruling'].includes(e.type)) fxQueue.push(e);
+  fxT = Math.max(fxT, latest);
+  if (!fxBusy) runFx();
+}
+async function runFx() {
+  fxBusy = true;
+  while (fxQueue.length) { try { await playFx(fxQueue.shift()); } catch { /* keep going */ } }
+  fxBusy = false;
+}
+const D20 = '<svg viewBox="0 0 46 46"><polygon points="23,2 43,13 43,33 23,44 3,33 3,13" fill="#d8b45a" stroke="#8a6a2f" stroke-width="2"/><polygon points="23,9 37,31 9,31" fill="none" stroke="#8a6a2f" stroke-width="1.2" opacity=".6"/></svg>';
+function showRoll({ nat, line, sub, res }) {
+  const tray = document.getElementById('dice');
+  const box = document.createElement('div');
+  box.className = 'roll';
+  box.innerHTML = `<div class="die spin ${nat === 20 ? 'nat20' : nat === 1 ? 'nat1' : ''}">${D20}<span>?</span></div>`
+    + `<div class="rt">${esc(line)}${res ? ` <span class="res ${res[1]}">${res[0]}</span>` : ''}<small>${esc(sub)}</small></div>`;
+  tray.appendChild(box);
+  while (tray.children.length > 3) tray.firstChild.remove();
+  const num = box.querySelector('.die span');
+  let i = 0;
+  const tick = setInterval(() => { num.textContent = 1 + Math.floor(Math.random() * 20); if (++i >= 8) { clearInterval(tick); num.textContent = nat; } }, 60);
+  setTimeout(() => { box.classList.add('out'); setTimeout(() => box.remove(), 400); }, 2600);
+}
+const centerOf = (id) => { const c = state.creatures[id]; if (!c) return null; const p = parseCell(c.pos); return { x: p.x * CELL + CELL / 2, y: p.y * CELL + CELL / 2 }; };
+function shoot2d(from, to, dtype) {
+  return new Promise((done) => {
+    const a = centerOf(from), b = centerOf(to), g = svg && svg.querySelector('#hitfx');
+    if (!a || !b || !g) return done();
+    const color = { fire: '#ff8a3d', radiant: '#fff3b0', cold: '#9fe3ff', necrotic: '#b48cff', lightning: '#cfe8ff' }[dtype] || '#e9dcb8';
+    const arrow = dtype === 'piercing';
+    const shot = arrow ? el('line', { stroke: color, 'stroke-width': 3, 'stroke-linecap': 'round' }, g) : el('circle', { r: 6, fill: color }, g);
+    const dist = Math.hypot(b.x - a.x, b.y - a.y), dur = Math.min(600, 150 + dist * 1.1), born = performance.now();
+    const ux = (b.x - a.x) / (dist || 1), uy = (b.y - a.y) / (dist || 1);
+    const step = (now) => {
+      const k = Math.min(1, (now - born) / dur), x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k - Math.sin(Math.PI * k) * Math.min(40, dist * 0.15);
+      if (arrow) { shot.setAttribute('x1', x - ux * 12); shot.setAttribute('y1', y - uy * 12); shot.setAttribute('x2', x); shot.setAttribute('y2', y); }
+      else { shot.setAttribute('cx', x); shot.setAttribute('cy', y); }
+      if (k < 1) requestAnimationFrame(step); else { shot.remove(); done(); }
+    };
+    requestAnimationFrame(step);
+  });
+}
+function bump2d(from, to) {
+  return new Promise((done) => {
+    const g = tokLayer && tokLayer.querySelector(`[data-id="${from}"] .inner`), a = centerOf(from), b = centerOf(to);
+    if (!g || !a || !b) return done();
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1, ux = (b.x - a.x) / d, uy = (b.y - a.y) / d, born = performance.now();
+    let sent = false;
+    const step = (now) => {
+      const k = Math.min(1, (now - born) / 300), off = Math.sin(Math.PI * k) * 16;
+      g.style.transform = `translate(${ux * off}px, ${uy * off}px)`;
+      if (k >= 0.5 && !sent) { sent = true; done(); }
+      if (k < 1) requestAnimationFrame(step); else g.style.transform = '';
+    };
+    requestAnimationFrame(step);
+  });
+}
+function hitFx(id, text, { big = false, color = '#ff6b4f', flash = true } = {}) {
+  if (THREE_D) { if (map3d) map3d.hit(id, { text, color, big, flash }); return; }
+  const c = centerOf(id), g = svg && svg.querySelector('#hitfx');
+  if (!c || !g) return;
+  if (flash) {
+    const tok = tokLayer.querySelector(`[data-id="${id}"]`);
+    if (tok) { tok.classList.remove('flash'); void tok.getBBox(); tok.classList.add('flash'); setTimeout(() => tok.classList.remove('flash'), 420); }
+    const ring = el('circle', { cx: c.x, cy: c.y, r: CELL * 0.45, fill: color, class: 'hitflash' }, g);
+    setTimeout(() => ring.remove(), 400);
+  }
+  const t = el('text', { x: c.x, y: c.y - CELL * 0.45, 'text-anchor': 'middle', fill: color, class: 'dmgnum' + (big ? ' big' : '') }, g);
+  t.textContent = text;
+  setTimeout(() => t.remove(), 1300);
+}
+async function playFx(e) {
+  const d = e.data;
+  if (e.type === 'attack') {
+    const res = d.hit ? (d.crit ? ['CRIT!', 'crit'] : ['HIT', 'hit']) : ['MISS', 'miss'];
+    showRoll({ nat: d.nat, line: `${nameOf(d.attacker)} → ${nameOf(d.target)}`, sub: `${d.weapon}: ${d.total} vs AC ${d.ac}`, res });
+    await sleep(560);
+    if (d.ranged) await (THREE_D ? (map3d ? map3d.shoot(d.attacker, d.target, d.dtype === 'piercing' ? 'arrow' : d.dtype) : null) : shoot2d(d.attacker, d.target, d.dtype));
+    else await (THREE_D ? (map3d ? map3d.bump(d.attacker, d.target) : null) : bump2d(d.attacker, d.target));
+    if (d.hit) hitFx(d.target, `-${d.dmg}`, { big: d.crit });
+    else hitFx(d.target, 'miss', { flash: false, color: '#b8b09c' });
+    await sleep(350);
+  } else if (e.type === 'damage') { hitFx(d.id, `-${d.dmg}`); await sleep(300); }
+  else if (e.type === 'heal') { hitFx(d.id, `+${d.amt}`, { color: '#6fbf73', flash: false }); await sleep(300); }
+  else if (typeof d.nat === 'number') {
+    showRoll({ nat: d.nat, line: `${nameOf(d.id)}: ${d.label || 'check'}`, sub: `${d.total}${d.dc !== null && d.dc !== undefined ? ` vs DC ${d.dc}` : ''}`, res: d.ok === null || d.ok === undefined ? null : d.ok ? ['SUCCESS', 'ok'] : ['FAIL', 'miss'] });
+    await sleep(650);
+  }
+}
+
+// ---------- pings ----------
+async function sendPing() {
+  const cell = cursor.cell || (cursor.id && state.creatures[cursor.id] && state.creatures[cursor.id].pos);
+  if (!cell) return;
+  try {
+    await fetch('/api/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN || undefined, cell, z: cursor.cell ? cursor.z : null, target: cursor.id }) });
+  } catch { /* best effort */ }
+}
+function showPing(p) {
+  if (THREE_D) { if (map3d) map3d.ping(p); return; }
+  const g = svg && svg.querySelector('#pings');
+  if (!g) return;
+  const q = parseCell(p.cell), cx = q.x * CELL + CELL / 2, cy = q.y * CELL + CELL / 2;
+  const ring = el('circle', { cx, cy, r: CELL * .55, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3, class: 'ping' }, g);
+  const text = (p.label ? `${p.who}: ${p.label}` : p.who) + (p.z ? ` @${p.z}ft` : '');
+  const lbl = el('text', { x: cx, y: q.y * CELL - 6, 'text-anchor': 'middle', fill: 'var(--gold)', 'font-family': 'Inter', 'font-weight': 600, 'font-size': 12, class: 'pinglabel', stroke: '#14130f', 'stroke-width': 3, 'paint-order': 'stroke' }, g);
+  lbl.textContent = text;
+  setTimeout(() => { ring.remove(); lbl.remove(); }, 3200);
+}
 
 function drawCard() {
   const sec = document.getElementById('cardSec');
-  const c = selected && state && state.creatures[selected];
+  const c = DM && selected && state && state.creatures[selected];
   if (!c) { sec.hidden = true; return; }
   sec.hidden = false;
   const conds = (c.conditions || []).map((x) => `<span class="chip">${esc(x.name)}${x.rounds ? ' · ' + x.rounds : ''}</span>`).join('');
@@ -432,17 +1131,21 @@ function drawCard() {
   document.getElementById('card').innerHTML = `<h3>${esc(c.name)}</h3><div class="stats">${stats} · ${c.pos}</div>${atks}${conds ? '<div style="margin-top:6px">' + conds + '</div>' : ''}${c.notes ? `<p style="margin:8px 0 0">${esc(c.notes)}</p>` : ''}`;
 }
 
-function select(id) { selected = selected === id ? null : id; render(); }
-
 function render() {
   if (!state) return;
+  // A creature that walked out of sight (or was removed) can't stay pointed at.
+  if (cursor.id && !(state.creatures && state.creatures[cursor.id])) { cursor.id = null; selected = null; look = null; }
   drawAct();
+  drawTurn();
+  drawOffer();
+  drawLook();
+  updatePath();
   const blank = state.error ? esc(state.error) : state.empty ? 'No encounter loaded.<br><code>node engine.js load rope-bridge</code>' : null;
   if (blank) { document.getElementById('mapwrap').innerHTML = `<div class="empty">${blank}</div>`; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
   if (THREE_D) { render3d(); drawSide(state); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
   if (!svg || svg.dataset.key !== key) { buildSvg(state); svg.dataset.key = key; }
-  drawTerrain(state); drawTokens(state); drawSide(state);
+  drawTerrain(state); drawTokens(state); drawCursor2D(); drawSide(state);
 }
 
 // The 3D map loads three.js from a CDN on first use; the 2D map never needs it.
@@ -454,7 +1157,7 @@ function render3d() {
       const wrap = document.getElementById('mapwrap');
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
-        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: select, onHover: hoverCell });
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: pointCreature, onCell: pointCell, onHover: hoverCell });
         render();
       }).catch((e) => {
         map3dError = e;
@@ -463,7 +1166,7 @@ function render3d() {
     }
     return;
   }
-  map3d.update(state, { selected });
+  map3d.update(state, { selected, cursor: { cell: cursor.cell, z: cursor.z } });
 }
 document.getElementById('bWalls').addEventListener('click', (e) => {
   e.currentTarget.classList.toggle('on');
@@ -475,13 +1178,22 @@ async function refresh() {
   try {
     const r = await fetch(`/api/state?view=${DM ? 'dm' : 'player'}`);
     state = await r.json();
-    if (SEAT) me = await fetch(`/api/seat?token=${encodeURIComponent(SEAT)}`).then((x) => x.json());
+    if (TOKEN) {
+      const r = await fetch(`/api/seat?token=${encodeURIComponent(TOKEN)}`);
+      me = await r.json();
+      if (!r.ok && !SEAT) me = null; // not on the DM's machine: just a spectator
+    }
     render();
+    if (state && state.log) queueFx(state.log);
+    if (cursor.id || cursor.cell) fetchLook(); // things moved: what you can tell may have changed
   } catch (e) { /* server restarting */ }
 }
 const es = new EventSource('/events');
 es.onmessage = refresh;
+es.addEventListener('ping', (e) => { try { showPing(JSON.parse(e.data)); } catch { /* ignore */ } });
 refresh();
+// Keeps the "sent 12s ago" clocks honest between pushes.
+setInterval(() => { if (SEAT && me && me.intents && me.intents.some((e) => !e.done)) drawAct(); }, 5000);
 </script>
 </body>
 </html>

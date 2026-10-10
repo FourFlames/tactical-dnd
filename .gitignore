@@ -8,3 +8,4 @@ node_modules/
 # remote play: seat tokens and declared actions
 seats.json
 intents.jsonl
+listening.json
