@@ -107,6 +107,13 @@
   .entry.turn { color: var(--ink); font-weight: 600; font-size: 12px; letter-spacing: .03em; padding-top: 12px; }
   .entry.secret { color: var(--secret); font-style: italic; }
   .entry.move, .entry.terrain, .entry.condition, .entry.action, .entry.spawn, .entry.heal { color: var(--ink-dim); font-size: 12px; }
+  .loggroup.linked { border-left: 2px solid var(--gold); padding-left: 10px; margin: 10px 0; background: var(--panel-2); border-radius: 0 4px 4px 0; }
+  .loggroup.linked .entry { padding-right: 8px; }
+  .loggroup.linked .entry:last-child { border-bottom: 0; }
+  .loglink { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; padding: 7px 8px 2px 0; color: var(--ink-faint); font: 10px var(--sans); }
+  .loglink button { background: none; border: 0; padding: 2px 0; color: var(--gold); font: inherit; text-decoration: underline; cursor: pointer; }
+  .logtabs button:focus-visible, .loglink button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .logempty { color: var(--ink-faint); font: 13px/1.5 var(--sans); padding: 14px 0; }
   .empty { padding: 60px; text-align: center; color: var(--ink-dim); font-family: var(--display); font-size: 22px; }
   .entry.declare { color: var(--party); font-size: 13px; }
   .act textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 14px/1.4 var(--sans); }
@@ -250,7 +257,7 @@
   .offer p { margin: 0 0 10px; line-height: 1.45; color: var(--ink); }
   .offer .dc { font-family: var(--mono); font-size: 12px; color: var(--gold); margin-bottom: 12px; }
 
-  /* chronicle tabs */
+  /* Independent chronicle filters */
   .logtabs { display: flex; gap: 4px; padding: 12px 18px 0; border-bottom: 1px solid var(--line); }
   .logtabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-faint); font: 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; padding: 4px 8px 8px; cursor: pointer; position: relative; }
   .logtabs button.on { color: var(--ink); border-bottom-color: var(--gold); }
@@ -316,9 +323,9 @@
   <aside class="side">
     <div class="section"><div class="label">Initiative</div><div class="order" id="order"></div></div>
     <div class="section" id="cardSec" hidden><div class="card" id="card"></div></div>
-    <div class="logtabs" id="logtabs">
-      <button data-tab="story">Narration<i></i></button>
-      <button data-tab="combat">Combat<i></i></button>
+    <div class="logtabs" id="logtabs" role="group" aria-label="Log filters">
+      <button type="button" data-filter="story" aria-pressed="true">Narration<i aria-hidden="true"></i></button>
+      <button type="button" data-filter="combat" aria-pressed="true">Combat<i aria-hidden="true"></i></button>
     </div>
     <div class="log" id="log"></div>
   </aside>
@@ -563,36 +570,86 @@ function drawSide(v) {
   lastLogLen = v.log.length;
 }
 
-// The chronicle in two tabs: the story (scene, narration, what players declared, rulings) and
-// the mechanics (turns, moves, rolls, damage). Rulings are both. A dot marks news on the other tab.
+// Both categories can be shown independently. Rulings belong to both, but render once.
 const STORY = new Set(['scene', 'narration', 'declare', 'ruling', 'secret']);
 const COMBAT = (e) => !STORY.has(e.type) || e.type === 'ruling';
-let logTab = (() => { try { return localStorage.getItem('logTab') || 'story'; } catch { return 'story'; } })();
+const inFilter = (e, filter) => filter === 'story' ? STORY.has(e.type) : COMBAT(e);
+let logFilters = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('logFilters'));
+    if (saved && typeof saved.story === 'boolean' && typeof saved.combat === 'boolean') return saved;
+  } catch { /* private window or old preference */ }
+  return { story: true, combat: true };
+})();
 const seenT = { story: 0, combat: 0 };
+let logSeenInitialized = false;
+function saveLogFilters() {
+  try { localStorage.setItem('logFilters', JSON.stringify(logFilters)); } catch { /* private window */ }
+}
+// A DM's narration normally follows the actions it describes. Link only that preceding
+// batch, stopping at narration, scene, turn, and round boundaries. No text matching.
+function logGroups(entries) {
+  const groups = [];
+  let pending = [];
+  const flush = () => {
+    if (pending.length) groups.push({ entries: pending, linked: pending.some((e) => e.type === 'narration') && pending.some(COMBAT) });
+    pending = [];
+  };
+  for (const e of entries) {
+    if (e.type === 'turn' || e.type === 'scene') {
+      flush(); groups.push({ entries: [e], linked: false }); continue;
+    }
+    if (pending.length && pending[0].round !== e.round) flush();
+    pending.push(e);
+    if (e.type === 'narration') flush();
+  }
+  flush();
+  return groups;
+}
 function drawLog(v) {
   const log = document.getElementById('log');
-  const inTab = (e, tab) => (tab === 'story' ? STORY.has(e.type) : COMBAT(e));
-  const entries = v.log.filter((e) => inTab(e, logTab));
+  const visible = (e) => (logFilters.story && STORY.has(e.type)) || (logFilters.combat && COMBAT(e));
   const atTop = log.scrollTop < 40;
-  const key = logTab + ':' + (entries.length ? entries[entries.length - 1].t : 0) + ':' + entries.length;
+  const filtersKey = JSON.stringify(logFilters);
+  const key = filtersKey + ':' + JSON.stringify(v.log);
   if (log.dataset.key !== key) {
-    log.innerHTML = entries.slice().reverse().map((e) => `<div class="entry ${e.type}">${e.type === 'turn' ? '' : `<span class="r">R${e.round}</span>`}${esc(e.text)}</div>`).join('');
-    if (atTop || log.dataset.tab !== logTab) log.scrollTop = 0;
-    log.dataset.key = key; log.dataset.tab = logTab;
+    const groups = logGroups(v.log);
+    log.innerHTML = groups.map((group, i) => {
+      const shown = group.entries.filter(visible);
+      if (!shown.length) return '';
+      const count = group.entries.filter(COMBAT).length;
+      const links = group.linked ? `<div class="loglink"><span>Linked narration &amp; combat · ${count} event${count === 1 ? '' : 's'}</span>${!logFilters.combat ? '<button type="button" data-reveal="combat">Show combat</button>' : ''}${!logFilters.story ? '<button type="button" data-reveal="story">Show narration</button>' : ''}</div>` : '';
+      return `<div class="loggroup${group.linked ? ' linked' : ''}" data-group="${i}">${links}${shown.slice().reverse().map((e) => `<div class="entry ${esc(e.type)}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${esc(e.text)}</div>`).join('')}</div>`;
+    }).reverse().join('') || `<div class="logempty">${!logFilters.story && !logFilters.combat ? 'Both filters are off. Turn on Narration or Combat to see the log.' : 'No events match these filters yet.'}</div>`;
+    if (atTop || log.dataset.filters !== filtersKey) log.scrollTop = 0;
+    log.dataset.key = key; log.dataset.filters = filtersKey;
   }
-  const latest = (tab) => Math.max(0, ...v.log.filter((e) => inTab(e, tab)).map((e) => e.t || 0));
-  if (!seenT.story && !seenT.combat) { seenT.story = latest('story'); seenT.combat = latest('combat'); } // first load: nothing is "new"
-  seenT[logTab] = latest(logTab);
+  const latest = (filter) => Math.max(0, ...v.log.filter((e) => inFilter(e, filter)).map((e) => e.t || 0));
+  if (!logSeenInitialized) { seenT.story = latest('story'); seenT.combat = latest('combat'); logSeenInitialized = true; }
   document.querySelectorAll('#logtabs button').forEach((b) => {
-    b.classList.toggle('on', b.dataset.tab === logTab);
-    b.classList.toggle('new', b.dataset.tab !== logTab && latest(b.dataset.tab) > seenT[b.dataset.tab]);
+    const filter = b.dataset.filter, active = logFilters[filter];
+    if (active) seenT[filter] = latest(filter);
+    b.classList.toggle('on', active);
+    b.classList.toggle('new', !active && latest(filter) > seenT[filter]);
+    b.setAttribute('aria-pressed', String(active));
   });
 }
 document.querySelectorAll('#logtabs button').forEach((b) => b.addEventListener('click', () => {
-  logTab = b.dataset.tab;
-  try { localStorage.setItem('logTab', logTab); } catch { /* private window */ }
+  logFilters[b.dataset.filter] = !logFilters[b.dataset.filter];
+  saveLogFilters();
   if (state && state.log) drawLog(state);
 }));
+document.getElementById('log').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-reveal]');
+  if (!button) return;
+  const group = button.closest('[data-group]').dataset.group;
+  logFilters[button.dataset.reveal] = true;
+  saveLogFilters();
+  if (state && state.log) {
+    drawLog(state);
+    document.querySelector(`#log [data-group="${group}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+});
 
 // The caret on each floating panel folds it; the choice is remembered per browser.
 function foldable(panelId, caretId, key) {
