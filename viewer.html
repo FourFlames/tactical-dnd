@@ -522,6 +522,12 @@ function drawTokens(v) {
     if (down) el('path', { d: `M${cx - 10} ${cy - 10} L${cx + 10} ${cy + 10} M${cx + 10} ${cy - 10} L${cx - 10} ${cy + 10}`, stroke: '#d25b4a', 'stroke-width': 3 }, inner);
     const conds = (c.conditions || []).filter((x) => !['unconscious'].includes(x.name) || !down);
     if (conds.length) { el('circle', { cx: CELL - 8, cy: 8, r: 6, fill: 'var(--secret)' }, inner); }
+    // An NPC's visible mood (lib/minds.js): ? curious, ! alert, red ! ready to fight.
+    if (c.cue && !down) {
+      const cue = el('text', { x: 9, y: 15, 'text-anchor': 'middle', fill: c.cue === 'combat' ? '#d25b4a' : '#d8b45a', stroke: '#1b1a15', 'stroke-width': 3, 'paint-order': 'stroke', 'font-weight': 700, 'font-size': 18 }, inner);
+      cue.textContent = c.cue === 'curious' ? '?' : '!';
+      el('title', {}, cue).textContent = c.cue === 'curious' ? 'Something caught their attention' : c.cue === 'alert' ? 'On guard, searching' : 'Ready to fight';
+    }
   }
   tokLayer.querySelectorAll('.tok').forEach((g) => { if (!seen.has(g.dataset.id)) g.remove(); });
 }

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const C = require('./lib/core');
+const Minds = require('./lib/minds');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -29,7 +30,13 @@ function parseArgs(argv) {
   }
   return { pos, flags };
 }
-function fail(msg) { console.log(`REJECTED: ${msg}`); process.exit(2); }
+// Inside `mind <id> act` the engine runs its own commands for an NPC; there a rejection is a
+// result to hand back to the NPC, not the end of the process.
+let SOFT = false;
+function fail(msg) {
+  if (SOFT) throw Object.assign(new Error(msg), { rejected: true });
+  console.log(`REJECTED: ${msg}`); process.exit(2);
+}
 function need(s) { if (!s) fail('No encounter loaded. Run: node engine.js load <encounter>'); return s; }
 function who(s, id) {
   const c = s.creatures[id];
@@ -110,10 +117,12 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
     for (const id of seat.creatures) if (enc.creatures[id]) Object.assign(enc.creatures[id], { controller: 'player', player });
   }
   if (fs.existsSync(C.LOG)) fs.unlinkSync(C.LOG);
+  Minds.initAll(enc);
+  if (Minds.active(enc)) Minds.perceive(enc, null, []); // everyone takes in their surroundings
   C.saveState(enc);
   C.appendLog(enc, 'scene', enc.intro || `Encounter: ${enc.name}`);
   if (enc.dmNotes) C.appendLog(enc, 'secret', `DM notes: ${enc.dmNotes}`);
-  console.log(`Loaded "${enc.name}" (${enc.width}x${enc.height}).`);
+  console.log(`Loaded "${enc.name}" (${enc.width}x${enc.height}).${Minds.active(enc) ? ` NPC minds: ${Object.keys(enc.minds).join(', ')} ("minds" to see them; out of combat, time moves with "tick").` : ''}`);
   return null;
 });
 
@@ -466,16 +475,26 @@ function expandCells(spec) {
   return out;
 }
 
-cmd('door', 'door <wall-id> open|close           open or shut a door (or reveal a secret one by opening it)', (s, { pos }) => {
+cmd('door', 'door <wall-id> open|close|lock|unlock [--by <id>] [--force]   open or shut a door (or reveal a secret one by opening it); --by: who (NPCs nearby hear it; a creature with the door in its "keys" can unlock it); --force: a ruling got it open', (s, { pos, flags }) => {
   need(s);
   const w = (s.walls || []).find((x) => typeof x === 'object' && x.id === pos[0]);
   if (!w) fail(`No wall with id "${pos[0]}". Doors: ${(s.walls || []).filter((x) => x.kind === 'door').map((x) => x.id).join(', ') || 'none'}`);
   if (w.kind !== 'door') fail(`${pos[0]} is a ${w.kind || 'wall'}, not a door.`);
-  if (!['open', 'close'].includes(pos[1])) fail('Say "open" or "close".');
+  if (!['open', 'close', 'lock', 'unlock'].includes(pos[1])) fail('Say "open", "close", "lock" or "unlock".');
+  const by = typeof flags.by === 'string' ? who(s, flags.by) : null;
+  const hasKey = by && (by.keys || []).includes(w.id);
+  if (pos[1] === 'lock' || pos[1] === 'unlock') {
+    if (by && !hasKey && !flags.force) fail(`${by.name} has no key to ${w.id}.`);
+    w.locked = pos[1] === 'lock';
+    const t = `The door ${pos[0]} is ${w.locked ? 'locked' : 'unlocked'}${by ? ` by ${by.name}` : ''}.`;
+    C.appendLog(s, 'secret', t, { door: pos[0], cell: w.from, open: !!w.open, by: by ? by.id : null }); console.log(t); return s;
+  }
+  if (pos[1] === 'open' && w.locked && !hasKey && !flags.force) fail(`${w.id} is locked. Pick it with a ruling, then "door ${w.id} open --force".`);
+  if (pos[1] === 'open' && w.locked) w.locked = false;
   w.open = pos[1] === 'open';
   if (w.open) w.hidden = false;
   const t = `The door ${pos[0]} (${w.from}-${w.to}) ${w.open ? 'swings open' : 'shuts'}.`;
-  C.appendLog(s, 'terrain', t); console.log(t); return s;
+  C.appendLog(s, 'terrain', t, { door: pos[0], cell: w.from, open: w.open, by: typeof flags.by === 'string' ? flags.by : null }); console.log(t); return s;
 });
 
 cmd('spawn', `spawn '<json>'                     add a creature, e.g. spawn '{"id":"wolf1","name":"Wolf","side":"enemy","pos":"B2","hp":11,"ac":13,"speed":40,"attacks":[{"name":"Bite","bonus":4,"damage":"2d4+2","type":"piercing"}]}'`, (s, { pos }) => {
@@ -534,7 +553,8 @@ function turnHint(s) {
   const ctl = c.controller || (c.side === 'party' ? 'llm' : 'dm');
   const who = ctl === 'player' && c.player ? `REMOTE PLAYER "${c.player}" (run "wait ${id}" to get their action)`
     : ctl === 'player' ? 'THE PLAYER (wait for their input)' : ctl === 'llm' ? `party agent (spawn the pc agent for "${id}")` : 'you, the DM';
-  return `\n→ ${c.name} [${id}] at ${c.pos}, controlled by ${who}.${c.hp <= 0 && c.side === 'party' ? ' They are dying: roll "deathsave ' + id + '".' : ''}`;
+  const mind = s.minds && s.minds[id] ? ` Mind-driven: if "minds" shows it needs thought, brief → npc agent → decide; then "mind ${id} act".` : '';
+  return `\n→ ${c.name} [${id}] at ${c.pos}, controlled by ${who}.${mind}${c.hp <= 0 && c.side === 'party' ? ' They are dying: roll "deathsave ' + id + '".' : ''}`;
 }
 
 cmd('next', 'next                               end the current turn, start the next (ticks condition durations)', (s) => {
@@ -925,6 +945,367 @@ cmd('rate', 'rate \'<homebrew json>\' [--level N]   price a homebrew feat/item/t
   return null;
 });
 
+// ---------- NPC minds (lib/minds.js; docs/stealth.md) ----------
+// Every log entry a command writes is captured, so perception can turn it into what each NPC
+// noticed. NPC moves the party couldn't see go to the DM-only log.
+const CAP = { entries: [], done: 0, base: null, actor: null };
+const rawAppend = C.appendLog;
+C.appendLog = (s, type, text, data) => {
+  if (s && Minds.active(s) && ['move', 'action', 'roll', 'condition'].includes(type)) {
+    const id = (data && data.id) || CAP.actor;
+    const c = id && s.creatures[id];
+    if (c && c.side !== 'party') {
+      const path = data && data.path ? data.path : [c.pos];
+      if (!Minds.partySeesPath(s, path)) { text = `[unseen] ${text}`; type = 'secret'; }
+    }
+  }
+  const e = rawAppend(s, type, text, data);
+  CAP.entries.push(e);
+  return e;
+};
+function perceiveNow(s) {
+  if (s && Minds.active(s)) {
+    const lines = Minds.perceive(s, CAP.base, CAP.entries.slice(CAP.done));
+    if (lines.length) console.log(lines.join('\n'));
+  }
+  CAP.done = CAP.entries.length;
+  CAP.base = s ? Minds.snapshot(s) : null;
+}
+// Run one of the engine's own commands for an NPC; a rejection comes back as a reason.
+function tryCmd(name, s, pos, flags = {}) {
+  SOFT = true;
+  try { CMDS[name](s, { pos, flags }); return { ok: true }; } catch (e) { return { ok: false, why: e.message }; } finally { SOFT = false; }
+}
+function mindOf(s, id) {
+  const m = (s.minds || {})[id];
+  if (!m) fail(`${who(s, id).name} has no mind. Give it one with: mind ${id} setup '{"role":"guard","post":"C5"}'`);
+  return m;
+}
+// Which creature an NPC's track key stands for. Only keys it got by seeing someone resolve.
+function resolveKey(m, key) {
+  if (m.roster[key]) return key;
+  for (const [tid, k] of [...Object.entries(m._known), ...Object.entries(m._fig)]) if (k === key) return tid;
+  return null;
+}
+// The closed door (if any) a one-square step crosses.
+function doorOnStep(s, a, b) {
+  for (const w of s.walls || []) {
+    if (typeof w !== 'object' || w.kind !== 'door' || w.open) continue;
+    const p = C.parseCell(w.from), q = C.parseCell(w.to);
+    if (p.x === q.x && b.y === a.y && Math.max(a.x, b.x) === p.x && a.y >= Math.min(p.y, q.y) && a.y < Math.max(p.y, q.y)) return w;
+    if (p.y === q.y && b.x === a.x && Math.max(a.y, b.y) === p.y && a.x >= Math.min(p.x, q.x) && a.x < Math.max(p.x, q.x)) return w;
+  }
+  return null;
+}
+// Walk toward a square, opening doors on the way (an NPC opens what it has the keys to, or what isn't locked).
+function moveToward(s, id, cell) {
+  const c = s.creatures[id];
+  if (c.pos === cell) return { done: true, text: `at ${cell}` };
+  const said = [];
+  for (let k = 0; k < 4 && !C.findPath(s, id, cell); k++) {
+    const keys = c.keys || [];
+    const open = Object.assign({}, s, { walls: (s.walls || []).map((w) => (typeof w === 'object' && w.kind === 'door' && (!w.locked || keys.includes(w.id)) ? Object.assign({}, w, { open: true }) : w)) });
+    const via = C.findPath(open, id, cell);
+    if (!via) return { failed: true, text: `couldn't find a way to ${cell}` };
+    let at = C.parseCell(c.pos), door = null, before = c.pos;
+    for (const st of via.steps) {
+      const nx = C.parseCell(st.to);
+      door = doorOnStep(s, at, nx);
+      if (door) break;
+      before = st.to; at = nx;
+    }
+    if (!door) break;
+    if (before !== c.pos) {
+      const r = moveToward(s, id, before);
+      said.push(r.text);
+      if (!r.done) return { done: false, text: said.join('; ') };
+    }
+    const r = tryCmd('door', s, [door.id, 'open'], { by: id });
+    if (!r.ok) return { failed: true, text: `the door ${door.id} won't open` };
+    said.push(`opened ${door.id}`);
+  }
+  const route = C.findPath(s, id, cell);
+  if (!route) return { failed: true, text: `couldn't find a way to ${cell}` };
+  if (said.length) { const r = moveToward(s, id, cell); return Object.assign(r, { text: `${said.join('; ')}; ${r.text}` }); }
+  const left = C.turnInfo(s, id).left;
+  let spent = 0, stop = null;
+  for (const st of route.steps) {
+    if (spent + st.cost > left) break;
+    spent += st.cost;
+    const p = C.parseCell(st.to);
+    if (!C.occupant(s, p.x, p.y, id)) stop = st.to;
+  }
+  if (!stop) return { done: false, text: left ? 'the way is blocked for now' : 'no movement left' };
+  const r = tryCmd('move', s, [id, stop]);
+  if (!r.ok) return { failed: true, text: 'the way is blocked' }; // never say by what
+  return { done: stop === cell, text: stop === cell ? `reached ${cell}` : `moved to ${stop}, heading for ${cell}` };
+}
+// Get within 5 ft of a square (the square itself if it's free).
+function moveNear(s, id, cell) {
+  const c = s.creatures[id], p = C.parseCell(cell), me = C.parseCell(c.pos);
+  if (C.distFeet(me, p) <= 5) return { done: true, text: `next to ${cell}` };
+  const keys = c.keys || [];
+  const doorsOpen = Object.assign({}, s, { walls: (s.walls || []).map((w) => (typeof w === 'object' && w.kind === 'door' && (!w.locked || keys.includes(w.id)) ? Object.assign({}, w, { open: true }) : w)) });
+  const opts = [];
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+    const x = p.x + dx, y = p.y + dy;
+    if (!C.inBounds(s, x, y) || C.blocksMove(C.tagsAt(s, x, y)) || C.occupant(s, x, y, id)) continue;
+    opts.push({ cell: C.cellId(x, y), d: (dx || dy ? 1 : 0) * 100 + C.distFeet(me, { x, y }) });
+  }
+  opts.sort((a, b) => a.d - b.d);
+  for (const o of opts) {
+    if (!C.findPath(doorsOpen, id, o.cell)) continue;
+    const r = moveToward(s, id, o.cell);
+    return Object.assign(r, { done: C.distFeet(C.parseCell(s.creatures[id].pos), p) <= 5 });
+  }
+  return { failed: true, text: `couldn't find a way near ${cell}` };
+}
+function runStep(s, id, m, st) {
+  const c = s.creatures[id];
+  const ti = () => C.turnInfo(s, id);
+  switch (st.do) {
+    case 'wait': return { done: true, stop: true, text: 'waits' };
+    case 'say': {
+      const r = Minds.speak(s, id, st);
+      if (r.error) return { failed: true, text: r.error };
+      if (st.kind === 'warning' && st.about && st.about.subject) m.warned[st.about.subject] = true;
+      return { done: true, text: `heard by ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}` };
+    }
+    case 'move': case 'flee': {
+      if (c.pos === st.to) return { done: true, text: `at ${st.to}` };
+      if ((st.dash || st.do === 'flee') && !ti().action && !ti().dash) tryCmd('dash', s, [id]);
+      return moveToward(s, id, st.to);
+    }
+    case 'guard': {
+      if (c.pos !== st.at) { const r = moveToward(s, id, st.at); if (r.failed || c.pos !== st.at) return Object.assign(r, { done: false, stop: true }); }
+      if (st.facing) m.facing = st.facing;
+      if (st.rounds) { st.left = (st.left !== undefined ? st.left : st.rounds) - 1; return { done: st.left <= 0, stop: true, text: `on guard at ${st.at}` }; }
+      return { done: false, stop: true, text: `on guard at ${st.at}` };
+    }
+    case 'patrol': {
+      const route = m.profile.patrol || [];
+      if (!route.length) return { failed: true, text: 'no patrol route' };
+      if (c.pos === route[m.patrolIdx % route.length]) m.patrolIdx++;
+      const r = moveToward(s, id, route[m.patrolIdx % route.length]);
+      if (r.done) m.patrolIdx++;
+      return { done: false, stop: true, text: r.text };
+    }
+    case 'watch': {
+      m.facing = Minds.dirBetween(c.pos, st.at) || m.facing;
+      st.left = (st.left !== undefined ? st.left : st.rounds || 1) - 1;
+      return { done: st.left <= 0, stop: true, text: `watches ${st.at}` };
+    }
+    case 'investigate': {
+      let text = '';
+      if (C.distFeet(C.parseCell(c.pos), C.parseCell(st.at)) > 5) {
+        const r = moveNear(s, id, st.at);
+        if (r.failed) return r;
+        text = r.text + '; ';
+        if (!r.done) return { done: false, text: text + 'still on the way' };
+      }
+      if (ti().action) return { done: false, text: text + 'no action left to search; will search next turn' };
+      const { bonus } = abilityBonus(c, 'perception');
+      const d = C.d20(), total = d.nat + bonus;
+      turnState(s, id).action = true;
+      m.facing = Minds.dirBetween(c.pos, st.at) || m.facing;
+      const found = Minds.search(s, id, st.at, total);
+      C.appendLog(s, found.length ? 'action' : 'roll', `${c.name} searches around ${st.at}: Perception ${d.detail}${sign(bonus)} = ${total}${found.length ? ` and finds ${found.map((x) => s.creatures[x].name).join(', ')}!` : '.'}`, { id });
+      return { done: true, text: text + (found.length ? 'found someone hiding!' : 'found nothing') };
+    }
+    case 'attack': {
+      const tid = resolveKey(m, st.target);
+      if (!tid || !Minds.seesNow(m, tid)) return { failed: true, text: `can't see ${st.target} any more` };
+      if (ti().action) return { done: false, stop: true, text: 'no action left this turn' };
+      const t = s.creatures[tid];
+      const weapons = st.weapon ? [st.weapon] : (c.attacks || []).map((a) => a.name);
+      let w = weapons.find((n) => !C.attackPlan(s, id, tid, n).error);
+      let moved = '';
+      if (!w) {
+        const r = moveNear(s, id, t.pos);
+        moved = r.text + '; ';
+        w = weapons.find((n) => !C.attackPlan(s, id, tid, n).error);
+        if (!w) return { done: false, stop: true, text: moved + 'not in reach yet' };
+      }
+      for (let i = 0; i < (c.attacksPerAction || 1) && !ti().action && s.creatures[tid].hp > 0; i++) {
+        const r = tryCmd('attack', s, [id, tid, w]);
+        if (!r.ok) return { failed: true, text: moved + r.why.replace(/^.*?(line of sight|range|reach).*$/i, 'lost the shot') };
+      }
+      return { done: true, stop: true, text: moved + `attacks with ${w}` };
+    }
+    case 'follow': {
+      const tid = resolveKey(m, st.target);
+      const tr = m.tracks[st.target];
+      const cell = tid && Minds.seesNow(m, tid) ? s.creatures[tid].pos : tr && tr.cell;
+      if (!cell) return { failed: true, text: `lost ${st.target}` };
+      return Object.assign(moveNear(s, id, cell), { done: false, stop: true });
+    }
+    case 'door': {
+      const w = (s.walls || []).find((x) => typeof x === 'object' && x.id === st.id);
+      if (!w) return { failed: true, text: `no door ${st.id}` };
+      const a = C.parseCell(w.from), b = C.parseCell(w.to);
+      const sides = a.x === b.x ? [[a.x - 1, Math.min(a.y, b.y)], [a.x, Math.min(a.y, b.y)]] : [[Math.min(a.x, b.x), a.y - 1], [Math.min(a.x, b.x), a.y]];
+      const me = C.parseCell(c.pos);
+      const near = sides.filter(([x, y]) => C.inBounds(s, x, y)).map(([x, y]) => C.cellId(x, y));
+      if (!near.some((cell) => C.distFeet(me, C.parseCell(cell)) <= 5)) {
+        const r = moveNear(s, id, near.sort((p, q) => C.distFeet(me, C.parseCell(p)) - C.distFeet(me, C.parseCell(q)))[0]);
+        if (!r.done) return Object.assign(r, { done: false });
+      }
+      const r = tryCmd('door', s, [st.id, st.state === 'close' ? 'close' : 'open'], { by: id });
+      return r.ok ? { done: true, text: `${st.state === 'close' ? 'shut' : 'opened'} ${st.id}` } : { failed: true, text: r.why };
+    }
+    case 'hide': {
+      const r = tryCmd('sneak', s, [id]);
+      return r.ok ? { done: true, stop: true, text: 'tries to hide' } : { failed: true, text: r.why };
+    }
+    default: return { failed: true, text: `can't do "${st.do}"` };
+  }
+}
+// One turn of an NPC's current plan: as many steps as its movement and action allow.
+function mindAct(s, id) {
+  const c = who(s, id), m = mindOf(s, id);
+  if (c.hp <= 0) return [`${c.name} is down.`];
+  if (hasCond(c, 'asleep')) return [`${c.name} is asleep.`];
+  if (['paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k))) return [`${c.name} can't act.`];
+  const out = [];
+  const it = Minds.intentionFor(s, id);
+  CAP.actor = id;
+  try {
+    for (let n = 0; n < 5 && it.step < it.plan.length; n++) {
+      const st = it.plan[it.step];
+      const r = runStep(s, id, m, st);
+      s.mindStats.steps = (s.mindStats.steps || 0) + 1;
+      out.push(`${c.name} [${it.source}: ${it.objective}] ${Minds.stepText(st)} → ${r.text}`);
+      m.results = [...m.results, { t: s.mtime || 0, text: `${Minds.stepText(st)}: ${r.text}` }].slice(-8);
+      if (r.failed) { it.status = 'failed'; Minds.trigger(m, 2, `plan step failed: ${Minds.stepText(st)} (${r.text})`, []); break; }
+      if (!r.done) break;
+      it.step++;
+      if (it.step >= it.plan.length) { it.status = 'completed'; if (it.source === 'model') Minds.trigger(m, 1, `finished: ${it.objective}`, []); break; }
+      if (r.stop) break;
+    }
+  } finally { CAP.actor = null; }
+  return out;
+}
+
+cmd('minds', 'minds                              NPC minds: alarm, what each is doing, who needs a model to think (and which model)', (s) => {
+  console.log(Minds.queue(need(s)));
+  return null;
+});
+
+cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act | fallback | say "<text>" [--to a,b|all] [--channel speech|shout|whisper|signal] [--kind warning] | notice "<text>" [--at <cell>] [--sig 0-3] | trace | setup '<json>']   one NPC's mind: no verb = the DM inspector (its beliefs next to the truth)`, (s, { pos, flags }) => {
+  need(s);
+  const [id, verb, ...rest] = pos;
+  if (!id) fail('Usage: mind <id> [verb]. List them with: minds');
+  who(s, id);
+  if (verb === 'setup') {
+    let spec; try { spec = JSON.parse(rest.join(' ') || '{}'); } catch (e) { fail('setup needs JSON: ' + e.message); }
+    try { Minds.initMind(s, id, spec); } catch (e) { fail(e.message); }
+    Minds.initAll(s);
+    console.log(`${s.creatures[id].name} now has a mind (${s.minds[id].profile.tier}).`);
+    return s;
+  }
+  const m = mindOf(s, id);
+  if (!verb) { console.log(Minds.inspect(s, id)); return null; }
+  if (verb === 'brief') { console.log(Minds.brief(s, id) + `\n\n(Route: npc agent, model ${Minds.modelFor(s, m)}.)`); return null; }
+  if (verb === 'decide') {
+    let raw = rest.join(' ');
+    if (flags.file) raw = fs.readFileSync(flags.file === true || flags.file === '-' ? 0 : flags.file, 'utf8');
+    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+    let dec; try { dec = JSON.parse(raw.slice(a, b + 1)); } catch (e) { fail(`Not a JSON decision (${e.message}). The NPC can be asked again, or use "mind ${id} fallback".`); }
+    let r; try { r = Minds.decide(s, id, dec); } catch (e) { fail(e.message); }
+    console.log(`${s.creatures[id].name}'s decision${r.stale ? ' (STALE: new evidence arrived while deciding)' : ''}:\n  accepted: ${r.ok.join('; ') || 'nothing'}${r.no.length ? '\n  rejected: ' + r.no.join('; ') : ''}${r.spoken.length ? '\n  spoken: ' + r.spoken.join('; ') : ''}\nNext: "mind ${id} act" on its turn (or "tick" out of combat).`);
+    return s;
+  }
+  if (verb === 'act') { const out = mindAct(s, id); console.log(out.join('\n') || 'Nothing to do.'); return s; }
+  if (verb === 'fallback') {
+    const it = Minds.adoptFallback(s, id);
+    m.pending = [];
+    console.log(`${s.creatures[id].name} (no model): ${it.objective}: ${it.plan.map(Minds.stepText).join('; ')}`);
+    return s;
+  }
+  if (verb === 'say') {
+    const text = rest.join(' ').trim();
+    if (!text) fail('say needs the words, in quotes.');
+    const st = { do: 'say', text, to: flags.to && flags.to !== 'all' ? String(flags.to).split(',') : 'all', channel: flags.channel || 'speech', kind: flags.kind || 'report' };
+    const err = Minds.checkStep(s, m, st);
+    if (err) fail(err);
+    const r = Minds.speak(s, id, st);
+    if (r.error) fail(r.error);
+    console.log(`Heard by: ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}.`);
+    return s;
+  }
+  if (verb === 'notice') {
+    const text = rest.join(' ').trim();
+    if (!text) fail('notice needs what they noticed, in quotes.');
+    const at = flags.at ? Minds.validCell(s, flags.at) : undefined;
+    const o = Minds.note(s, m, { modality: 'special', kind: 'notice', text, cell: at, sig: flags.sig !== undefined ? Number(flags.sig) : 2 });
+    console.log(`${s.creatures[id].name} notices (${o.id}): ${text}`);
+    return s;
+  }
+  if (verb === 'trace') {
+    for (const t of m.traces) console.log(`t${t.t} v${t.version} ${t.tier}/${t.model}${t.stale ? ' STALE' : ''}: ok [${t.accepted.join('; ')}] rejected [${t.rejected.join('; ')}]\n  ${JSON.stringify(t.decision)}`);
+    if (!m.traces.length) console.log('No decisions yet.');
+    return null;
+  }
+  fail(`Unknown: mind <id> ${verb}`);
+});
+
+cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes; every NPC mind follows its plan (6 seconds each), alarm cools', (s, { pos, flags }) => {
+  need(s);
+  if (!Minds.active(s)) fail('No NPC minds in this encounter.');
+  if ((s.turnOrder || []).length && !flags.force) fail('Combat is on: minds act on their own turns with "mind <id> act".');
+  const n = Math.max(1, Math.min(10, Number(pos[0]) || 1));
+  const at = (s.mindConfig || {}).deliberateAt || 2;
+  let fight = [];
+  for (let r = 0; r < n && !fight.length; r++) {
+    perceiveNow(s);
+    for (const id of Object.keys(s.minds)) {
+      const c = s.creatures[id];
+      if (!c || c.hp <= 0) continue;
+      // Anyone who can see an enemy and means to fight waits for initiative instead of swinging now.
+      if (Minds.wantsFight(s, s.minds[id])) { fight.push(id); continue; }
+      s.turn = s.turn || {};
+      s.turn[id] = { used: 0, dash: false, disengage: false };
+      delete c.reactionUsed;
+      const lines = mindAct(s, id);
+      if (lines.length) console.log(lines.join('\n'));
+      perceiveNow(s);
+      const m = s.minds[id];
+      if (m.pending.length && Math.max(...m.pending.map((p) => p.urgency)) < at) m.pending = []; // routine news: handled without a model
+    }
+    Minds.passTime(s, 1);
+    s.turn = {};
+  }
+  C.appendLog(s, 'secret', `[mind] Time passes (now ${s.mtime}).`);
+  console.log(`Time ${s.mtime}.${fight.length ? ` Stopped: ${[...new Set(fight)].join(', ')} want${fight.length > 1 ? '' : 's'} to fight. Roll "initiative".` : ''}`);
+  return s;
+});
+
+cmd('noise', 'noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--sig 1-3] [--secret]   a sound NPCs may hear (a thrown stone, a dropped pot); default heard 60 ft, walls muffle', (s, { pos, flags }) => {
+  need(s);
+  const cell = Minds.validCell(s, pos[0] || '');
+  if (!cell) fail('noise needs a square, e.g. noise E5 "a pot shattering"');
+  const desc = pos.slice(1).join(' ').trim() || 'a sharp noise';
+  const loud = Number(flags.loud) || 60;
+  const by = typeof flags.by === 'string' ? flags.by : null;
+  if (by) who(s, by);
+  C.appendLog(s, flags.secret ? 'secret' : 'action', `A sound at ${cell}: ${desc}.`, { noise: true, cell, loud, desc, by, sig: flags.sig !== undefined ? Number(flags.sig) : 2 });
+  console.log(`Noise at ${cell} (${loud} ft): ${desc}.`);
+  return s;
+});
+
+cmd('sneak', 'sneak <id> [--total N] [--adv|--dis]   hide with a Stealth roll: NPCs notice only with passive Perception ≥ the total (or a clear, close, well-lit look)', (s, { pos, flags }) => {
+  const c = who(need(s), pos[0]);
+  let total = flags.total !== undefined ? Number(flags.total) : null, detail = '';
+  if (total === null) {
+    const { bonus } = abilityBonus(c, 'stealth');
+    const r = C.d20(advMode(flags) || (c.noisy ? 'dis' : null));
+    total = r.nat + bonus; detail = `${r.detail}${sign(bonus)} = `;
+  }
+  c.hidden = true; c.stealth = total;
+  const t = `${c.name} slips into hiding (Stealth ${detail}${total}).`;
+  C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t, { id: pos[0] }); console.log(t); return s;
+});
+
 cmd('ext', 'ext                            list approved library commands in ext/', () => {
   const dir = path.join(C.ROOT, 'ext');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
@@ -951,9 +1332,15 @@ function main() {
     const ext = require(extFile);
     fn = (s, a) => ext.run(need(s), a, { C, who: (id) => who(s, id), fail, applyDamage: (id, n, t) => applyDamage(s, id, n, t), fallOn: (id, feet, cell) => fallOn(s, id, feet, cell), addCond, saveRoll, abilityBonus, expandCells, turnState, hasCond, mod, sign, advMode });
   }
+  CAP.base = state ? Minds.snapshot(state) : null;
   try {
     const out = fn(state, args);
-    if (out) C.saveState(out);
+    if (out) {
+      perceiveNow(out);
+      C.saveState(out);
+      const sum = Minds.summary(out);
+      if (sum.length) console.log(sum.join('\n'));
+    }
   } catch (e) {
     fail(e.message);
   }
