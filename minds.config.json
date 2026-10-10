@@ -1,5 +1,9 @@
 {
   "models": {
     "minion": "deepseek/deepseek-v4.1-flash"
+  },
+  "openrouter": {
+    "reasoning": { "enabled": false },
+    "max_tokens": 2500
   }
 }

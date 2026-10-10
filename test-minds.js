@@ -223,6 +223,8 @@ try {
   expect('lenient: an unstandable square snaps to a neighbour', /J14 can't be stood on/.test(r.out) && !/rejected/.test(r.out), r.out);
   r = decide('snikka', { version: S().mseq, say: [{ to: ['gob7'], channel: 'shout', kind: 'order', text: 'Gix, hold the crack mouth!' }] });
   expect('lenient: an order filed under "say" goes out as an order', /order ord\d+ to gob7/.test(r.out) && M('gob7').orders.some((o) => /hold the crack mouth/.test(o.objective)), r.out);
+  r = decide('gob6', { version: S().mseq, intention: { objective: 'tell the boss', plan: [{ do: 'say', to: ['snikka'], channel: 'speech', kind: 'report', text: 'Singing by the crack!', about: { subject: 'stranger-singer', at: 'L19:N23' } }] } });
+  expect('lenient: a made-up subject and a range in "about" still let the plan through', /isn't a track/.test(r.out) && /read as M21/.test(r.out) && /intention i\d+/.test(r.out), r.out);
   b = brief('gob4');
   expect('brief: places are named next to squares', /\(the crack mouth\)|\(the bottom of the crack\)|\(the crack\)/.test(b) && /PLACES YOU KNOW/.test(b), b.slice(0, 1500));
   expect('brief: the warren brief stays short', b.length < 9000, `${b.length} chars`);
