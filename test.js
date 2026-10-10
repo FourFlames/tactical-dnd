@@ -265,6 +265,7 @@ try {
     expect(`builder reproduces ${want.name}'s sheet`, !diffs.length && !dv.errors.length && !dv.todo.length, diffs.concat(dv.errors.map((e) => e.msg), dv.todo.map((t) => t.msg)).join('; '));
   }
   expect('hand-entered scores wait for the DM', R.derive(party.ash).status === 'needs-dm', R.derive(party.ash).status);
+  expect('noisy armor makes a noisy character', R.derive(party.rook).creature.noisy === true && !R.derive(party.wren).creature.noisy, '');
   expect('features the engine reads come through', R.derive(party.wren).creature.features.includes('Sneak Attack +2d6') && C.featuresOf(R.derive(party.wren).creature).cunningAction, JSON.stringify(R.derive(party.wren).creature.features));
   // Every class and subclass, at several levels, filled with recommended picks, comes out complete.
   const broken = [];
