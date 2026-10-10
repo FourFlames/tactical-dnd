@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const C = require('./lib/core');
 const Minds = require('./lib/minds');
+const Think = require('./lib/think');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -788,6 +789,23 @@ cmd('describe', 'describe <id|cell> "<fact>" [--clear]   record something the pa
   return s;
 });
 
+cmd('evidence', 'evidence <id|cell> "<what anyone looking closely would find>" [--clear]   physical clues (claw marks on a body, tracks in the mud): NPCs find them by looking within 10 ft or searching nearby', (s, { pos, flags }) => {
+  need(s);
+  let key = pos[0];
+  if (!s.creatures[key]) {
+    const p = C.parseCell(key || '');
+    if (!C.inBounds(s, p.x, p.y)) fail(`"${key}" is neither a creature id nor a square on the map.`);
+    key = C.cellId(p.x, p.y);
+  }
+  s.evidence = s.evidence || {};
+  if (flags.clear) { delete s.evidence[key]; console.log(`Cleared the evidence at ${key}.`); return s; }
+  const text = pos.slice(1).join(' ').trim();
+  if (!text) fail('evidence needs what there is to find, in quotes.');
+  s.evidence[key] = [...(s.evidence[key] || []), text];
+  console.log(`Evidence at ${key}: ${text}`);
+  return s;
+});
+
 cmd('look', 'look <from-id> <id|cell> [--z <ft>]   what <from-id> can tell about a creature or square (what players see when they inspect)', (s, { pos, flags }) => {
   need(s);
   who(s, pos[0]);
@@ -1063,11 +1081,14 @@ function moveNear(s, id, cell) {
 function runStep(s, id, m, st) {
   const c = s.creatures[id];
   const ti = () => C.turnInfo(s, id);
+  // Breaking a standing order is allowed (the mind chose it); whoever sees it and knows the order notices.
+  if (['attack', 'investigate', 'move'].includes(st.do)) { const b = Minds.breach(s, id, st); if (b) Minds.witness(s, id, b); }
   switch (st.do) {
     case 'wait': return { done: true, stop: true, text: 'waits' };
     case 'say': {
       const r = Minds.speak(s, id, st);
       if (r.error) return { failed: true, text: r.error };
+      if (r.repeat) return { done: true, text: 'skipped: you already said that' };
       if (st.kind === 'warning' && st.about && st.about.subject) m.warned[st.about.subject] = true;
       return { done: true, text: `heard by ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}` };
     }
@@ -1161,13 +1182,13 @@ function runStep(s, id, m, st) {
   }
 }
 // One turn of an NPC's current plan: as many steps as its movement and action allow.
-function mindAct(s, id) {
+function mindAct(s, id, opts = {}) {
   const c = who(s, id), m = mindOf(s, id);
   if (c.hp <= 0) return [`${c.name} is down.`];
   if (hasCond(c, 'asleep')) return [`${c.name} is asleep.`];
   if (['paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k))) return [`${c.name} can't act.`];
   const out = [];
-  const it = Minds.intentionFor(s, id);
+  const it = Minds.intentionFor(s, id, opts);
   CAP.actor = id;
   try {
     for (let n = 0; n < 5 && it.step < it.plan.length; n++) {
@@ -1249,6 +1270,18 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
   fail(`Unknown: mind <id> ${verb}`);
 });
 
+cmd('think', 'think [<id>...] [--all]             minds on OpenRouter models think now (default: those with news; --all: every one of them). tick and "mind <id> act" do this on their own', async (s, { pos, flags }) => {
+  need(s);
+  if (!Minds.active(s)) fail('No NPC minds in this encounter.');
+  if (!process.env.OPENROUTER_API_KEY) fail('OPENROUTER_API_KEY isn\'t set in this shell.');
+  for (const id of pos) mindOf(s, id);
+  const ids = flags.all ? Object.keys(s.minds).filter((id) => Think.isRemote(Minds.modelFor(s, s.minds[id])) && s.creatures[id] && s.creatures[id].hp > 0)
+    : Think.due(s, pos.length ? pos : undefined);
+  if (!ids.length) { console.log('Nobody on an OpenRouter model needs to think.'); return null; }
+  await Think.think(s, ids);
+  return s;
+});
+
 cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes; every NPC mind follows its plan (6 seconds each), alarm cools', (s, { pos, flags }) => {
   need(s);
   if (!Minds.active(s)) fail('No NPC minds in this encounter.');
@@ -1266,7 +1299,8 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
       s.turn = s.turn || {};
       s.turn[id] = { used: 0, dash: false, disengage: false };
       delete c.reactionUsed;
-      const lines = mindAct(s, id);
+      // News mid-tick: OpenRouter minds hold and think about it next tick instead of chasing it on the fallback.
+      const lines = mindAct(s, id, { hold: !!process.env.OPENROUTER_API_KEY && !flags['no-think'] });
       if (lines.length) console.log(lines.join('\n'));
       perceiveNow(s);
       const m = s.minds[id];
@@ -1280,7 +1314,21 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
   return s;
 });
 
-cmd('noise', 'noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--sig 1-3] [--secret]   a sound NPCs may hear (a thrown stone, a dropped pot); default heard 60 ft, walls muffle', (s, { pos, flags }) => {
+cmd('speak', 'speak <id> "<words>" [--channel speech|shout|whisper] [--to <id,id>] [--as <npc-id>] [--deception <total>]   a character speaks aloud; NPC minds in earshot hear it (clearly, muffled or faintly). --as: pretending to be that NPC (roll Deception first)', (s, { pos, flags }) => {
+  need(s);
+  const id = pos[0];
+  who(s, id);
+  const text = pos.slice(1).join(' ').trim();
+  if (!text) fail('speak needs the words, in quotes.');
+  const channel = flags.channel || 'speech';
+  if (flags.as && !s.creatures[flags.as]) fail(`No creature "${flags.as}" to pretend to be.`);
+  const r = Minds.speak(s, id, { text, channel, kind: flags.kind || 'report', to: flags.to ? String(flags.to).split(',') : 'all', as: flags.as || undefined, deception: flags.deception !== undefined ? Number(flags.deception) : undefined });
+  if (r.error) fail(r.error);
+  console.log(`${s.creatures[id].name} ${channel === 'shout' ? 'shouts' : channel === 'whisper' ? 'whispers' : 'says'}: “${text}”. Heard by: ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}.`);
+  return s;
+});
+
+cmd('noise','noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--sig 1-3] [--secret]   a sound NPCs may hear (a thrown stone, a dropped pot); default heard 60 ft, walls muffle', (s, { pos, flags }) => {
   need(s);
   const cell = Minds.validCell(s, pos[0] || '');
   if (!cell) fail('noise needs a square, e.g. noise E5 "a pot shattering"');
@@ -1320,7 +1368,23 @@ cmd('help', 'help', () => {
 });
 
 // ---------- dispatch ----------
-function main() {
+// Before minds act (a tick, or one NPC's turn), the ones on OpenRouter models with news think first.
+async function thinkFirst(state, name, args) {
+  if (!state || !Minds.active(state) || args.flags['no-think']) return;
+  // Split mode: anyone holding a new standing order takes it in first, with a short call of its own.
+  if (Think.takeMode() === 'split' && process.env.OPENROUTER_API_KEY && (name === 'tick' || (name === 'mind' && args.pos[1] === 'act'))) {
+    const scope = name === 'mind' ? [args.pos[0]] : Object.keys(state.minds);
+    const takers = scope.filter((id) => state.minds[id] && (state.minds[id].newRules || []).length && Think.isRemote(Minds.modelFor(state, state.minds[id])) && state.creatures[id] && state.creatures[id].hp > 0);
+    if (takers.length) await Think.takeOrders(state, takers);
+  }
+  let ids;
+  if (name === 'tick' && !(state.turnOrder || []).length) ids = Think.due(state);
+  else if (name === 'mind' && args.pos[1] === 'act' && state.minds[args.pos[0]]) ids = Think.due(state, [args.pos[0]]);
+  if (!ids || !ids.length) return;
+  if (!process.env.OPENROUTER_API_KEY) { console.log(`(OPENROUTER_API_KEY isn't set: ${ids.join(', ')} act on the fallback instead of thinking.)`); return; }
+  await Think.think(state, ids);
+}
+async function main() {
   const [name, ...rest] = process.argv.slice(2);
   if (!name) return CMDS.help();
   const args = parseArgs(rest);
@@ -1334,7 +1398,8 @@ function main() {
   }
   CAP.base = state ? Minds.snapshot(state) : null;
   try {
-    const out = fn(state, args);
+    await thinkFirst(state, name, args);
+    const out = await fn(state, args);
     if (out) {
       perceiveNow(out);
       C.saveState(out);

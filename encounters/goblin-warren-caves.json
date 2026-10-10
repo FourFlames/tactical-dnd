@@ -13,6 +13,46 @@
     "deliberateAt": 2,
     "calm": true
   },
+  "places": [
+    { "name": "the cookfire", "at": "J14" },
+    { "name": "the boss's corner", "at": "L12" },
+    { "name": "the pen", "at": "P12:T14" },
+    { "name": "the pen gate", "at": "R14" },
+    { "name": "the sleeping heaps", "at": "G11:H12" },
+    { "name": "the oil barrels", "at": "G16:H17" },
+    { "name": "the rubble pile", "at": "N17:O18" },
+    { "name": "the lookout shelf", "at": "T15:U16" },
+    { "name": "the crack mouth", "at": "L19:M19" },
+    { "name": "the crack", "area": "M20:M22" },
+    { "name": "the bottom of the crack", "at": "L23:N23" },
+    { "name": "the flank door", "at": "V18:W18" },
+    { "name": "the ledge lip", "at": "I10:J10" },
+    { "name": "the warren", "area": "F11:U19" },
+    { "name": "the approach cavern", "area": "K24:Q31" },
+    { "name": "the cave mouth", "at": "L32:N33" },
+    { "name": "the west gap", "at": "J28" },
+    { "name": "the stream cave", "area": "C24:I31" },
+    { "name": "the flooded passage", "area": "H20:H23" },
+    { "name": "the west tunnel", "area": "B9:C23" },
+    { "name": "the midden", "at": "B20:D22" },
+    { "name": "the sleeping nook", "at": "D15:D18" },
+    { "name": "the west rubble", "at": "D13:E13" },
+    { "name": "the mushroom grotto", "area": "B2:J8" },
+    { "name": "the gas hollow", "at": "B3:C4" },
+    { "name": "the rotten bridge", "at": "K5:N5" },
+    { "name": "the high ledge", "area": "H9:O9" },
+    { "name": "the bat cave", "area": "O2:Y8" },
+    { "name": "the bat roost", "at": "R3:U4" },
+    { "name": "the storeroom", "area": "W11:Z15" },
+    { "name": "the powder kegs", "at": "W11:W12" },
+    { "name": "the east tunnel", "area": "R28:W28" },
+    { "name": "the east corridor", "area": "X22:Y28" },
+    { "name": "the guard post", "area": "W16:Y21" },
+    { "name": "the brazier", "at": "Y17" },
+    { "name": "the pit", "at": "X24" },
+    { "name": "the tripline", "at": "X26:Y26" },
+    { "name": "the wedged boulder", "at": "T27" }
+  ],
   "legend": {
     ".": {
       "name": "cave floor",
@@ -284,7 +324,7 @@
     "#ddd###W####n#########..k#",
     "#d.d###W####n##########..#",
     "#..####W###...#########..#",
-    "##S...www#m.....S######..#",
+    "##....www#m.....S######..#",
     "##.m::www#m......######..#",
     "##..:.www#....SS.######..#",
     "##wwwwwww#.......##q###..#",
@@ -391,6 +431,7 @@
     },
     "wren": {
       "name": "Wren",
+      "size": "small",
       "side": "party",
       "controller": "llm",
       "pos": "M32",
@@ -498,6 +539,7 @@
     },
     "snikka": {
       "name": "Boss Snikka",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "L12",
@@ -649,6 +691,7 @@
     },
     "gob4": {
       "name": "Pip",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "L18",
@@ -740,6 +783,7 @@
     },
     "gob5": {
       "name": "Goblin Lookout",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "U15",
@@ -841,7 +885,8 @@
       }
     },
     "gob6": {
-      "name": "Goblin",
+      "name": "Nub",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "I13",
@@ -944,7 +989,8 @@
       }
     },
     "gob7": {
-      "name": "Goblin",
+      "name": "Gix",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "K15",
@@ -1071,6 +1117,7 @@
     },
     "tam": {
       "name": "Tam",
+      "size": "small",
       "side": "neutral",
       "controller": "dm",
       "pos": "S12",
@@ -1094,6 +1141,7 @@
     },
     "gob8": {
       "name": "Nib",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "X17",
@@ -1213,6 +1261,7 @@
     },
     "gob9": {
       "name": "Skrit",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Y27",
@@ -1340,6 +1389,7 @@
     },
     "gob10": {
       "name": "Gruk",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Y25",
@@ -1459,6 +1509,7 @@
     },
     "gob11": {
       "name": "Mogwa",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "X13",
@@ -1583,6 +1634,7 @@
     },
     "gob12": {
       "name": "Dribble",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "Q7",
@@ -1695,6 +1747,7 @@
     },
     "gob13": {
       "name": "Bog",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "G7",
@@ -1799,6 +1852,7 @@
     },
     "gob14": {
       "name": "Snore",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "D16",
@@ -1898,6 +1952,7 @@
     },
     "gob15": {
       "name": "Grub",
+      "size": "small",
       "side": "enemy",
       "controller": "dm",
       "pos": "C21",

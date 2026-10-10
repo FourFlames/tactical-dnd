@@ -1,0 +1,12 @@
+{
+  "models": {
+    "minion": "deepseek/deepseek-v4.1-flash",
+    "elite": "deepseek/deepseek-v4.1-flash",
+    "commander": "deepseek/deepseek-v4.1-flash"
+  },
+  "standingTake": "split",
+  "openrouter": {
+    "reasoning": { "enabled": false },
+    "max_tokens": 2500
+  }
+}
