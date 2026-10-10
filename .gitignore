@@ -9,3 +9,7 @@ node_modules/
 seats.json
 intents.jsonl
 listening.json
+
+# player profiles (sign-in codes) and their characters
+players.json
+characters/

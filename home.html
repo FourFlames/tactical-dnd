@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tactical D&amp;D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+SC:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #14130f; --panel: #1c1b16; --panel-2: #232118; --line: #34312a;
+    --ink: #e9e3d3; --ink-dim: #9c9584; --ink-faint: #6b6557;
+    --gold: #d8b45a; --party: #4fb3a4; --enemy: #cf6a4c; --secret: #a98bd6;
+    --display: 'Cormorant SC', Georgia, serif; --sans: 'Inter', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+  a { color: var(--gold); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 60px; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  h1 { font: 700 40px/1 var(--display); letter-spacing: .04em; color: var(--gold); margin: 0; }
+  .tag { color: var(--ink-dim); }
+  .spacer { flex: 1; }
+  .who { color: var(--ink-dim); font-size: 13px; }
+  .who b { color: var(--ink); font-weight: 600; }
+  .who button { margin-left: 8px; }
+  h2 { font: 500 24px/1.2 var(--display); letter-spacing: .03em; margin: 0 0 12px; }
+  .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } h1 { font-size: 32px; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .card p { color: var(--ink-dim); margin: 0 0 14px; }
+  input[type=text], input[type=number] { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; font: 15px var(--sans); }
+  input:focus { outline: none; border-color: var(--gold); }
+  input.code { font-family: var(--mono); letter-spacing: .02em; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .btn { background: var(--gold); color: #1b1a15; border: 0; border-radius: 6px; padding: 9px 16px; font: 600 14px var(--sans); cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .ghost { background: none; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; font: 13px var(--sans); cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+  .ghost:hover { background: var(--panel-2); }
+  .ghost.small { padding: 3px 9px; font-size: 12px; }
+  .ghost.danger:hover { color: var(--enemy); border-color: var(--enemy); }
+  .err { color: var(--enemy); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .codebox { font: 500 26px var(--mono); color: var(--gold); background: var(--bg); border: 1px dashed var(--gold); border-radius: 8px; padding: 14px; text-align: center; margin: 10px 0 14px; user-select: all; }
+  section { margin-top: 30px; }
+  .game { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .game .what { flex: 1; min-width: 220px; }
+  .game .what b { font: 500 22px var(--display); color: var(--ink); letter-spacing: .03em; }
+  .game .what div { color: var(--ink-dim); }
+  .chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .ch { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: border-color .15s; }
+  .ch:hover { border-color: #4a463b; }
+  .ch .top { display: flex; align-items: center; gap: 10px; }
+  .sw { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 1px solid rgba(255,255,255,.15); }
+  .ch .nm { font: 500 22px/1.1 var(--display); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch .sum { color: var(--ink-dim); font-size: 13px; }
+  .ch .acts { display: flex; gap: 6px; margin-top: auto; padding-top: 6px; }
+  .pill { display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); }
+  .pill.ready { color: var(--party); border-color: rgba(79,179,164,.4); }
+  .pill.needs-dm { color: var(--secret); border-color: rgba(169,139,214,.45); }
+  .pill.ingame { color: var(--gold); border-color: rgba(216,180,90,.45); }
+  .sugg { font-size: 12px; color: var(--gold); background: rgba(216,180,90,.1); border: 1px solid rgba(216,180,90,.35); border-radius: 6px; padding: 4px 8px; }
+  .new { border-style: dashed; cursor: default; }
+  .new:hover { border-color: var(--line); }
+  .levels { display: flex; gap: 8px; align-items: center; color: var(--ink-dim); font-size: 13px; }
+  .levels input { width: 70px; }
+  .muted { color: var(--ink-faint); font-size: 13px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint); margin-right: 6px; vertical-align: 1px; }
+  .dot.on { background: var(--party); box-shadow: 0 0 8px var(--party); }
+  footer { margin-top: 40px; color: var(--ink-faint); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Tactical D&amp;D</h1>
+    <span class="tag">build a hero, join the table</span>
+    <span class="spacer"></span>
+    <span class="who" id="who" hidden></span>
+  </header>
+
+  <!-- signed out -->
+  <div id="out" hidden>
+    <div class="grid2">
+      <form class="card" id="fLogin">
+        <h2>Sign in</h2>
+        <p>Use your player code, or the code from a seat link the DM sent you (like <span style="font-family:var(--mono)">ember-wolf-42</span>).</p>
+        <div class="row"><input class="code" type="text" id="code" placeholder="your-code-42" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn" type="submit">Sign in</button></div>
+        <div class="err" id="eLogin"></div>
+      </form>
+      <form class="card" id="fNew">
+        <h2>New player</h2>
+        <p>Pick a name. You'll get a code to sign in with from any device.</p>
+        <div class="row"><input type="text" id="pname" placeholder="your name" maxlength="24" autocomplete="off"><button class="btn" type="submit">Create</button></div>
+        <div class="err" id="eNew"></div>
+      </form>
+    </div>
+    <div class="card" id="fresh" hidden style="margin-top:16px">
+      <h2>Welcome, <span id="freshName"></span></h2>
+      <p>This is your code. Write it down: it's how you sign in again, and when the DM seats you at a game it's your link to the table too.</p>
+      <div class="codebox" id="freshCode"></div>
+      <button class="btn" id="freshGo">Continue</button>
+    </div>
+    <section id="outGame" hidden>
+      <div class="label">At the table now</div>
+      <div class="card game"><div class="what"><b id="ogName"></b><div id="ogMeta"></div></div><a class="ghost" href="/play">Watch</a><a class="ghost" id="ogDm" href="/play?dm" hidden>DM view</a></div>
+    </section>
+  </div>
+
+  <!-- signed in -->
+  <div id="in" hidden>
+    <section id="gameSec" style="margin-top:0">
+      <div class="label">Your game</div>
+      <div class="card game" id="game"></div>
+    </section>
+    <section>
+      <div class="label">Your characters</div>
+      <div class="chars" id="chars"></div>
+    </section>
+  </div>
+  <footer id="foot"></footer>
+</div>
+<script>
+const KEY = 'tdnd.code';
+const store = { get() { try { return localStorage.getItem(KEY); } catch { return null; } }, set(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch { /* private window */ } } };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const NEXT = new URLSearchParams(location.search).get('next');
+let me = null;
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+  return j;
+}
+function signedIn(data, fresh) {
+  me = data;
+  store.set(data.code);
+  if (fresh) { $('freshName').textContent = data.name; $('freshCode').textContent = data.code; $('fresh').hidden = false; $('fLogin').parentElement.hidden = true; return; }
+  if (NEXT && /^\/[a-z]/.test(NEXT)) { location.href = NEXT; return; }
+  draw();
+}
+$('fLogin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('eLogin').textContent = '';
+  try { signedIn(await post('/api/login', { code: $('code').value })); } catch (err) { $('eLogin').textContent = err.message; }
+});
+$('fNew').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('eNew').textContent = '';
+  try { signedIn(await post('/api/register', { name: $('pname').value }), true); } catch (err) { $('eNew').textContent = err.message; }
+});
+$('freshGo').addEventListener('click', () => { $('fresh').hidden = true; $('fLogin').parentElement.hidden = false; signedIn(me); });
+
+function draw() {
+  $('out').hidden = !!me; $('in').hidden = !me; $('who').hidden = !me;
+  if (!me) return drawOut();
+  $('who').innerHTML = `Signed in as <b>${esc(me.name)}</b> <button class="ghost small" id="showCode">Show code</button><button class="ghost small" id="signOut">Sign out</button>`;
+  $('showCode').onclick = (e) => { e.currentTarget.outerHTML = `<span style="font-family:var(--mono);color:var(--gold);margin-left:8px">${esc(me.code)}</span>`; };
+  $('signOut').onclick = () => { store.set(null); me = null; draw(); };
+  // The game.
+  const g = me.game, dm = me.dm && me.dm.listening;
+  let html;
+  if (g && g.seat && g.seat.creatures.length) html = `<div class="what"><b>${esc(g.name)}</b><div>You play ${g.seat.creatures.map((c) => esc(c.name)).join(', ')}${g.round ? ` · round ${g.round}` : ''} · <span class="dot ${dm ? 'on' : ''}"></span>${dm ? 'the DM is listening' : 'the DM is busy'}</div></div><a class="btn" href="/play?seat=${encodeURIComponent(g.seat.token)}">Join the table</a>`;
+  else if (g && g.name) html = `<div class="what"><b>${esc(g.name)}</b><div>A game is running. When your character is ready, the DM can bring them in and seat you.</div></div><a class="ghost" href="/play">Watch</a>`;
+  else html = `<div class="what"><b>No game right now</b><div>Build a character; when the DM starts a game, it shows up here.</div></div>`;
+  if (me.local) html += `<a class="ghost" href="/play?dm">DM view</a>`;
+  $('game').innerHTML = html;
+  // The characters.
+  const cards = me.characters.map((c) => {
+    const st = c.inGame ? '<span class="pill ingame">In the game</span>' : c.status === 'ready' ? '<span class="pill ready">Ready</span>' : c.status === 'needs-dm' ? '<span class="pill needs-dm">Waiting on DM</span>' : '<span class="pill">In progress</span>';
+    return `<div class="ch" data-open="${esc(c.id)}">
+      <div class="top"><span class="sw" style="background:${esc(c.color || '#4fb3a4')}"></span><span class="nm">${esc(c.name || 'Unnamed')}</span></div>
+      <div class="sum">${esc(c.summary)}</div>
+      <div>${st}</div>
+      ${c.open ? `<div class="sugg">The DM has ${c.open} suggestion${c.open > 1 ? 's' : ''} for you</div>` : ''}
+      <div class="acts"><a class="ghost small" href="/build?id=${encodeURIComponent(c.id)}">Open</a>${c.level < 20 ? `<a class="ghost small" href="/build?id=${encodeURIComponent(c.id)}&levelup=1" title="Go to level ${c.level + 1}">Level up</a>` : ''}<span class="spacer"></span><button class="ghost small danger" data-del="${esc(c.id)}">Delete</button></div>
+    </div>`;
+  });
+  cards.push(`<form class="ch new" id="fChar"><div class="nm" style="color:var(--ink-dim)">New character</div>
+    <input type="text" id="cname" placeholder="name (you can change it later)" maxlength="40">
+    <div class="levels">Starting level <input type="number" id="clevel" min="1" max="20" value="3"></div>
+    <div class="acts"><button class="btn" type="submit">Start building</button></div><div class="err" id="eChar"></div></form>`);
+  $('chars').innerHTML = cards.join('');
+  $('fChar').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { const c = await post('/api/char', { token: me.code, action: 'new', name: $('cname').value, level: Number($('clevel').value) || 3 }); location.href = '/build?id=' + encodeURIComponent(c.id); }
+    catch (err) { $('eChar').textContent = err.message; }
+  });
+}
+document.addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    const c = me.characters.find((x) => x.id === del.dataset.del);
+    if (!confirm(`Delete ${c.name || 'this character'} for good?`)) return;
+    try { await post('/api/char', { token: me.code, action: 'delete', id: c.id }); refresh(); } catch (err) { alert(err.message); }
+    return;
+  }
+  if (e.target.closest('a, button, input, form.new')) return;
+  const open = e.target.closest('[data-open]');
+  if (open) location.href = '/build?id=' + encodeURIComponent(open.dataset.open);
+});
+async function drawOut() {
+  try {
+    const g = await (await fetch('/api/game')).json();
+    $('outGame').hidden = !g.name;
+    if (g.name) { $('ogName').textContent = g.name; $('ogMeta').textContent = g.round ? `Round ${g.round}` : 'Setting up'; $('ogDm').hidden = !g.local; }
+    $('foot').textContent = g.local ? 'You are on the DM\'s machine.' : '';
+  } catch { /* server restarting */ }
+}
+async function refresh() {
+  const code = store.get();
+  if (!code) { me = null; return draw(); }
+  try {
+    const r = await fetch('/api/me?token=' + encodeURIComponent(code));
+    if (r.status === 403) { store.set(null); me = null; return draw(); }
+    if (!r.ok) return;
+    me = await r.json();
+    if (NEXT && /^\/[a-z]/.test(NEXT)) { location.href = NEXT; return; }
+    // Don't wipe a half-typed new character when something changes elsewhere.
+    const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest('#fChar');
+    if (!typing) draw();
+  } catch { /* server restarting */ }
+}
+let t = null;
+new EventSource('/events').onmessage = () => { clearTimeout(t); t = setTimeout(refresh, 150); };
+refresh();
+</script>
+</body>
+</html>
