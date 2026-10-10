@@ -1,0 +1,159 @@
+{
+  "name": "The Greywood at Night",
+  "intro": "A moonless night in the Greywood. The warden walks the old trail with a hooded lantern.",
+  "lighting": {
+    "ambient": "dark"
+  },
+  "mindConfig": {
+    "deliberateAt": 2
+  },
+  "legend": {
+    ".": {
+      "name": "leaf litter",
+      "tags": []
+    },
+    ",": {
+      "name": "trail",
+      "tags": []
+    },
+    "b": {
+      "name": "bracken",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "bracken",
+        "height": 3
+      }
+    },
+    "t": {
+      "name": "old oak",
+      "tags": [
+        "impassable",
+        "opaque",
+        "cover-3q"
+      ],
+      "object": {
+        "kind": "tree",
+        "height": 40,
+        "stand": false
+      }
+    },
+    "~": {
+      "name": "stream",
+      "tags": [
+        "water"
+      ]
+    },
+    "=": {
+      "name": "plank bridge",
+      "tags": []
+    }
+  },
+  "rows": [
+    "..t.bb.t.tt....t.~~.b.t.tt",
+    "......t.t..b.b..b~...b....",
+    "...bt.....b.bt...~.b....bb",
+    ".tb..........t...~~b.bb...",
+    "t.t.b............~........",
+    "...bb.tb....bb...~.b.t..b.",
+    "t..b......b..t...~~t.....t",
+    "..tbt...t...bbt..~b.t.t.tb",
+    ",,,,t..,,,,,.tttt~.t.btb..",
+    "...,,,,,.tb,,,,,.~~..t..tt",
+    "bbb......t.....,,=,,......",
+    ".....t.t.t.t..t.t~.,,,,,,,",
+    "t.b........t..tbt~~tbb....",
+    ".....tt...tb.....~tb....bb",
+    "t..t....tbt.b..b.~........",
+    "..tb....t.b..b..b~~.tt...t",
+    "...t..t.btt.....b~.b.b.tt.",
+    "t...t..bt.t....tb~tttt.t.t"
+  ],
+  "creatures": {
+    "edda": {
+      "name": "Edda",
+      "side": "wardens",
+      "controller": "dm",
+      "pos": "B9",
+      "hp": 16,
+      "ac": 13,
+      "speed": 30,
+      "light": 15,
+      "stats": {
+        "str": 12,
+        "dex": 14,
+        "con": 12,
+        "int": 10,
+        "wis": 14,
+        "cha": 10
+      },
+      "skills": {
+        "perception": 5,
+        "survival": 4,
+        "stealth": 4
+      },
+      "attacks": [
+        {
+          "name": "Shortbow",
+          "bonus": 4,
+          "damage": "1d6+2",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        },
+        {
+          "name": "Hatchet",
+          "bonus": 3,
+          "damage": "1d6+1",
+          "type": "slashing",
+          "reach": 5
+        }
+      ],
+      "mind": {
+        "role": "forest warden",
+        "faction": "the Greywood Wardens",
+        "rank": 1,
+        "tier": "minion",
+        "facing": "E",
+        "patrol": [
+          "B9",
+          "M10",
+          "X12"
+        ],
+        "personality": [
+          "Seven years walking these woods; knows every sound they make.",
+          "Superstitious about the old oaks. Hums when nervous."
+        ],
+        "competencies": [
+          "tracking",
+          "woodcraft",
+          "archery"
+        ],
+        "disposition": {
+          "vigilance": 0.6,
+          "courage": 0.6,
+          "obedience": 0.6,
+          "curiosity": 0.6,
+          "impulsiveness": 0.3,
+          "sociability": 0.4
+        },
+        "motivations": [
+          "Walk the trail to the stream bridge and back; note anything unusual for the morning report.",
+          {
+            "description": "Poachers have been taking deer near the stream. Watch for them.",
+            "priority": 2
+          },
+          {
+            "description": "Get home before dawn.",
+            "source": "personal",
+            "priority": 1
+          }
+        ]
+      }
+    }
+  }
+}

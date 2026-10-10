@@ -1,0 +1,617 @@
+{
+  "name": "The Tollhouse at Night",
+  "intro": "Midnight at the old river tollhouse. Moonlight silvers the yard; a torch bobs along the fence line and another burns by the front door. Somewhere inside is Captain Morrow's ledger, the proof of who has been paying the river gangs. Nobody can know you were here.",
+  "dmNotes": "Goal: take the ledger from the strongbox at P9 (Morrow keeps the key; picking the lock is a DC 15 thieves' tools ruling, 1 round; on a fail: noise P9 \"a sharp metallic clack\" --loud 40). Doors: front (F9/F10), back (R3/R4, locked: DC 13 to pick), store (storehouse to guardroom), office-w (storehouse to office), office (guardroom to office). Window win1 in the guardroom's north wall. The storehouse is pitch dark, the guardroom lamp-lit, the office lit only by Morrow's candle; the yard is moonlit (dim). Bram (torch) holds the front door facing south; Tilly (torch) walks the fence. Fang the mastiff sleeps by the yard path at K11: keen hearing and smell, wakes to noise. Sergeant Hask plays cards in the guardroom; he trusts Tilly more than Bram. Captain Morrow sits in the office, sees nothing directly, and commands through reports. All five are NPC minds: run \"minds\", \"tick\" between the players' moves out of combat, and \"mind <id> act\" on their turns in combat. If Morrow believes the ledger is threatened he takes it and heads for the back door.",
+  "lighting": {
+    "ambient": "dim",
+    "areas": {
+      "D2:I9": "dark",
+      "J6:Q9": "dark",
+      "J2:Q5": "bright"
+    }
+  },
+  "mindConfig": {
+    "deliberateAt": 2
+  },
+  "legend": {
+    "g": {
+      "name": "grass",
+      "tags": []
+    },
+    ",": {
+      "name": "dirt path",
+      "tags": []
+    },
+    ".": {
+      "name": "flagstones",
+      "tags": []
+    },
+    "c": {
+      "name": "crates",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "climbable",
+        "flammable"
+      ],
+      "object": {
+        "kind": "crate",
+        "height": 4
+      }
+    },
+    "b": {
+      "name": "barrels",
+      "tags": [
+        "difficult",
+        "cover-half",
+        "flammable"
+      ],
+      "object": {
+        "kind": "barrel",
+        "height": 4
+      }
+    },
+    "T": {
+      "name": "card table",
+      "tags": [
+        "difficult",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "table",
+        "height": 3
+      }
+    },
+    "d": {
+      "name": "captain's desk",
+      "tags": [
+        "impassable",
+        "cover-half"
+      ],
+      "object": {
+        "kind": "desk",
+        "height": 3
+      }
+    },
+    "v": {
+      "name": "iron strongbox",
+      "tags": [
+        "impassable"
+      ],
+      "object": {
+        "kind": "strongbox",
+        "height": 3
+      },
+      "look": "A squat iron strongbox, padlocked."
+    },
+    "h": {
+      "name": "hedge",
+      "tags": [
+        "difficult",
+        "cover-3q",
+        "opaque"
+      ],
+      "object": {
+        "kind": "hedge",
+        "height": 6
+      }
+    }
+  },
+  "rows": [
+    "gggggggggggggggggggg",
+    "ggg.cc...........ggg",
+    "ggg.cc.....TT....ggg",
+    "ggg....c...TT....ggg",
+    "gggc.............ggg",
+    "ggg..b...........ggg",
+    "gggcc...c..d.....ggg",
+    "ggg..............ggg",
+    "ggg..bb........v.ggg",
+    "ggggg,gggggggggggggg",
+    "gghhg,ggggggggggghhg",
+    "gghhg,,,,,ggggggghhg",
+    "ggggggggg,gggggggggg",
+    "ggggggggg,gggggggggg"
+  ],
+  "walls": [
+    "D2-M2",
+    {
+      "from": "M2",
+      "to": "O2",
+      "kind": "window",
+      "id": "win1"
+    },
+    "O2-R2",
+    "D2-D10",
+    "R2-R3",
+    {
+      "from": "R3",
+      "to": "R4",
+      "kind": "door",
+      "id": "back",
+      "name": "back door",
+      "locked": true
+    },
+    "R4-R10",
+    "D10-F10",
+    {
+      "from": "F10",
+      "to": "G10",
+      "kind": "door",
+      "id": "front",
+      "name": "front door"
+    },
+    "G10-R10",
+    "J2-J4",
+    {
+      "from": "J4",
+      "to": "J5",
+      "kind": "door",
+      "id": "store",
+      "name": "storehouse door"
+    },
+    "J5-J7",
+    {
+      "from": "J7",
+      "to": "J8",
+      "kind": "door",
+      "id": "office-w",
+      "name": "office side door"
+    },
+    "J8-J10",
+    "J6-M6",
+    {
+      "from": "M6",
+      "to": "N6",
+      "kind": "door",
+      "id": "office",
+      "name": "office door"
+    },
+    "N6-R6"
+  ],
+  "creatures": {
+    "wren": {
+      "name": "Wren",
+      "side": "party",
+      "controller": "player",
+      "pos": "B11",
+      "size": "small",
+      "hp": 20,
+      "ac": 14,
+      "speed": 25,
+      "stats": {
+        "str": 8,
+        "dex": 16,
+        "con": 12,
+        "int": 13,
+        "wis": 12,
+        "cha": 14
+      },
+      "saves": {
+        "dex": 5,
+        "int": 3
+      },
+      "skills": {
+        "stealth": 7,
+        "acrobatics": 5,
+        "sleight-of-hand": 5,
+        "perception": 3,
+        "deception": 4
+      },
+      "attacks": [
+        {
+          "name": "Shortbow",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "range": [
+            80,
+            320
+          ]
+        },
+        {
+          "name": "Shortsword",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "resources": {
+        "arrows": 20
+      },
+      "notes": "Halfling Rogue 3. Sneak Attack +2d6 once per turn with advantage or an ally adjacent to the target (use --extra 2d6). Cunning Action: bonus-action Dash, Disengage, or Hide.",
+      "persona": "Wiry, sardonic, allergic to fair fights. Prefers high ground, flanks, and anything involving fire. Will loot mid-combat if she thinks nobody's looking.",
+      "descr": "a small hooded figure with a shortbow"
+    },
+    "rook": {
+      "name": "Rook",
+      "side": "party",
+      "controller": "llm",
+      "pos": "A12",
+      "hp": 28,
+      "ac": 18,
+      "speed": 30,
+      "initBonus": 1,
+      "stats": {
+        "str": 16,
+        "dex": 12,
+        "con": 14,
+        "int": 10,
+        "wis": 12,
+        "cha": 10
+      },
+      "saves": {
+        "str": 5,
+        "con": 4
+      },
+      "skills": {
+        "athletics": 5,
+        "perception": 3,
+        "intimidation": 2
+      },
+      "attacks": [
+        {
+          "name": "Longsword",
+          "bonus": 5,
+          "damage": "1d8+3",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Javelin",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "range": [
+            30,
+            120
+          ]
+        }
+      ],
+      "resources": {
+        "secondWind": 1,
+        "actionSurge": 1,
+        "javelins": 3,
+        "superiority": 4,
+        "heroic inspiration": 1
+      },
+      "notes": "Human Fighter 3 (Battle Master). Superiority dice: 4 x d8, regained on a short or long rest. Maneuvers: Precision Attack (add die to an attack roll after seeing it, before the result), Parry (reaction when hit by melee: reduce damage by die + DEX mod), Riposte (reaction when a creature misses him in melee: make a melee attack, add die to damage). Heroic Inspiration (human): one reroll per long rest. Second Wind: bonus action, heal 1d10+3. Action Surge: one extra action. Chain mail: disadvantage on Stealth, and loud.",
+      "noisy": true,
+      "descr": "a big man in chain mail with a longsword"
+    },
+    "bram": {
+      "side": "enemy",
+      "controller": "dm",
+      "hp": 11,
+      "ac": 16,
+      "speed": 30,
+      "stats": {
+        "str": 13,
+        "dex": 12,
+        "con": 12,
+        "int": 10,
+        "wis": 11,
+        "cha": 10
+      },
+      "skills": {
+        "perception": 2
+      },
+      "attacks": [
+        {
+          "name": "Spear",
+          "bonus": 3,
+          "damage": "1d6+1",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "name": "Bram",
+      "pos": "G11",
+      "light": 20,
+      "descr": "a gate guard with a spear and a torch",
+      "mind": {
+        "role": "door guard",
+        "faction": "the Toll Watch",
+        "rank": 1,
+        "tier": "minion",
+        "post": "G11",
+        "facing": "S",
+        "personality": [
+          "Bored, cold and counting the hours.",
+          "Hates being shouted at by Hask."
+        ],
+        "disposition": {
+          "vigilance": 0.4,
+          "courage": 0.5,
+          "obedience": 0.7,
+          "curiosity": 0.4,
+          "sociability": 0.6
+        },
+        "motivations": [
+          "Keep anyone from walking in the front door.",
+          {
+            "description": "Get through the night without trouble from the sergeant.",
+            "source": "personal",
+            "priority": 1
+          }
+        ]
+      }
+    },
+    "tilly": {
+      "side": "enemy",
+      "controller": "dm",
+      "hp": 11,
+      "ac": 16,
+      "speed": 30,
+      "stats": {
+        "str": 12,
+        "dex": 13,
+        "con": 12,
+        "int": 11,
+        "wis": 13,
+        "cha": 9
+      },
+      "skills": {
+        "perception": 3
+      },
+      "attacks": [
+        {
+          "name": "Spear",
+          "bonus": 3,
+          "damage": "1d6+1",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "name": "Tilly",
+      "pos": "S6",
+      "light": 20,
+      "descr": "a sharp-eyed guard with a spear and a torch",
+      "mind": {
+        "role": "patrolling guard",
+        "faction": "the Toll Watch",
+        "rank": 1,
+        "tier": "minion",
+        "facing": "N",
+        "patrol": [
+          "S1",
+          "B1",
+          "B10",
+          "S10"
+        ],
+        "personality": [
+          "Sharp, ambitious, wants Hask's job."
+        ],
+        "disposition": {
+          "vigilance": 0.7,
+          "courage": 0.6,
+          "obedience": 0.6,
+          "curiosity": 0.7,
+          "sociability": 0.5
+        },
+        "motivations": [
+          "Walk the fence line and look into anything odd.",
+          {
+            "description": "Impress the captain.",
+            "source": "personal",
+            "priority": 1
+          }
+        ]
+      }
+    },
+    "fang": {
+      "name": "Fang",
+      "side": "enemy",
+      "controller": "dm",
+      "pos": "K11",
+      "hp": 5,
+      "ac": 12,
+      "speed": 40,
+      "stats": {
+        "str": 13,
+        "dex": 14,
+        "con": 12,
+        "int": 3,
+        "wis": 12,
+        "cha": 7
+      },
+      "skills": {
+        "perception": 3
+      },
+      "conditions": [
+        {
+          "name": "asleep"
+        }
+      ],
+      "descr": "a big grey mastiff",
+      "attacks": [
+        {
+          "name": "Bite",
+          "bonus": 3,
+          "damage": "1d6+1",
+          "type": "piercing",
+          "reach": 5
+        }
+      ],
+      "mind": {
+        "role": "guard dog",
+        "faction": "the Toll Watch",
+        "rank": 0,
+        "tier": "minion",
+        "post": "K11",
+        "facing": "S",
+        "fov": "all",
+        "bark": true,
+        "personality": [
+          "A dog. Loyal, territorial, easily bribed with meat. Cannot talk: it barks."
+        ],
+        "senses": {
+          "keen": true,
+          "keenHearing": true,
+          "scent": 30
+        },
+        "disposition": {
+          "vigilance": 0.8,
+          "courage": 0.7,
+          "obedience": 0.5,
+          "curiosity": 0.8,
+          "sociability": 0.9
+        },
+        "motivations": [
+          "Sleep. Bark at strangers."
+        ]
+      }
+    },
+    "hask": {
+      "side": "enemy",
+      "controller": "dm",
+      "hp": 30,
+      "ac": 17,
+      "speed": 30,
+      "stats": {
+        "str": 16,
+        "dex": 13,
+        "con": 14,
+        "int": 10,
+        "wis": 12,
+        "cha": 11
+      },
+      "skills": {
+        "perception": 3,
+        "athletics": 5
+      },
+      "attacks": [
+        {
+          "name": "Longsword",
+          "bonus": 5,
+          "damage": "1d8+3",
+          "type": "slashing",
+          "reach": 5
+        },
+        {
+          "name": "Heavy Crossbow",
+          "bonus": 3,
+          "damage": "1d10+1",
+          "type": "piercing",
+          "range": [
+            100,
+            400
+          ]
+        }
+      ],
+      "name": "Sergeant Hask",
+      "pos": "K3",
+      "attacksPerAction": 2,
+      "descr": "a scarred sergeant in a brigandine",
+      "mind": {
+        "role": "sergeant of the watch",
+        "faction": "the Toll Watch",
+        "rank": 2,
+        "tier": "elite",
+        "post": "K3",
+        "facing": "E",
+        "personality": [
+          "Gruff veteran, losing at cards.",
+          "Trusts Tilly, thinks Bram is a fool."
+        ],
+        "disposition": {
+          "vigilance": 0.3,
+          "courage": 0.8,
+          "obedience": 0.8,
+          "curiosity": 0.4,
+          "sociability": 0.7
+        },
+        "relationships": {
+          "bram": {
+            "trust": 0.3
+          },
+          "tilly": {
+            "trust": 0.8
+          }
+        },
+        "motivations": [
+          "Keep the watch in order and the captain happy.",
+          {
+            "description": "Win back what you lost at cards.",
+            "source": "personal",
+            "priority": 1
+          }
+        ]
+      }
+    },
+    "morrow": {
+      "side": "enemy",
+      "controller": "dm",
+      "hp": 27,
+      "ac": 15,
+      "speed": 30,
+      "stats": {
+        "str": 11,
+        "dex": 15,
+        "con": 12,
+        "int": 14,
+        "wis": 14,
+        "cha": 16
+      },
+      "skills": {
+        "perception": 4,
+        "insight": 4
+      },
+      "attacks": [
+        {
+          "name": "Rapier",
+          "bonus": 5,
+          "damage": "1d8+3",
+          "type": "piercing",
+          "reach": 5,
+          "finesse": true
+        },
+        {
+          "name": "Hand Crossbow",
+          "bonus": 5,
+          "damage": "1d6+3",
+          "type": "piercing",
+          "range": [
+            30,
+            120
+          ]
+        }
+      ],
+      "name": "Captain Morrow",
+      "pos": "M8",
+      "keys": [
+        "back"
+      ],
+      "light": 10,
+      "descr": "an officer in a fine blue coat",
+      "mind": {
+        "role": "captain of the Toll Watch",
+        "faction": "the Toll Watch",
+        "rank": 3,
+        "tier": "commander",
+        "post": "M8",
+        "facing": "N",
+        "personality": [
+          "Cold, clever, corrupt.",
+          "The ledger in the strongbox would hang him."
+        ],
+        "disposition": {
+          "vigilance": 0.6,
+          "courage": 0.4,
+          "obedience": 0.2,
+          "curiosity": 0.5,
+          "sociability": 0.4
+        },
+        "motivations": [
+          {
+            "description": "Nobody touches the ledger in the strongbox (P9). If it's threatened, take it and get out the back door.",
+            "priority": 3,
+            "source": "personal"
+          },
+          "Run the watch through your sergeant; stay in the office."
+        ]
+      }
+    }
+  }
+}
