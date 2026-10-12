@@ -10,8 +10,11 @@
 //
 // While open the wheel owns its clicks, keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
 // stops a pointerup (camera controls must see every button release); a click it used is marked `ev.pwHandled`.
-// The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds into the target
-// without closing. Keys still work, clicks pass through to the page, and coming back inside the ring unfolds it.
+// The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds at once without
+// closing: it greys, shrinks to 0.6 and fades out. While folded it fades back in (still small) as the pointer comes
+// near, and re-entering the ring springs it back to full. Keys still work and clicks pass through while folded.
+// A click inside the ring goes to onInnerClick(ev) first; if that returns true (the host picked something else
+// there) the wheel leaves it, otherwise it backs out.
 
 const CSS = `
 .pw { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 20; pointer-events: none; font: 13px/1.15 system-ui, sans-serif; }
@@ -52,7 +55,7 @@ const ease = (t) => 1 - Math.pow(1 - t, 3);
 const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang just under them.
-const D = 34, GAP = 6, GRACE = 140;   // GRACE: ms outside the ring (and off every icon) before the wheel folds
+const D = 34, GAP = 6, NEAR = 140, GRACE = 10;   // NEAR: px out where a folded wheel starts fading back in; GRACE: see pointermove
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // The caption: the slot's `short` if it has one, else its title, cut to the first word when long ("Approach & strike"
@@ -67,7 +70,7 @@ function tipHtml(s, root) {
     + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '');
 }
 
-export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, spinMs = () => 150 } = {}) {
+export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, spinMs = () => 150 } = {}) {
   if (!document.getElementById('pw-css')) document.head.insertAdjacentHTML('beforeend', `<style id="pw-css">${CSS}</style>`);
   const el = document.createElement('div');
   el.className = 'pw'; el.hidden = true;
@@ -79,7 +82,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function open(menu, anchor) {
     close(true);
-    S = { stack: [menu], anchor, folded: false, fold: 0, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
+    S = { stack: [menu], anchor, folded: false, fold: 0, near: 0, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
     el.hidden = false;
     build();
     spin(+1, .5);
@@ -124,16 +127,18 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     S.R = Math.max(70, Math.min(120, (a.r || 30) + D / 2 + GAP));   // 70: the least that keeps neighbouring captions apart
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
-    if (S.outSince && !S.folded && now - S.outSince > GRACE) S.folded = true;   // the pointer stopped just outside
-    S.fold += ((S.folded ? 1 : 0) - S.fold) * .3;
-    S.r = S.R * (.6 + .4 * ease(g)) * (1 - .55 * S.fold);
-    el.style.opacity = 1 - S.fold;
-    el.style.visibility = S.fold > .97 ? 'hidden' : '';
+    S.fold += ((S.folded ? 1 : 0) - S.fold) * .35;
+    S.r = S.R;
+    S.scale = (.6 + .4 * ease(g)) * (1 - .4 * S.fold);
+    const op = 1 - S.fold + S.fold * .5 * S.near;
+    el.style.opacity = op;
+    el.style.filter = S.fold > .01 ? `grayscale(${S.fold.toFixed(2)})` : '';
+    el.style.visibility = op < .02 ? 'hidden' : '';
     // keep the ring (not every label) on screen, so it stays centred on the target as long as possible
     const padX = S.R + 52, padY = S.R + 40;
     S.x = Math.max(padX, Math.min(innerWidth - padX, a.x));
     S.y = Math.max(padY, Math.min(innerHeight - padY, a.y));
-    el.style.transform = `translate(${S.x}px, ${S.y}px)`;
+    el.style.transform = `translate(${S.x}px, ${S.y}px) scale(${S.scale})`;
     place();
     S.raf = requestAnimationFrame(frame);
   }
@@ -167,12 +172,14 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     tip.style.transform = `translate(${x}px, ${y}px)`;
   }
 
-  // The slot under the pointer: its icon circle or its caption, plus a few px of slack. Else 0.
-  function hit(mx, my) {
+  // The slot at (mx, my) where the wheel is at full size (icons never move, so a folded wheel's would-be icons count
+  // too): its icon circle or its caption, grown by `slack` px. Else 0.
+  function hit(mx, my, slack = 4) {
     for (const b of S.btns) {
-      const i = b.querySelector('.i').getBoundingClientRect(), q = b.querySelector('.c').getBoundingClientRect();
-      if (Math.hypot(mx - (i.left + i.width / 2), my - (i.top + i.height / 2)) < i.width / 2 + 4
-        || (mx > q.left - 3 && mx < q.right + 3 && my > q.top - 3 && my < q.bottom + 3)) return +b.dataset.k;
+      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t);
+      const c = b.querySelector('.c'), cw = c.offsetWidth / 2, cy = iy + D / 2 + 2;
+      if (Math.hypot(mx - ix, my - iy) < D / 2 + slack
+        || (Math.abs(mx - ix) < cw + slack && my > cy - slack && my < cy + c.offsetHeight + slack)) return +b.dataset.k;
     }
     return 0;
   }
@@ -195,7 +202,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     close(true);
     onLeaf(s);
   }
-  function drill(menu) { S.folded = false; S.outSince = 0; S.stack.push(menu); build(); spin(+1); }
+  function drill(menu) { S.folded = false; S.stack.push(menu); build(); spin(+1); }
   function back() {
     if (!S) return;
     if (S.stack.length === 1) return close();
@@ -207,11 +214,13 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointermove', (ev) => {
       last = { x: ev.clientX, y: ev.clientY };
       if (ev.buttons) return;   // dragging the camera: leave the wheel as it is
-      // The ring is the cutoff. Being on an icon or caption holds the wheel open past it; between them there's a short
-      // grace, so sliding from one outer caption to the next doesn't fold it. Once folded, only the ring reopens it.
-      const k = S.folded ? 0 : hit(ev.clientX, ev.clientY), out = away(ev.clientX, ev.clientY);
-      if (k || out < (S.folded ? -4 : 0)) { S.outSince = 0; S.folded = false; }
-      else if (!S.folded) { S.outSince ||= performance.now(); if (performance.now() - S.outSince > GRACE) S.folded = true; }
+      // The ring is the cutoff; an icon or caption holds it open past it. Folding is instant (the look animates).
+      // Open = inside the full-size ring or on a full-size icon/caption, plus GRACE px (a few more to stay open, so
+      // the edge doesn't flicker). A folded wheel pops back to full as soon as the pointer is there.
+      const out = away(ev.clientX, ev.clientY), g = GRACE + (S.folded ? 0 : 4);
+      S.folded = out > g && !hit(ev.clientX, ev.clientY, g);
+      const k = S.folded ? 0 : hit(ev.clientX, ev.clientY);
+      S.near = Math.max(0, Math.min(1, 1 - out / NEAR));
       setHot(k);
     }],
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
@@ -220,7 +229,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
       const k = hit(ev.clientX, ev.clientY);
       if (k) { ev.pwHandled = true; return choose(k, ev.shiftKey); }
-      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; return back(); }
+      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; return onInnerClick(ev) || back(); }
       close();
     }],
     ['contextmenu', (ev) => {
@@ -234,5 +243,5 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }],
   ];
 
-  return { open, close: () => close(), back, get isOpen() { return !!S; }, get folded() { return !!S?.folded; } };
+  return { open, close: () => close(), back, get isOpen() { return !!S; }, get folded() { return !!S?.folded; }, get hot() { return S?.hot || 0; } };
 }

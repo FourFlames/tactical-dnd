@@ -525,7 +525,8 @@ function updateMarkers() {
     } else {
       const ramp = Math.min(1, Math.max(0, (60 - pillD) / 30));
       if (W?.ent === e) want = busy ? 0 : 1;   // folded wheel: its pill stays as the selection display
-      else if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
+      else if (busy) want = 0;   // re-aiming inside an open wheel: the floor highlight shows it; a pill would sit on the wheel
+      else if (s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = !busy && s.front;
     }
     if (e.me && s.front && !busy && B?.ent !== e) want = Math.max(want, .55);   // you are always on the map, dimmer from afar
@@ -735,7 +736,9 @@ function squareRoot(s) {
 // The ring is centred on what was picked and sized from its on-screen footprint, so the body stays visible inside it.
 let W = null;   // { ent } or { square }
 const wheelUp = () => !!W && !pw.folded;   // open and unfolded: it owns the pointer
-const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel() });
+const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel(),
+  // inside the ring, a click on another body (a square-mate, a flier above) switches the wheel to it
+  onInnerClick: (ev) => { const e = bodyAt(ev.clientX, ev.clientY, lastBody); if (!e || e === W?.ent) return false; openWheelOn(e); return true; } });
 const camRight = new THREE.Vector3();
 function bodyAnchor(e) { const h = shapeOf(e); return { x: h.x, y: h.y, r: Math.max(h.rx, h.ry) }; }
 function squareAnchor(c, r) {
@@ -833,9 +836,10 @@ function cellAt(x, y) {
 }
 let lastBody = null;
 function updateHover() {
-  const free = !wheelUp() && !mouse.ui && !mouse.btn && mouse.x > -1e3;
+  // hover keeps working while a wheel is open, except over its icons, so you can re-aim within the selected square
+  const free = !(wheelUp() && pw.hot) && !mouse.ui && !mouse.btn && mouse.x > -1e3;
   if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
-  hoverEnt = wheelUp() ? null : mkHover || lastBody;
+  hoverEnt = mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
   drawHits();
 }
