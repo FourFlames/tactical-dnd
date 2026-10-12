@@ -546,8 +546,17 @@ cmd('initiative', 'initiative                         roll initiative for everyo
   s.round = 1; s.turnIdx = 0; s.turn = {};
   const first = s.creatures[s.turnOrder[0]];
   const t = `Roll for initiative! ${rolls.join(', ')}. Round 1 begins: ${first.name}'s turn.`;
-  C.appendLog(s, 'turn', t); console.log(t + turnHint(s)); return s;
+  const seen = seenNow(s);
+  C.appendLog(s, 'turn', t, { id: s.turnOrder[0], unseen: !seen(s.turnOrder[0]),
+    rolls: s.turnOrder.map((id) => ({ id, name: s.creatures[id].name, init: s.creatures[id].init, seen: seen(id) })) });
+  console.log(t + turnHint(s)); return s;
 });
+
+// Whether the party can see a creature right now. The player view hides the turns of the rest.
+function seenNow(s) {
+  const vis = C.visibleSet(s);
+  return (id) => { const c = s.creatures[id]; return !!c && (c.side === 'party' || (vis.has(c.pos) && !c.hidden)); };
+}
 
 function turnHint(s) {
   const id = s.turnOrder[s.turnIdx], c = s.creatures[id];
@@ -580,7 +589,7 @@ cmd('next', 'next                               end the current turn, start the 
   let t = `Round ${s.round}: ${c.name}'s turn.`;
   if (expired.length) t += ` (${expired.join(', ')} wore off.)`;
   if (burning) t += ` ${c.name} starts the turn in fire!`;
-  C.appendLog(s, 'turn', t); console.log(t + turnHint(s)); return s;
+  C.appendLog(s, 'turn', t, { id, unseen: !seenNow(s)(id) }); console.log(t + turnHint(s)); return s;
 });
 
 cmd('deathsave', 'deathsave <id>', (s, { pos }) => {
@@ -1227,6 +1236,7 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
   const m = mindOf(s, id);
   if (!verb) { console.log(Minds.inspect(s, id)); return null; }
   if (verb === 'brief') { console.log(Minds.brief(s, id) + `\n\n(Route: npc agent, model ${Minds.modelFor(s, m)}.)`); return null; }
+  if (verb === 'menu') { console.log(Minds.menuText(s, id, rest[0] || 'talk')); return null; }
   if (verb === 'decide') {
     let raw = rest.join(' ');
     if (flags.file) raw = fs.readFileSync(flags.file === true || flags.file === '-' ? 0 : flags.file, 'utf8');

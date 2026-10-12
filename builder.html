@@ -282,7 +282,7 @@ async function save() {
     const v = await api({ action: 'save', build });
     sentSeq = seq; lastSaved = Date.now();
     adopt(v, editSeq !== seq);
-    if (editSeq === seq) render(); else { renderTop(); renderSheet(); }
+    if (editSeq === seq) render(true); else { renderTop(); renderSheet(); }
     $('tSaved').textContent = 'saved';
   } catch (e) { toast(e.message, true); $('tSaved').textContent = 'not saved'; }
   saving = false;
@@ -374,8 +374,11 @@ function inlineSug(path) {
 const wouldPick = (path, id) => { const v = sugValue(path); return v !== undefined && (Array.isArray(v) ? v.includes(id) : v === id); };
 
 // ---------- rendering ----------
-function render() {
-  renderTop(); renderNav(); renderMain(); renderSheet();
+function render(preserveFocus = false) {
+  renderTop(); renderNav();
+  // Autosave must not replace the editor while the player is still using it.
+  if (!preserveFocus || !$('main').contains(document.activeElement)) renderMain();
+  renderSheet();
 }
 function renderTop() {
   $('tName').textContent = build.name || 'Unnamed hero';

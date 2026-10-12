@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Battlemap</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+SC:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+SC:wght@500;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -40,7 +40,8 @@
 
   /* map side */
   .stage { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 18px 22px 12px; }
-  .topbar { display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px; }
+  .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+  .topbar .title { min-width: 0; }
   .title { font-family: var(--display); font-size: 28px; letter-spacing: .04em; color: var(--gold); margin: 0; font-weight: 700; }
   .home { color: var(--ink-faint); text-decoration: none; font-size: 18px; align-self: center; }
   .home:hover { color: var(--gold); }
@@ -50,8 +51,8 @@
   .toggle a { padding: 5px 14px; color: var(--ink-dim); text-decoration: none; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
   .toggle a.on { background: var(--panel-2); color: var(--ink); }
   .toggle a.dm.on { color: var(--secret); }
-  .mapwrap { flex: 1; min-height: 360px; display: flex; align-items: center; justify-content: center; }
-  svg.map { width: 100%; height: 100%; max-height: calc(100vh - 110px); }
+  .mapwrap { position: relative; flex: 1; min-height: 360px; display: flex; align-items: center; justify-content: center; }
+  svg.map { position: absolute; inset: 0; width: 100%; height: 100%; }
   .map3d { width: 100%; height: 100%; min-height: 360px; border-radius: 8px; overflow: hidden; cursor: grab; }
   .map3d:active { cursor: grabbing; }
   .tools { display: flex; gap: 6px; }
@@ -62,7 +63,7 @@
     .topbar { flex-wrap: wrap; gap: 8px 12px; }
     .title { font-size: 22px; }
     .mapwrap { min-height: 0; }
-    svg.map { height: auto; }
+    svg.map { position: static; height: auto; }
     .map3d { height: 62vh; }
   }
   .hover { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); height: 18px; margin-top: 6px; }
@@ -100,13 +101,21 @@
   .log { flex: 1; overflow-y: auto; padding: 12px 18px 18px; min-height: 200px; }
   .entry { padding: 6px 0; border-bottom: 1px dashed #2c2a23; line-height: 1.45; font-size: 13px; }
   .entry .r { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); margin-right: 6px; }
-  .entry.narration, .entry.scene { font-family: var(--display); font-size: 17px; color: var(--ink); line-height: 1.35; }
+  .entry.narration, .entry.scene { font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 500; font-size: 17px; color: var(--ink); line-height: 1.4; }
   .entry.scene { color: var(--gold); }
   .entry.ruling { color: var(--gold); }
   .entry.attack, .entry.damage, .entry.roll { color: var(--ink-dim); font-family: var(--mono); font-size: 12px; }
   .entry.turn { color: var(--ink); font-weight: 600; font-size: 12px; letter-spacing: .03em; padding-top: 12px; }
   .entry.secret { color: var(--secret); font-style: italic; }
+  .entry.turn.lurk { color: var(--secret); font-weight: 500; font-style: italic; }
   .entry.move, .entry.terrain, .entry.condition, .entry.action, .entry.spawn, .entry.heal { color: var(--ink-dim); font-size: 12px; }
+  .loggroup.linked { border-left: 2px solid var(--gold); padding-left: 10px; margin: 10px 0; background: var(--panel-2); border-radius: 0 4px 4px 0; }
+  .loggroup.linked .entry { padding-right: 8px; }
+  .loggroup.linked .entry:last-child { border-bottom: 0; }
+  .loglink { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; padding: 7px 8px 2px 0; color: var(--ink-faint); font: 10px var(--sans); }
+  .loglink button { background: none; border: 0; padding: 2px 0; color: var(--gold); font: inherit; text-decoration: underline; cursor: pointer; }
+  .logtabs button:focus-visible, .loglink button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .logempty { color: var(--ink-faint); font: 13px/1.5 var(--sans); padding: 14px 0; }
   .empty { padding: 60px; text-align: center; color: var(--ink-dim); font-family: var(--display); font-size: 22px; }
   .entry.declare { color: var(--party); font-size: 13px; }
   .act textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 14px/1.4 var(--sans); }
@@ -250,12 +259,52 @@
   .offer p { margin: 0 0 10px; line-height: 1.45; color: var(--ink); }
   .offer .dc { font-family: var(--mono); font-size: 12px; color: var(--gold); margin-bottom: 12px; }
 
-  /* chronicle tabs */
+  /* Independent chronicle filters */
   .logtabs { display: flex; gap: 4px; padding: 12px 18px 0; border-bottom: 1px solid var(--line); }
   .logtabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-faint); font: 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; padding: 4px 8px 8px; cursor: pointer; position: relative; }
   .logtabs button.on { color: var(--ink); border-bottom-color: var(--gold); }
   .logtabs button i { display: none; position: absolute; top: 2px; right: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
   .logtabs button.new i { display: block; }
+
+  /* initiative strip (top centre, Divinity-style): the current creature large, then the rest of the round */
+  .initbar { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: -4px 0 8px; min-height: 0; }
+  .initbar:empty { display: none; }
+  .portraits { display: flex; align-items: flex-start; gap: 6px; max-width: 100%; overflow-x: auto; padding: 4px 6px 6px; scrollbar-width: thin; }
+  .por { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink); }
+  .por .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #1b1a15; border: 2px solid var(--c, var(--neutral));
+    font: 700 15px var(--display); letter-spacing: .02em; box-shadow: 0 3px 10px rgba(0, 0, 0, .45); transition: transform .15s; }
+  .por:hover .face { transform: translateY(-2px); }
+  .por .hpb { width: 34px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .por .hpb i { display: block; height: 100%; }
+  .por.cur .face { width: 56px; height: 56px; font-size: 20px; border-width: 3px; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gold), 0 6px 18px rgba(0, 0, 0, .55); }
+  .por.cur .hpb { width: 48px; }
+  .por.cur.pop .face { animation: porpop .45s cubic-bezier(.2, 1.4, .4, 1); }
+  @keyframes porpop { from { transform: scale(.6); } }
+  .por.down .face { opacity: .45; border-style: dashed; }
+  .por.hid .face { border-style: dashed; }
+  .por.mine .face { background: #1d2a27; }
+  .por.unseen .face { border: 2px dashed var(--ink-faint); color: var(--ink-faint); background: #0f0e0b; font-family: var(--sans); font-size: 16px; }
+  .por.unseen.cur .face { border-color: var(--secret); color: var(--secret); animation: lurk 1.4s ease-in-out infinite; }
+  @keyframes lurk { 50% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--secret), 0 0 22px rgba(169, 139, 214, .55); } }
+  .rdiv { flex: none; align-self: center; margin: 0 4px 10px; font: 10px var(--mono); color: var(--ink-faint); border-left: 1px solid var(--line); padding-left: 8px; height: 30px; display: flex; align-items: center; }
+  .initcap { font: 12px var(--sans); color: var(--ink-dim); letter-spacing: .04em; }
+  .initcap b { color: var(--gold); font-weight: 600; }
+  .initcap .lurk { color: var(--secret); }
+
+  /* turn banner: a short call-out whenever the turn changes */
+  .turnbanner { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); z-index: 7; pointer-events: none;
+    font: 700 30px var(--display); letter-spacing: .06em; color: var(--gold); text-shadow: 0 2px 14px #000, 0 0 2px #000; white-space: nowrap;
+    animation: banner 1.7s ease-out forwards; }
+  .turnbanner.lurk { color: var(--secret); font-size: 24px; }
+  @keyframes banner { 0% { opacity: 0; transform: translate(-50%, -30%) scale(.9) } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1) } 75% { opacity: 1 } 100% { opacity: 0 } }
+
+  /* 2D zoom controls */
+  .zoombox { position: absolute; right: 10px; bottom: 10px; z-index: 4; display: flex; gap: 4px; }
+  .zoombox button { width: 30px; height: 30px; background: rgba(28, 27, 22, .9); border: 1px solid var(--line); color: var(--ink); border-radius: 6px; font: 15px var(--sans); cursor: pointer; }
+  .zoombox button:hover { border-color: var(--gold); }
+  .zoombox button.fit { width: auto; padding: 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .mapwrap.pannable { cursor: grab; touch-action: none; }
+  .mapwrap.panning { cursor: grabbing; }
 </style>
 </head>
 <body>
@@ -279,8 +328,12 @@
         <a id="tDm" class="dm">DM</a>
       </div>
     </div>
+    <div class="initbar" id="initbar"></div>
     <div class="mapzone">
       <div class="mapwrap" id="mapwrap"></div>
+      <div class="zoombox" id="zoombox" hidden>
+        <button id="zmIn" title="Zoom in (scroll wheel)">+</button><button id="zmOut" title="Zoom out">−</button><button class="fit" id="zmFit" title="Fit the whole map">Fit</button>
+      </div>
       <!-- Floating over the map: the cursor card (top right) and the player's input (bottom left). -->
       <div class="float lookfloat" id="curSec" hidden>
         <div class="fhead">
@@ -314,11 +367,10 @@
     <div class="hover" id="hover"></div>
   </main>
   <aside class="side">
-    <div class="section"><div class="label">Initiative</div><div class="order" id="order"></div></div>
     <div class="section" id="cardSec" hidden><div class="card" id="card"></div></div>
-    <div class="logtabs" id="logtabs">
-      <button data-tab="story">Narration<i></i></button>
-      <button data-tab="combat">Combat<i></i></button>
+    <div class="logtabs" id="logtabs" role="group" aria-label="Log filters">
+      <button type="button" data-filter="story" aria-pressed="true">Narration<i aria-hidden="true"></i></button>
+      <button type="button" data-filter="combat" aria-pressed="true">Combat<i aria-hidden="true"></i></button>
     </div>
     <div class="log" id="log"></div>
   </aside>
@@ -341,6 +393,7 @@ document.getElementById(THREE_D ? 't3d' : 't2d').classList.add('on');
 if (SEAT) document.getElementById('toggle').style.display = 'none';
 let me = null;
 const CELL = 48;
+const TOUCH = matchMedia('(hover: none)').matches;
 const NS = 'http://www.w3.org/2000/svg';
 let state = null, selected = null, lastLogLen = 0, svg = null, tokLayer = null, fxLayer = null;
 let map3d = null, map3dLoading = null, map3dError = null;
@@ -406,7 +459,50 @@ function buildSvg(v) {
   svg.addEventListener('click', (e) => { const c = cellAt(e); pointCell(c.x, c.y); });
   svg.addEventListener('mouseleave', () => { document.getElementById('hover').textContent = ''; hoverPath(-1, -1); });
   wrap.appendChild(svg);
+  view2d = { base: { x: -pad, y: -pad, w: W + pad + 4, h: H + pad + 4 } };
+  view2d.vb = Object.assign({}, view2d.base);
+  wirePanZoom(wrap);
 }
+
+// ---------- 2D zoom and pan ----------
+// The wheel zooms toward the pointer; dragging pans once zoomed in. A drag never counts as a click.
+let view2d = null;
+function setViewBox(vb) {
+  const b = view2d.base, w = Math.max(b.w / 10, Math.min(b.w, vb.w)), h = w * (b.h / b.w);
+  const cx = Math.max(b.x, Math.min(b.x + b.w, vb.x + vb.w / 2)), cy = Math.max(b.y, Math.min(b.y + b.h, vb.y + vb.h / 2));
+  view2d.vb = w >= b.w ? Object.assign({}, b) : { x: cx - w / 2, y: cy - h / 2, w, h };
+  svg.setAttribute('viewBox', `${view2d.vb.x} ${view2d.vb.y} ${view2d.vb.w} ${view2d.vb.h}`);
+  document.getElementById('mapwrap').classList.toggle('pannable', view2d.vb.w < b.w);
+}
+function zoomBy(f, clientX, clientY) {
+  if (!svg || !view2d) return;
+  const vb = view2d.vb, r = svg.getBoundingClientRect();
+  // The point under the pointer (or the middle) stays put.
+  const pt = svg.createSVGPoint(); pt.x = clientX ?? r.left + r.width / 2; pt.y = clientY ?? r.top + r.height / 2;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  setViewBox({ x: p.x - (p.x - vb.x) * f, y: p.y - (p.y - vb.y) * f, w: vb.w * f, h: vb.h * f });
+}
+function wirePanZoom(wrap) {
+  svg.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0015), e.clientX, e.clientY); }, { passive: false });
+  let drag = null, dragged = false;
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || view2d.vb.w >= view2d.base.w) return;
+    drag = { x: e.clientX, y: e.clientY, vb: Object.assign({}, view2d.vb), k: view2d.vb.w / svg.getBoundingClientRect().width };
+    dragged = false;
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!dragged && Math.hypot(dx, dy) < 5) return;
+    if (!dragged) { dragged = true; svg.setPointerCapture?.(e.pointerId); wrap.classList.add('panning'); }
+    setViewBox({ x: drag.vb.x - dx * drag.k, y: drag.vb.y - dy * drag.k, w: drag.vb.w, h: drag.vb.h });
+  });
+  window.addEventListener('pointerup', () => { drag = null; wrap.classList.remove('panning'); });
+  svg.addEventListener('click', (e) => { if (dragged) { e.stopPropagation(); e.preventDefault(); dragged = false; } }, true);
+}
+document.getElementById('zmIn').addEventListener('click', () => zoomBy(0.7));
+document.getElementById('zmOut').addEventListener('click', () => zoomBy(1 / 0.7));
+document.getElementById('zmFit').addEventListener('click', () => view2d && setViewBox(view2d.base));
 
 function hoverCell(x, y) {
   hoverPath(x, y);
@@ -539,60 +635,157 @@ function drawTrail(entry) {
   el('polyline', { points: pts, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3, 'stroke-linecap': 'round', class: 'trail' }, fxLayer);
 }
 
-function hpCell(c) {
-  if (c.hp === undefined) return `<div class="hp">${esc(c.health || '')}</div>`;
-  const f = Math.max(0, c.hp / c.maxHp) * 100;
-  return `<div class="hp">${c.hp}/${c.maxHp}<div class="bar"><i style="width:${f}%;background:${f > 50 ? '#6fbf73' : f > 25 ? '#d8b45a' : '#d25b4a'}"></i></div></div>`;
+// Health as a fraction: exact for the party (and the DM), a rough read for everyone else.
+const HEALTH = { healthy: 1, bloodied: .5, 'near death': .2, down: 0 };
+function hpFrac(c) { return c.hp !== undefined ? Math.max(0, Math.min(1, c.hp / c.maxHp)) : HEALTH[c.health] ?? 1; }
+const hpColor = (f) => f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a';
+
+// The initiative strip: starting from whoever is acting, through the end of the round, a round
+// marker, then round to the current creature again. A '?' is creatures acting out of sight.
+let lastCurrent;
+function drawInit(v) {
+  const bar = document.getElementById('initbar');
+  const order = v.turnOrder || [];
+  if (!order.length) { bar.innerHTML = ''; lastCurrent = undefined; return; }
+  const curKey = v.current || (v.currentUnseen ? '?' : null);
+  let start = order.indexOf(curKey);
+  if (start < 0) start = 0;
+  const labels = tokenLabels(v);
+  const changed = lastCurrent !== undefined && lastCurrent !== `${v.round}:${curKey}`;
+  const por = (id, isCur) => {
+    if (id === '?') return `<button class="por unseen${isCur ? ' cur' : ''}" title="Out of sight"><span class="face">?</span><span class="hpb"></span></button>`;
+    const c = v.creatures[id];
+    const f = hpFrac(c), down = f <= 0;
+    if (down && c.side !== 'party') return '';
+    const mine = me && me.creatures && me.creatures.includes(id);
+    const tip = `${c.name}${c.hp !== undefined ? ` · ${c.hp}/${c.maxHp} HP` : c.health ? ` · ${c.health}` : ''}${c.hidden ? ' · hidden' : ''}`;
+    return `<button class="por${isCur ? ' cur' : ''}${isCur && changed ? ' pop' : ''}${down ? ' down' : ''}${c.hidden ? ' hid' : ''}${mine ? ' mine' : ''}" data-id="${id}" title="${esc(tip)}" style="--c:${SIDE_COLOR[c.side] || SIDE_COLOR.neutral}">`
+      + `<span class="face">${esc(labels[id] || '?')}</span><span class="hpb"><i style="width:${f * 100}%;background:${hpColor(f)}"></i></span></button>`;
+  };
+  const rest = order.slice(start), wrap = order.slice(0, start);
+  const html = rest.map((id, i) => por(id, i === 0)).join('')
+    + (wrap.length ? `<span class="rdiv">R${v.round + 1}</span>` + wrap.map((id) => por(id, false)).join('') : '');
+  const c = v.current && v.creatures[v.current];
+  const cap = c ? `Round ${v.round} · <b>${esc(c.name)}</b>${me && me.creatures && me.creatures.includes(v.current) ? ' (you)' : ''}`
+    : v.currentUnseen ? `Round ${v.round} · <span class="lurk">something moves out of sight…</span>` : `Round ${v.round}`;
+  bar.innerHTML = `<div class="portraits">${html}</div><div class="initcap">${cap}</div>`;
+  bar.querySelectorAll('.por[data-id]').forEach((b) => b.addEventListener('click', () => pointCreature(b.dataset.id, true)));
+  if (changed) turnBanner(c ? `${c.name}'s turn` : 'Something moves out of sight…', !c);
+  lastCurrent = `${v.round}:${curKey}`;
+}
+function turnBanner(text, lurk) {
+  document.querySelectorAll('.turnbanner').forEach((n) => n.remove());
+  const b = document.createElement('div');
+  b.className = 'turnbanner' + (lurk ? ' lurk' : '');
+  b.textContent = text;
+  document.querySelector('.mapzone').appendChild(b);
+  setTimeout(() => b.remove(), 1800);
 }
 
 function drawSide(v) {
   document.getElementById('title').textContent = v.name;
-  document.getElementById('round').textContent = v.round ? `Round ${v.round}` : 'Before initiative';
-  const ids = v.turnOrder.length ? v.turnOrder : Object.keys(v.creatures);
-  document.getElementById('order').innerHTML = ids.map((id) => {
-    const c = v.creatures[id]; if (!c) return '';
-    const down = c.hp !== undefined ? c.hp <= 0 && c.side !== 'party' : c.health === 'down';
-    return `<div class="row ${v.current === id ? 'cur' : ''} ${down ? 'down' : ''}" data-id="${id}">
-      <span class="dot" style="background:${SIDE_COLOR[c.side]}"></span>
-      <span class="nm">${esc(c.name)}<small>${c.pos}${tag(c)}${c.hidden ? ' · hidden' : ''}</small></span>${hpCell(c)}</div>`;
-  }).join('');
-  document.querySelectorAll('.row').forEach((r) => r.addEventListener('click', () => pointCreature(r.dataset.id, true)));
+  document.getElementById('round').textContent = v.round ? '' : 'Before initiative';
+  drawInit(v);
   drawCard();
   drawLog(v);
   if (v.log.length !== lastLogLen && !THREE_D) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
   lastLogLen = v.log.length;
 }
 
-// The chronicle in two tabs: the story (scene, narration, what players declared, rulings) and
-// the mechanics (turns, moves, rolls, damage). Rulings are both. A dot marks news on the other tab.
+// Both categories can be shown independently. Rulings belong to both, but render once.
 const STORY = new Set(['scene', 'narration', 'declare', 'ruling', 'secret']);
 const COMBAT = (e) => !STORY.has(e.type) || e.type === 'ruling';
-let logTab = (() => { try { return localStorage.getItem('logTab') || 'story'; } catch { return 'story'; } })();
+const inFilter = (e, filter) => filter === 'story' ? STORY.has(e.type) : COMBAT(e);
+let logFilters = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('logFilters'));
+    if (saved && typeof saved.story === 'boolean' && typeof saved.combat === 'boolean') return saved;
+  } catch { /* private window or old preference */ }
+  return { story: true, combat: true };
+})();
 const seenT = { story: 0, combat: 0 };
+let logSeenInitialized = false;
+function saveLogFilters() {
+  try { localStorage.setItem('logFilters', JSON.stringify(logFilters)); } catch { /* private window */ }
+}
+// A DM's narration normally follows the actions it describes. Link only that preceding
+// batch, stopping at narration, scene, turn, and round boundaries. No text matching.
+function logGroups(entries) {
+  const groups = [];
+  let pending = [];
+  const flush = () => {
+    if (pending.length) groups.push({ entries: pending, linked: pending.some((e) => e.type === 'narration') && pending.some(COMBAT) });
+    pending = [];
+  };
+  for (const e of entries) {
+    if (e.type === 'turn' || e.type === 'scene') {
+      flush(); groups.push({ entries: [e], linked: false }); continue;
+    }
+    if (pending.length && pending[0].round !== e.round) flush();
+    pending.push(e);
+    if (e.type === 'narration') flush();
+  }
+  flush();
+  return groups;
+}
+// A run of turns the players couldn't see reads as one line, not a line per goblin.
+function foldUnseen(entries) {
+  const out = [];
+  for (const e of entries) {
+    const prev = out[out.length - 1];
+    const unseen = e.type === 'turn' && e.data && e.data.unseen;
+    if (unseen && prev && prev.type === 'turn' && prev.data && prev.data.unseen && prev.round === e.round) {
+      out[out.length - 1] = Object.assign({}, prev, { t: e.t, text: `Round ${e.round}: things move out of sight.` });
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
+}
 function drawLog(v) {
   const log = document.getElementById('log');
-  const inTab = (e, tab) => (tab === 'story' ? STORY.has(e.type) : COMBAT(e));
-  const entries = v.log.filter((e) => inTab(e, logTab));
+  const visible = (e) => (logFilters.story && STORY.has(e.type)) || (logFilters.combat && COMBAT(e));
   const atTop = log.scrollTop < 40;
-  const key = logTab + ':' + (entries.length ? entries[entries.length - 1].t : 0) + ':' + entries.length;
+  const filtersKey = JSON.stringify(logFilters);
+  const key = filtersKey + ':' + JSON.stringify(v.log);
   if (log.dataset.key !== key) {
-    log.innerHTML = entries.slice().reverse().map((e) => `<div class="entry ${e.type}">${e.type === 'turn' ? '' : `<span class="r">R${e.round}</span>`}${esc(e.text)}</div>`).join('');
-    if (atTop || log.dataset.tab !== logTab) log.scrollTop = 0;
-    log.dataset.key = key; log.dataset.tab = logTab;
+    const groups = logGroups(foldUnseen(v.log));
+    log.innerHTML = groups.map((group, i) => {
+      const shown = group.entries.filter(visible);
+      if (!shown.length) return '';
+      const count = group.entries.filter(COMBAT).length;
+      const links = group.linked ? `<div class="loglink"><span>Linked narration &amp; combat · ${count} event${count === 1 ? '' : 's'}</span>${!logFilters.combat ? '<button type="button" data-reveal="combat">Show combat</button>' : ''}${!logFilters.story ? '<button type="button" data-reveal="story">Show narration</button>' : ''}</div>` : '';
+      return `<div class="loggroup${group.linked ? ' linked' : ''}" data-group="${i}">${links}${shown.slice().reverse().map((e) => `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${esc(e.text)}</div>`).join('')}</div>`;
+    }).reverse().join('') || `<div class="logempty">${!logFilters.story && !logFilters.combat ? 'Both filters are off. Turn on Narration or Combat to see the log.' : 'No events match these filters yet.'}</div>`;
+    if (atTop || log.dataset.filters !== filtersKey) log.scrollTop = 0;
+    log.dataset.key = key; log.dataset.filters = filtersKey;
   }
-  const latest = (tab) => Math.max(0, ...v.log.filter((e) => inTab(e, tab)).map((e) => e.t || 0));
-  if (!seenT.story && !seenT.combat) { seenT.story = latest('story'); seenT.combat = latest('combat'); } // first load: nothing is "new"
-  seenT[logTab] = latest(logTab);
+  const latest = (filter) => Math.max(0, ...v.log.filter((e) => inFilter(e, filter)).map((e) => e.t || 0));
+  if (!logSeenInitialized) { seenT.story = latest('story'); seenT.combat = latest('combat'); logSeenInitialized = true; }
   document.querySelectorAll('#logtabs button').forEach((b) => {
-    b.classList.toggle('on', b.dataset.tab === logTab);
-    b.classList.toggle('new', b.dataset.tab !== logTab && latest(b.dataset.tab) > seenT[b.dataset.tab]);
+    const filter = b.dataset.filter, active = logFilters[filter];
+    if (active) seenT[filter] = latest(filter);
+    b.classList.toggle('on', active);
+    b.classList.toggle('new', !active && latest(filter) > seenT[filter]);
+    b.setAttribute('aria-pressed', String(active));
   });
 }
 document.querySelectorAll('#logtabs button').forEach((b) => b.addEventListener('click', () => {
-  logTab = b.dataset.tab;
-  try { localStorage.setItem('logTab', logTab); } catch { /* private window */ }
+  logFilters[b.dataset.filter] = !logFilters[b.dataset.filter];
+  saveLogFilters();
   if (state && state.log) drawLog(state);
 }));
+document.getElementById('log').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-reveal]');
+  if (!button) return;
+  const group = button.closest('[data-group]').dataset.group;
+  logFilters[button.dataset.reveal] = true;
+  saveLogFilters();
+  if (state && state.log) {
+    drawLog(state);
+    document.querySelector(`#log [data-group="${group}"]`)?.scrollIntoView({ block: 'nearest' });
+  }
+});
 
 // The caret on each floating panel folds it; the choice is remembered per browser.
 function foldable(panelId, caretId, key) {
@@ -606,10 +799,6 @@ function foldable(panelId, caretId, key) {
 foldable('curSec', 'lookCaret', 'lookFold');
 foldable('actSec', 'actCaret', 'actFold');
 
-function tag(c) {
-  if (me) return me.creatures.includes(c.id) ? ' · you' : c.player ? ' · ' + esc(c.player) : '';
-  return c.player ? ' · ' + esc(c.player) : c.controller === 'player' ? ' · you' : '';
-}
 
 // Each message shows where it is: sent (with the server's instant receipt), seen by the DM, the
 // DM's one-line answers, and done.
@@ -725,7 +914,7 @@ function pointCell(x, y) {
 }
 function clearCursor() { cursor.id = null; cursor.cell = null; cursor.z = null; cursorChanged(); }
 function setZ(z) { if (!cursor.cell) return; cursor.z = z === null || Number.isNaN(z) ? null : Math.round(z / 5) * 5; cursorChanged(); }
-function cursorChanged() { selected = cursor.id; render(); fetchLook(); }
+function cursorChanged() { actionConfirm = null; selected = cursor.id; render(); fetchLook(); }
 
 function fetchLook() {
   const key = JSON.stringify([cursor.id, cursor.cell, cursor.z]);
@@ -757,8 +946,8 @@ function drawLook() {
   const box = document.getElementById('look');
   if (!cursor.id && !cursor.cell || !look || look.error) box.dataset.html = '';
   if (!cursor.id && !cursor.cell) {
-    box.innerHTML = `<div class="hint">Click the map to point at ${cursor.mode === 'entity' ? 'a creature' : 'a square'}.<br>`
-      + '<kbd>M</kbd> switch mode · <kbd>←↑↓→</kbd> move · <kbd>[</kbd> <kbd>]</kbd> height · <kbd>P</kbd> ping · <kbd>Esc</kbd> clear</div>';
+    box.innerHTML = `<div class="hint">${TOUCH ? 'Tap' : 'Click'} the map to point at ${cursor.mode === 'entity' ? 'a creature' : 'a square'}.`
+      + (TOUCH ? '' : ' <span title="M switch mode · arrows move · [ ] height · P ping · Esc clear"><kbd>M</kbd> <kbd>P</kbd> <kbd>Esc</kbd> …</span>') + '</div>';
     return;
   }
   if (!look) { box.innerHTML = '<div class="hint">Looking…</div>'; return; }
@@ -839,9 +1028,24 @@ const myTurn = () => (canTalk() && me.turn) || null;
 const nameOf = (id) => (state && state.creatures[id] ? state.creatures[id].name : 'Someone');
 const SKILL_LIST = ['perception', 'investigation', 'insight', 'athletics', 'acrobatics', 'stealth', 'arcana', 'history', 'nature', 'religion', 'medicine', 'survival', 'sleight-of-hand', 'animal-handling', 'intimidation', 'persuasion', 'deception', 'performance'];
 let turnMsg = { text: '', err: false };
+let actionConfirm = null;
+function confirmKey(kind, extra = {}) {
+  return JSON.stringify([kind, state && state.round, state && state.turnIdx, myTurn(), state && state.creatures, extra]);
+}
+function confirmation(kind, extra = {}) {
+  const key = confirmKey(kind, extra);
+  return actionConfirm && actionConfirm.key === key ? actionConfirm : null;
+}
+function secondClick(kind, extra, text) {
+  if (confirmation(kind, extra)) { actionConfirm = null; return true; }
+  actionConfirm = { kind, key: confirmKey(kind, extra), text };
+  drawTurn(); drawLook();
+  return false;
+}
 function setTurnMsg(text, err) { turnMsg = { text, err: !!err }; drawTurn(); }
 
 async function act(action, extra = {}) {
+  actionConfirm = null;
   setTurnMsg('…');
   try {
     const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action }, extra)) });
@@ -873,9 +1077,9 @@ function drawTurn() {
     + b('Dodge', 'dodge', { disabled: t.action })
     + b('Hide', 'hide', bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action })
     + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
-    + b('End turn', 'end', { cls: 'gold' })
+    + b(confirmation('end') ? 'Click again to end turn' : 'End turn', 'end', { cls: 'gold' })
     + '</div>'
-    + `<div class="tmsg ${turnMsg.err ? 'err' : ''}">${esc(turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.'))}</div>`;
+    + `<div class="tmsg ${turnMsg.err ? 'err' : ''}">${esc((confirmation('end') || {}).text || turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.'))}</div>`;
 }
 document.getElementById('turnSec').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
@@ -883,7 +1087,7 @@ document.getElementById('turnSec').addEventListener('click', (e) => {
   const action = btn.dataset.act;
   if (action === 'end') {
     const t = myTurn();
-    if (t && !t.action && !confirm('End your turn without using your action?')) return;
+    if (t && !t.action && !secondClick('end', {}, 'Your action is unused. Click again to end your turn.')) return;
   }
   act(action, btn.dataset.as ? { as: btn.dataset.as } : {});
 });
@@ -903,6 +1107,7 @@ function updatePath() {
   const key = JSON.stringify([cell, moveOpts, t && t.used, t && state.creatures[t.id] && state.creatures[t.id].pos, t && t.dash]);
   if (key === pathKey) return;
   pathKey = key;
+  if (actionConfirm && actionConfirm.kind === 'move') actionConfirm = null;
   clearTimeout(pathTimer);
   if (!cell) { pathData = null; drawPath(); return; }
   pathTimer = setTimeout(async () => {
@@ -946,10 +1151,12 @@ function lookActions() {
       const dashAs = !t.action ? 'action' : bonusDash ? 'bonus' : null;
       const dashFits = !p.ok && dashAs && p.dashLeft && p.cost <= p.dashLeft;
       const what = { jump: 'jump', leap: 'leap up', grab: 'haul yourself up', climb: 'climb fast' };
+      const warning = confirmation('move', { path: p, options: moveOpts, dashAs: p.ok ? null : dashAs });
       html += '<div class="movebox">'
         + `<label><input type="checkbox" id="mvJump"${moveOpts.jump ? ' checked' : ''}> jump</label><label><input type="checkbox" id="mvFast"${moveOpts.fastClimb ? ' checked' : ''}> climb fast</label>`
         + (p.checks.length ? `<div class="dcs">On the way: ${p.checks.map((c) => `Athletics DC ${c.dc} to ${what[c.kind] || c.kind} at ${c.to}`).join('; ')}</div>` : '')
         + (p.provokers.length ? `<div class="warn">Leaving ${esc(p.provokers.join(', '))}'s reach: opportunity attack.</div>` : '')
+        + (warning ? `<div class="warn" role="status">${esc(warning.text)}</div>` : '')
         + '<div class="btns">'
         + (p.ok ? `<button class="btn gold" id="mvGo">Move here<small>${p.cost} ft</small></button>`
           : dashFits ? `<button class="btn gold" id="mvDash" data-as="${dashAs}">Dash${dashAs === 'bonus' ? ' (bonus)' : ''} &amp; move<small>${p.cost} ft</small></button>`
@@ -975,7 +1182,8 @@ function wireLookActions() {
   on('mvFast', 'change', (e) => { moveOpts.fastClimb = e.target.checked; updatePath(); });
   const go = async (dashAs) => {
     const p = pathData;
-    if (p.provokers.length && !confirm(`Moving out of ${p.provokers.join(', ')}'s reach provokes an opportunity attack. Move anyway?`)) return;
+    if (!p || !look || p.cell !== look.cell) return;
+    if (p.provokers.length && !secondClick('move', { path: p, options: moveOpts, dashAs }, `Provokes ${p.provokers.join(', ')}. Click again to ${dashAs ? 'dash and move' : 'move'}.`)) return;
     if (dashAs && !(await act('dash', dashAs === 'bonus' ? { as: 'bonus' } : {}))) return;
     await act('move', { cell: p.cell, jump: moveOpts.jump, fastClimb: moveOpts.fastClimb });
   };
@@ -1150,6 +1358,7 @@ function render() {
   drawLook();
   updatePath();
   const blank = state.error ? esc(state.error) : state.empty ? 'No encounter loaded.<br><code>node engine.js load rope-bridge</code>' : null;
+  document.getElementById('zoombox').hidden = !!(blank || THREE_D);
   if (blank) { document.getElementById('mapwrap').innerHTML = `<div class="empty">${blank}</div>`; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
   if (THREE_D) { render3d(); drawSide(state); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
