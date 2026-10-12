@@ -22,6 +22,8 @@ const FLOOR_TONES = {
   flagstone: ['#3d382e', '#37332a'], dirt: ['#403628', '#3a3023'], grass: ['#363b2a', '#313625'], planks: ['#4d3b25', '#46351f'],
   water: ['#27414a', '#233b44'], oil: ['#2a2622', '#25221e'], rubble: ['#4a4338', '#433c32'], chasm: '#16130f',
 };
+// Walls are checkered too, in 5-ft blocks that line up with the floor grid (and alternate up the height).
+const WALL_TONES = ['#575043', '#4d473b'];
 
 // Bodies: deliberately simple (capsule, head, base disc). Armor shows on the torso; the table is the one place to retune it.
 const ARMOR_LOOK = {
@@ -67,6 +69,17 @@ function mat(name, variant = 0, { dim = false, rough = 0.9, metal = 0, opacity =
   return matCache.get(key);
 }
 
+function wallTone(i, dim, { tint = null, opacity = 1 } = {}) {
+  const key = ['wall', i & 1, dim, tint, opacity].join('|');
+  if (!flatCache.has(key)) {
+    const m = new THREE.MeshStandardMaterial({ color: WALL_TONES[i & 1], roughness: 0.9 });
+    if (tint) m.color.lerp(new THREE.Color(tint), 0.5);
+    if (dim) m.color.multiplyScalar(0.38);
+    if (opacity < 1) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    flatCache.set(key, m);
+  }
+  return flatCache.get(key);
+}
 // A flat floor material for a square: the terrain's tone, the checker shade by parity. Untextured.
 const flatCache = new Map();
 function floorMat(name, x, y, dim, { rough = 0.85, metal = 0, opacity = 1 } = {}) {
@@ -231,6 +244,16 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const rubble = !c.tags.includes('wall') && c.tags.includes('difficult') && (flatKey === 'flagstone' || flatKey === 'dirt' || flatKey === 'grass');
       const topMat = TEXTURED || c.tags.includes('wall') ? mat(topName, variant, { dim }) : floorMat(rubble ? 'rubble' : flatKey, x, y, dim);
       const side = mat(sideName, variant, { dim });
+      if (c.tags.includes('wall') && !TEXTURED) {
+        for (let y0 = bottom, i = Math.floor(bottom + 1e-6); y0 < colTop - 1e-6; i++) {
+          const y1 = Math.min(colTop, i + 1), m = wallTone(x + y + i, dim);
+          const b = add(new THREE.Mesh(geo(box(1, y1 - y0, 1, y0)), m), at);
+          b.position.set(x + 0.5, (y0 + y1) / 2, y + 0.5); markWall(b);
+          y0 = y1;
+        }
+        colTops[y][x] = colTop;
+        continue;
+      }
       if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) { colTops[y][x] = top; continue; }
       const col = add(new THREE.Mesh(g, [side, side, topMat, side, side, side]), at);
       col.position.set(x + 0.5, bottom + h / 2, y + 0.5);
@@ -286,7 +309,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   function buildBridge(v, x, y, top, dim, add, geo) {
-    const plank = TEXTURED ? mat('planks', TX.hash(x, y) % VARIANTS, { dim }) : floorMat('planks', x, y, dim);
+    const plank = mat('planks', TX.hash(x, y) % VARIANTS, { dim }); // the bridge keeps its texture
     const slab = add(new THREE.Mesh(geo(box(0.92, 0.1, 1)), plank), { x, y });
     slab.position.set(x + 0.5, top - 0.05, y + 0.5);
     // rope rails on the sides that don't continue into more bridge
@@ -350,7 +373,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
       case 'brazier': {
         const ironM = mat('iron', 0, { dim, rough: 0.55, metal: 0.6 });
-        const bowl = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.3, 0.16, 0.2, 14)), ironM), at);
+        // open-topped, so the coals sit inside it instead of fighting its lid
+        const bowlM = ironM.clone(); bowlM.side = THREE.DoubleSide;
+        const bowl = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.3, 0.16, 0.2, 14, 1, true)), bowlM), at);
         bowl.position.set(cx, top + H - 0.1, cz);
         for (let i = 0; i < 3; i++) {
           const a = (i / 3) * Math.PI * 2;
@@ -358,7 +383,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
           leg.position.set(cx + Math.cos(a) * 0.16, top + (H - 0.15) / 2, cz + Math.sin(a) * 0.16);
         }
         const coals = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 14)), new THREE.MeshStandardMaterial({ color: '#2a1a10', emissive: '#ff5a1a', emissiveIntensity: dim ? 0.2 : 1.4 })), at);
-        coals.position.set(cx, top + H - 0.01, cz);
+        coals.position.set(cx, top + H - 0.06, cz);
         addFire(cx, top + H, cz, 0.9, dim, true);
         break;
       }
@@ -449,7 +474,15 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       for (let i = 1; i < 4; i++) piece(0.03, rim + 3 * FT, rim + 6 * FT, bar, -len / 2 + (i * len) / 4);
       return;
     }
-    piece(len + T * 0.01, base, rim + ft * FT, w.kind === 'low' ? mat('masonry', 2, opts) : stone);
+    if (TEXTURED) { piece(len + T * 0.01, base, rim + ft * FT, w.kind === 'low' ? mat('masonry', 2, opts) : stone); return; }
+    const start = vertical ? Math.min(w.y1, w.y2) : Math.min(w.x1, w.x2), across = vertical ? w.x1 : w.y1;
+    for (let k = 0; k < len; k++) {
+      for (let y0 = base, i = Math.floor(base + 1e-6); y0 < rim + ft * FT - 1e-6; i++) {
+        const y1 = Math.min(rim + ft * FT, i + 1);
+        piece(1 + (k === len - 1 ? T * 0.01 : 0), y0, y1, wallTone(start + k + across + i, false, opts), k + 0.5 - len / 2);
+        y0 = y1;
+      }
+    }
   }
 
   function addLabel(text, x, y, z, geo) {
