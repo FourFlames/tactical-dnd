@@ -35,7 +35,8 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - Card 7 done: Follow turn keys on the latest played turn entry (`followTurn` reads the display log), and `glide()` eases to the mover while following. Wall fade `fadeOccludingWalls`; ticker `#actionTicker`; `#dmResolving` via `drawResolving()`. Camera ease not yet watched in a visible window.
 - Card 5a done: wheel block in viewer.html (`wheelTap` → `openWheelAt` → `enemyMenu`/`allyMenu`/`selfMenu`/`pickMenu`/`squareMenu`; leaves via `act`/`postIntent`; provoke = `'keep'` second click), `viewer/pip-wheel.js` (moved from poc; `keep`, `warn`, `sug`), `map3d.screenOf`. `wheelDefaults` parses class/spells out of the party view's `notes`/`resources` (`char` is only an id): 5b should replace that. Doors/walls get the square wheel. Not yet seen at full frame rate in a visible window.
 - Port of the 3D mockup (spec: [port-wheel3d.md](port-wheel3d.md)): Phase A done (bodies `makeToken`/`applyArmor`/`ARMOR_LOOK`, highlight `HL`/`hlStep`, screen hover `shapeOf`/`bodyAt`, `selSq`, LMB pan/RMB orbit, flat checker `FLOOR_TONES` with `TEXTURED=false`; server `armorOf`, builder creatures carry `armor`). Temporary medallion sprite until Phase B markers. No creature size in `view()` yet, so no body scaling.
-- Next: port **Phase B** (markers), then **C** (wheel out of the icon), then Card **5b**, then **8**.
+- Phase B done: `viewer/marks3d.js` (`createMarks`; `sync`/`hover`/`pickAt`/`step`/`screenOf`, and for C `iconOf`/`setLow`/`active`/`iconMode`/`tracing`, via `map3d.marks()`). Icons are hit by distance on the canvas, not DOM events, so pan/orbit work over them. Dashed (occluded) stems not yet seen.
+- Next: port **Phase C** (wheel out of the icon), then Card **5b**, then **8**.
 
 ## Cards (in order; each fits one session)
 1. [x] **Kill native dialogs + builder focus.** Replace `confirm()` at viewer.html ~1075 (end turn with the action unused) and ~1167 (move provokes) with an in-card second click ("Provokes gob1. Click again to move."). Builder: `save()` → `render()` redraws the form 500 ms after typing stops and steals focus (builder.html ~284); don't redraw `renderMain` while focus is inside it, or restore focus and caret.
@@ -49,6 +50,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 9. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-12: Port Phase B (Sonnet): stems, icons and labels (marks3d.js), stem tracing and icon mode; medallion sprites gone; the seated creature is labelled "you".
 - 2026-10-12: Port Phase A (Sonnet): mockup bodies tinted by armor, highlight, screen-space hover, ground-drag controls, flat checker floor. Instant clicks (no 400 ms timer; double folds the wheel and focuses).
 - 2026-10-12: Card 5a (Sonnet): the pip wheel wired into the viewer, 2D and 3D, entity/self/square/pick wheels, smart Strike, provoke second click, class defaults; poc server now also serves /viewer/ so the mockup still loads.
 - 2026-10-12: Card 7 (Sonnet): followTurn crash fixed (stale `logKey`), camera follows the creature the queue is playing, dead tracking code gone.
@@ -56,4 +58,3 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - 2026-10-12: Wall fade seen working (tollhouse, DM view, Morrow behind the south wall). `/j/<code>` keeps extra params (`?3d`). How to run 3D headless in a cloud session added to Rules.
 - 2026-10-12: Review of PR #11: Card 6 is now the event stream (sliding 80-entry window silences fx/ticker); old 6-8 renumbered 7-9. Follow turn no longer yields to plain hover or leaving the canvas.
 - 2026-10-12: Double-click focus generalized (Sonnet): portraits, map tokens/models, log name and cell chips all go through `selectRef`; checked in 2D and on a 3D model.
-- 2026-10-12: Card 4 (Sonnet): entity card with side stripe, health chip/HP bar, odds cells, attack chips; hover preview and pointer chip; portrait double-click focuses the camera (2D and 3D). Fixed a look request racing the cursor (`cell=null`). Card 6 partial work from the other session committed alongside.

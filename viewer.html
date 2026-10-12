@@ -2245,7 +2245,7 @@ function render3d() {
     }
     return;
   }
-  map3d.update(disp, { selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
+  map3d.update(disp, { you: me && me.creatures ? me.creatures[0] : null, selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
 }
 
 const followButton = document.getElementById('bFollow');

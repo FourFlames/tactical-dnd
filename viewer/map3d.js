@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as TX from './textures.js';
 import { buildBarracksProp } from './barracks-props.js';
+import { createMarks, STEM_W } from './marks3d.js';
 
 const FT = 1 / 5;
 const VARIANTS = 4;
@@ -34,7 +35,6 @@ const SKIN = '#d8c7a8';
 // Highlight (mockup HL0): a fresnel rim, a floor halo and a gold floor ring. Retune here.
 const HL = { fre: true, halo: true, gfx: true, apC: '#d8b45a', apInt: 0.35, gamma: 2.2, range: 3, full: 1,
   pkC: '#ffe08a', pkInt: 1.3, snap: 100, over: true, frePow: 2.5, freBias: 0, grow: true, growCurve: 1.3 };
-const STEM_W = 0.9;        // the marker stem Phase B adds; in-view tests already look this high
 const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = 0.8;
 const DEBUG = /[?&]debug\b/.test(location.search);
 
@@ -139,7 +139,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let flames = [], waters = [], lights = [];
   let framed = false, wallsLow = false;
   let lastState = null, lastSelected = null, hoveredId = null; // hoveredId: set from outside (a portrait); ptrHover: under the pointer
-  let ptrHover = null, lastBody = null, hoverKey = null, pickedCell = null, lastCursorCell = null;
+  let ptrHover = null, marks = null, hoverKey = null, pickedCell = null, lastCursorCell = null;
   const mouse = { x: -1e4, y: -1e4, btn: 0 };
   let turnKey = null, follow = true, followYielded = false, speed = 1;
   const glides = new Map(); // creature id -> resolve, for glides still walking
@@ -466,34 +466,6 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   // ---------- tokens ----------
-  function tokenCanvas(c, label, isTurn) {
-    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S;
-    const ctx = cv.getContext('2d');
-    const down = c.hp !== undefined ? c.hp <= 0 : c.health === 'down';
-    const color = SIDE_COLOR[c.side] || SIDE_COLOR.neutral;
-    const R = 50;
-    ctx.globalAlpha = down ? 0.55 : 1;
-    ctx.fillStyle = '#1b1a15'; ctx.beginPath(); ctx.arc(64, 64, R, 0, 7); ctx.fill();
-    ctx.lineWidth = 8; ctx.strokeStyle = color;
-    if (c.hidden) ctx.setLineDash([12, 8]);
-    ctx.beginPath(); ctx.arc(64, 64, R, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-    if (c.hp !== undefined && c.maxHp) {
-      const f = Math.max(0, Math.min(1, c.hp / c.maxHp));
-      ctx.lineWidth = 5; ctx.strokeStyle = f > 0.5 ? '#6fbf73' : f > 0.25 ? '#d8b45a' : '#d25b4a';
-      ctx.beginPath(); ctx.arc(64, 64, R - 10, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.stroke();
-    }
-    ctx.fillStyle = '#e9e3d3'; ctx.font = '700 44px "Cormorant SC", Georgia, serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, 64, 68);
-    if (down) {
-      ctx.globalAlpha = 1; ctx.strokeStyle = '#d25b4a'; ctx.lineWidth = 7;
-      ctx.beginPath(); ctx.moveTo(40, 40); ctx.lineTo(88, 88); ctx.moveTo(88, 40); ctx.lineTo(40, 88); ctx.stroke();
-    }
-    const conds = (c.conditions || []).filter((x) => x.name !== 'unconscious' || !down);
-    if (conds.length) { ctx.globalAlpha = 1; ctx.fillStyle = SECRET; ctx.beginPath(); ctx.arc(108, 20, 12, 0, 7); ctx.fill(); }
-    if (isTurn) { ctx.globalAlpha = 1; ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(64, 64, R + 9, 0, 7); ctx.stroke(); }
-    return cv;
-  }
-
   // The body: a capsule torso (armor), a head, a dark base disc with a side-coloured ring. `top` and `half` are kept for
   // hover and highlight. Materials are per body (the highlight shader is attached to each) and disposed with it.
   const BASE_GEO = new THREE.CylinderGeometry(0.34, 0.36, 0.06, 24), RIM_GEO = new THREE.TorusGeometry(0.35, 0.025, 8, 36);
@@ -568,13 +540,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const shield = add(SHIELD_GEO, std('#8b8f96', { metalness: 0.7, roughness: 0.4 }), 0.27, 0.55, 0); shield.rotation.z = Math.PI / 2; shield.visible = false;
     const sideHalo = new THREE.Mesh(SIDE_HALO, new THREE.MeshBasicMaterial({ map: haloTex, color, transparent: true, opacity: 0.2, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
     sideHalo.position.y = 0.01; sideHalo.scale.setScalar(1.1); g.add(sideHalo);
-    // temporary name label (Phase B's icon replaces it)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
-    sprite.scale.set(0.6, 0.6, 1);
     const turnRing = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.025, 8, 48), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true }));
     turnRing.rotation.x = Math.PI / 2; turnRing.position.y = 0.03;
-    g.add(sprite, turnRing);
-    g.userData = { id: c.id, sprite, turnRing, torso, head, shield, base, ring, sideHalo, key: null, path: [], target: null, offset: new THREE.Vector3(),
+    g.add(turnRing);
+    g.userData = { id: c.id, turnRing, torso, head, shield, base, ring, sideHalo, path: [], target: null, offset: new THREE.Vector3(),
       top: 1.25, half: 0.26, prone: false, floorY: 0, apL: 0 };
     hlAttach(g, g.userData);
     tokens.add(g);
@@ -590,11 +559,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (prone) { u.torso.rotation.z = Math.PI / 2; u.torso.position.set(0, 0.22, 0); u.head.position.set(0.5, 0.2, 0); u.shield.position.set(0, 0.3, 0.27); u.shield.rotation.set(Math.PI / 2, 0, 0); }
     else { u.torso.rotation.z = 0; u.torso.position.set(0, 0.5, 0); u.head.position.set(0, 1.05, 0); u.shield.position.set(0.27, 0.55, 0); u.shield.rotation.set(0, 0, Math.PI / 2); }
     u.top = prone ? 0.45 : 1.25; u.half = prone ? 0.45 : 0.26;
-    u.sprite.position.y = u.top + 0.4;
   }
 
-  function updateTokens(v, selected) {
-    const labels = tokenLabels(v);
+  function updateTokens(v) {
     const seen = new Set();
     for (const c of Object.values(v.creatures)) {
       seen.add(c.id);
@@ -606,21 +573,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       u.target = target;
       const isTurn = v.current === c.id;
       const down = c.hp !== undefined ? c.hp <= 0 : c.health === 'down';
-      const key = JSON.stringify([labels[c.id], c.hp, c.maxHp, c.health, c.hidden, c.conditions, c.side, isTurn]);
-      if (key !== u.key) {
-        const old = u.sprite.material.map;
-        const t = new THREE.CanvasTexture(tokenCanvas(c, labels[c.id], isTurn)); t.colorSpace = THREE.SRGBColorSpace;
-        u.sprite.material.map = t; u.sprite.material.needsUpdate = true;
-        if (old) old.dispose();
-        u.key = key;
-      }
       const prone = down || (c.conditions || []).some((x) => x.name === 'prone');
       if (prone !== u.prone || !u.armored) posture(u, prone);
       const ak = JSON.stringify(c.armor || null);
       if (ak !== u.armored) { applyArmor(u, c.armor); u.armored = ak; }
       const fade = c.hidden ? 0.55 : 1;
       g.traverse((o) => { if (o.material && o.userData.rim !== undefined && o.material.opacity !== fade) { o.material.transparent = fade < 1; o.material.opacity = fade; o.material.needsUpdate = true; } });
-      u.sprite.material.opacity = fade;
       u.turnRing.visible = isTurn;
     }
     for (const [id, g] of tokenObjs) if (!seen.has(id)) {
@@ -837,9 +795,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   // { x, y, r } with r the on-screen radius of its base. null when it's behind the camera or unknown.
   const projV = new THREE.Vector3();
   function screenOf(ref) {
-    const g = tokenObjs.get(ref);
+    const g = tokenObjs.get(ref), ic = g && marks.screenOf(ref);
+    if (ic && ic.icon) return { x: ic.x, y: ic.y, r: ic.r }; // the marker's icon, once it has grown
     let p, half = 0.4;
-    if (g) { p = g.position.clone().setY(g.position.y + g.userData.top); half = Math.max(0.2, g.userData.half); } // Phase B: the icon
+    if (g) { p = g.position.clone().setY(g.position.y + g.userData.top); half = Math.max(0.2, g.userData.half); }
     else if (lastState && /^[A-Za-z]\d+$/.test(ref)) { const q = cellOf(ref.toUpperCase()); p = new THREE.Vector3(q.x + 0.5, cellElev(lastState, q.x, q.y) * FT, q.y + 0.5); half = 0.5; }
     else return null;
     camera.updateMatrixWorld();
@@ -959,12 +918,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   // Hover from the pointer. `emit` (a real pointer move) always tells onHover; a frame only does when a body's square changed.
   function updateHover(emit) {
     const free = mouse.x > -1e3 && !mouse.btn && lastState;
-    if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
-    ptrHover = lastBody ? lastBody.userData.id : null;
+    ptrHover = marks.hover(!!free);   // icons and traced stems first, then the body ellipses
+    const hg = ptrHover && tokenObjs.get(ptrHover);
     renderer.domElement.style.cursor = ptrHover ? 'pointer' : '';
     if (!free || !onHover) return;
     let c = null;
-    if (lastBody) c = cellOfBody(lastBody); else if (emit) { const q = cellAt(mouse.x, mouse.y); c = q ? [q.x, q.y] : [-1, -1]; } else return;
+    if (hg) c = cellOfBody(hg); else if (emit) { const q = cellAt(mouse.x, mouse.y); c = q ? [q.x, q.y] : [-1, -1]; } else return;
     const key = c.join(',');
     if (emit || key !== hoverKey) { hoverKey = key; onHover(c[0], c[1]); }
   }
@@ -979,6 +938,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       g.strokeStyle = t === lastBody ? '#d8b45a' : 'rgba(233,227,211,.4)'; g.setLineDash(q.s < 1 ? [] : [3, 3]);
       g.beginPath(); g.ellipse(q.x - rect.left, q.y - rect.top, q.rx, q.ry, 0, 0, 7); g.stroke(); }
   }
+
+  // Markers (stems, icons, labels, tracing, icon mode). They get first say on what the pointer is on.
+  marks = createMarks({ scene, camera, renderer, container, tokenObjs, inView, bodyAt, hoverScores, mouse });
+  // Feet each creature stands above its floor (for the "N ft up" label).
+  const alts = (v) => { const o = {}; for (const c of Object.values(v.creatures)) { const p = c.pos && cellOf(c.pos); if (p) o[c.id] = Math.max(0, Math.round((c.elev || 0) - cellElev(v, p.x, p.y))); } return o; };
 
   // The highlight each frame: hovered or selected 1, their square-mates .55; the approach grows as the cursor nears.
   function stepHighlights(dt) {
@@ -1026,7 +990,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   dom.addEventListener('pointermove', (e) => {
     mouse.x = e.clientX; mouse.y = e.clientY; mouse.btn = e.buttons;
     if (e.buttons) {
-      ptrHover = lastBody = null;
+      ptrHover = null;
       if (grab && (e.buttons & 1)) {
         const p = groundAt(e.clientX, e.clientY);
         if (p && p.distanceTo(grab) < 30) { const d = grab.clone().sub(p); camera.position.add(d); controls.target.add(d); camera.updateMatrixWorld(); } // near the horizon the plane runs away
@@ -1043,12 +1007,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (e.pwHandled) return;   // the action wheel used this click
     if (!downAt || downAt[2] !== 0 || e.button !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !lastState) return;
     rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
-    const g = bodyAt(e.clientX, e.clientY, lastBody);
-    if (g) { showSquare(null); if (onSelect) onSelect(g.userData.id); return; }
+    const id = marks.pickAt(e.clientX, e.clientY);
+    if (id) { showSquare(null); if (onSelect) onSelect(id); return; }
     const c = cellAt(e.clientX, e.clientY);
     if (c) { showSquare(c); if (onCell) onCell(c.x, c.y); }
   });
-  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = lastBody = null; hoverKey = null; if (onHover) onHover(-1, -1); });
+  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = null; hoverKey = null; if (onHover) onHover(-1, -1); });
 
   const wallRay = new THREE.Raycaster();
   function fadeOccludingWalls(dt) {
@@ -1131,7 +1095,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     stepEase(now);
     controls.update();
     camera.updateMatrixWorld(); rect = renderer.domElement.getBoundingClientRect(); viewCache.clear();
-    if (lastState) { bodyInfo(); updateHover(false); stepHighlights(dt * 1000); drawHits(); }
+    if (lastState) {
+      bodyInfo(); updateHover(false);
+      marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect });
+      stepHighlights(dt * 1000); drawHits();
+    }
     fadeOccludingWalls(dt);
     renderer.render(scene, camera);
   }
@@ -1142,7 +1110,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   return {
-    update(v, { selected, cursor, hovered } = {}) {
+    update(v, { selected, cursor, hovered, you } = {}) {
       const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
       if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = ptrHover = null; ease = null; framed = false; showSquare(null); }
       lastState = v; lastSelected = selected;
@@ -1151,7 +1119,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
-      updateTokens(v, selected);
+      updateTokens(v);
+      marks.sync(v.creatures, you, alts(v));
       followTurn(v);
       setCursor(v, cursor);
     },
@@ -1162,13 +1131,14 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
     screenOf,
+    marks: () => marks,   // icon element/position per id, setLow, active (icon mode or tracing)
     setFollow(on) {
       follow = !!on;
       if (!follow) ease = null;
       else if (!followYielded && lastState) focusOn(lastState.current);
     },
     dispose() {
-      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose();
+      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose();
       clearWalls(); clearTrail();
       disposables.forEach((g) => g.dispose());
       renderer.dispose(); renderer.domElement.remove();
@@ -1178,15 +1148,4 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
 
 function cellOf(id) { return { x: id.charCodeAt(0) - 65, y: parseInt(id.slice(1), 10) - 1 }; }
 
-// Same two-letter labels as the 2D map.
-function tokenLabels(v) {
-  const base = {}, count = {};
-  for (const c of Object.values(v.creatures)) {
-    base[c.id] = c.name.replace(/^(Goblin|Brother|Sister|the)\s+/i, '').slice(0, 2);
-    count[base[c.id]] = (count[base[c.id]] || 0) + 1;
-  }
-  const out = {};
-  for (const [id, b] of Object.entries(base)) out[id] = count[b] > 1 ? b[0] + ((id.match(/\d+$/) || [''])[0] || id.slice(-1)) : b;
-  return out;
-}
 function cellName(x, y) { return String.fromCharCode(65 + x) + (y + 1); }
