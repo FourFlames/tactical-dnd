@@ -14,6 +14,30 @@ const SECRET = '#a98bd6';
 const GOLD = '#d8b45a';
 const WALL_FT = { wall: 8, door: 7, window: 8, low: 3 };
 
+// Floors are the mockup's flat checkerboard: two shades per terrain, alternating by (x + y) % 2, no texture. Flip TEXTURED to
+// bring the painted textures back (that path is untouched). A bare string is one flat tone with no checker.
+const TEXTURED = false;
+const FLOOR_TONES = {
+  flagstone: ['#3d382e', '#37332a'], dirt: ['#403628', '#3a3023'], grass: ['#363b2a', '#313625'], planks: ['#4d3b25', '#46351f'],
+  water: ['#27414a', '#233b44'], oil: ['#2a2622', '#25221e'], rubble: ['#4a4338', '#433c32'], chasm: '#16130f',
+};
+
+// Bodies: deliberately simple (capsule, head, base disc). Armor shows on the torso; the table is the one place to retune it.
+const ARMOR_LOOK = {
+  none: { color: '#8a806c', roughness: 0.95, metalness: 0 },
+  light: { color: '#7b5231', roughness: 0.42, metalness: 0.05 },
+  medium: { color: '#7c8087', roughness: 0.6, metalness: 0.55 },
+  heavy: { color: '#c5ccd6', roughness: 0.26, metalness: 0.9 },
+};
+const SKIN = '#d8c7a8';
+
+// Highlight (mockup HL0): a fresnel rim, a floor halo and a gold floor ring. Retune here.
+const HL = { fre: true, halo: true, gfx: true, apC: '#d8b45a', apInt: 0.35, gamma: 2.2, range: 3, full: 1,
+  pkC: '#ffe08a', pkInt: 1.3, snap: 100, over: true, frePow: 2.5, freBias: 0, grow: true, growCurve: 1.3 };
+const STEM_W = 0.9;        // the marker stem Phase B adds; in-view tests already look this high
+const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = 0.8;
+const DEBUG = /[?&]debug\b/.test(location.search);
+
 // ---------- textures & materials (cached for the page's lifetime) ----------
 const texCache = new Map();
 function tex(name, variant = 0) {
@@ -41,6 +65,20 @@ function mat(name, variant = 0, { dim = false, rough = 0.9, metal = 0, opacity =
     matCache.set(key, m);
   }
   return matCache.get(key);
+}
+
+// A flat floor material for a square: the terrain's tone, the checker shade by parity. Untextured.
+const flatCache = new Map();
+function floorMat(name, x, y, dim, { rough = 0.85, metal = 0, opacity = 1 } = {}) {
+  const tone = FLOOR_TONES[name] || FLOOR_TONES.flagstone, col = typeof tone === 'string' ? tone : tone[(x + y) % 2];
+  const key = [col, dim, rough, metal, opacity].join('|');
+  if (!flatCache.has(key)) {
+    const m = new THREE.MeshStandardMaterial({ color: col, roughness: rough, metalness: metal });
+    if (dim) m.color.multiplyScalar(0.38);
+    if (opacity < 1) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    flatCache.set(key, m);
+  }
+  return flatCache.get(key);
 }
 
 // A box whose texture keeps its real-world scale on every face (1 tile per world unit), so tall
@@ -79,6 +117,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   controls.minDistance = 3;
   controls.maxDistance = 80;
   controls.screenSpacePanning = false;
+  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }; // LMB is our ground drag (below)
+  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
 
   scene.add(new THREE.HemisphereLight('#d4dbe6', '#3b3122', 1.1));
   const sun = new THREE.DirectionalLight('#ffe6c4', 2.2);
@@ -98,7 +138,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let disposables = [];      // geometries made for the current terrain
   let flames = [], waters = [], lights = [];
   let framed = false, wallsLow = false;
-  let lastState = null, lastSelected = null, hoveredId = null;
+  let lastState = null, lastSelected = null, hoveredId = null; // hoveredId: set from outside (a portrait); ptrHover: under the pointer
+  let ptrHover = null, lastBody = null, hoverKey = null, pickedCell = null, lastCursorCell = null;
+  const mouse = { x: -1e4, y: -1e4, btn: 0 };
   let turnKey = null, follow = true, followYielded = false, speed = 1;
   const glides = new Map(); // creature id -> resolve, for glides still walking
   const wallMeshes = [], wallMaterials = [];
@@ -129,7 +171,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     wallMaterials.length = 0; wallMeshes.length = 0;
   }
   function buildTerrain(v) {
-    clearWalls();
+    clearWalls(); occ = null;
     for (const o of [...terrain.children]) {
       terrain.remove(o);
       if (o.userData.dispose) { o.userData.dispose.dispose(); o.material.dispose(); }
@@ -167,7 +209,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const legend = v.legend[c.ch] || {};
 
       if (surf === 'chasm') {
-        const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), mat('chasm', 0, { dim })), at);
+        const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('chasm', 0, { dim }) : floorMat('chasm', x, y, dim)), at);
         m.rotation.x = -Math.PI / 2; m.position.set(x + 0.5, bottom + 0.01, y + 0.5);
         colTops[y][x] = bottom;
         continue;
@@ -185,20 +227,22 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const g = geo(box(1, h, 1, bottom));
       const sideName = c.tags.includes('wall') && /brick|masonry|tower|built/.test((c.terrain || '').toLowerCase()) ? 'masonry' : SIDE_FOR[surf] || 'rock';
       const topName = surf === 'water' ? 'dirt' : surf === 'oil' ? 'flagstone' : c.tags.includes('wall') ? sideName : surf;
-      const topMat = mat(topName, variant, { dim });
+      const flatKey = surf === 'water' ? 'dirt' : surf;
+      const rubble = !c.tags.includes('wall') && c.tags.includes('difficult') && (flatKey === 'flagstone' || flatKey === 'dirt' || flatKey === 'grass');
+      const topMat = TEXTURED || c.tags.includes('wall') ? mat(topName, variant, { dim }) : floorMat(rubble ? 'rubble' : flatKey, x, y, dim);
       const side = mat(sideName, variant, { dim });
       if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) { colTops[y][x] = top; continue; }
       const col = add(new THREE.Mesh(g, [side, side, topMat, side, side, side]), at);
       col.position.set(x + 0.5, bottom + h / 2, y + 0.5);
       if (c.tags.includes('wall')) markWall(col);
       colTops[y][x] = colTop;
-      if (surf === 'oil') {
+      if (surf === 'oil' && TEXTURED) {
         const o = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1.15, 1.15)), mat('oil', variant, { dim, rough: 0.1, metal: 0, opacity: 0.999 })), at);
         o.rotation.x = -Math.PI / 2; o.rotation.z = variant; o.position.set(x + 0.5, top + 0.005, y + 0.5);
         o.castShadow = false;
       }
       if (surf === 'water') {
-        const w = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), mat('water', variant, { dim, rough: 0.15, metal: 0.1, opacity: 0.78 })), at);
+        const w = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('water', variant, { dim, rough: 0.15, metal: 0.1, opacity: 0.78 }) : floorMat('water', x, y, dim, { rough: 0.15, metal: 0.1, opacity: 0.85 })), at);
         w.rotation.x = -Math.PI / 2; w.position.set(x + 0.5, top - 0.06, y + 0.5);
         w.castShadow = false;
         waters.push(w);
@@ -242,7 +286,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   function buildBridge(v, x, y, top, dim, add, geo) {
-    const plank = mat('planks', TX.hash(x, y) % VARIANTS, { dim });
+    const plank = TEXTURED ? mat('planks', TX.hash(x, y) % VARIANTS, { dim }) : floorMat('planks', x, y, dim);
     const slab = add(new THREE.Mesh(geo(box(0.92, 0.1, 1)), plank), { x, y });
     slab.position.set(x + 0.5, top - 0.05, y + 0.5);
     // rope rails on the sides that don't continue into more bridge
@@ -450,26 +494,103 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     return cv;
   }
 
+  // The body: a capsule torso (armor), a head, a dark base disc with a side-coloured ring. `top` and `half` are kept for
+  // hover and highlight. Materials are per body (the highlight shader is attached to each) and disposed with it.
+  const BASE_GEO = new THREE.CylinderGeometry(0.34, 0.36, 0.06, 24), RIM_GEO = new THREE.TorusGeometry(0.35, 0.025, 8, 36);
+  const TORSO_GEO = new THREE.CapsuleGeometry(0.2, 0.5, 6, 14), HEAD_GEO = new THREE.SphereGeometry(0.15, 16, 12);
+  const SHIELD_GEO = new THREE.CylinderGeometry(0.17, 0.17, 0.035, 18), SIDE_HALO = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const hlTex = (n, draw) => { const c = document.createElement('canvas'); c.width = c.height = n; draw(c.getContext('2d'), n); const t = new THREE.CanvasTexture(c); return t; };
+  const haloTex = hlTex(128, (g, n) => {
+    const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    r.addColorStop(0, 'rgba(255,255,255,.3)'); r.addColorStop(0.55, 'rgba(255,255,255,.85)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = r; g.fillRect(0, 0, n, n);
+  });
+  const gfxTex = hlTex(256, (g, n) => { // a thin ring with four bold brackets on the diagonals
+    g.strokeStyle = '#fff'; g.lineCap = 'round';
+    g.globalAlpha = 0.45; g.lineWidth = 2; g.beginPath(); g.arc(n / 2, n / 2, n * 0.4, 0, 7); g.stroke();
+    g.globalAlpha = 1; g.lineWidth = 9;
+    for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(n / 2, n / 2, n * 0.4, Math.PI * (0.25 + i / 2) - 0.42, Math.PI * (0.25 + i / 2) + 0.42); g.stroke(); }
+  });
+  const flatGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const hlMat = (map) => new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const hlG = new THREE.Group(); scene.add(hlG);   // floor halos and rings (not in `tokens`: those are walked by the glide loop)
+
+  function applyArmor(u, a) {
+    const look = ARMOR_LOOK[a && a.kind] || ARMOR_LOOK.none, m = u.torso.material;
+    m.color.set(look.color); m.roughness = look.roughness; m.metalness = look.metalness;
+    u.shield.visible = !!(a && a.shield);
+  }
+  // The highlight's rim shader, added to every mesh of a body; its uniforms ride on u.fu.
+  function hlAttach(g, u) {
+    const fu = u.fu = { uRimC: { value: new THREE.Color() }, uRimK: { value: 0 }, uRimP: { value: 2.5 }, uRimB: { value: 0 } };
+    g.traverse((o) => {
+      if (!o.isMesh || !o.userData.rim) return;
+      o.material.onBeforeCompile = (sh) => { // facing-ratio rim added to the emissive term
+        Object.assign(sh.uniforms, fu);
+        sh.fragmentShader = 'uniform vec3 uRimC; uniform float uRimK, uRimP, uRimB;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+           totalEmissiveRadiance += uRimC * uRimK * mix(uRimB, 1., pow(1. - abs(dot(normalize(vNormal), normalize(vViewPosition))), uRimP));`);
+      };
+    });
+    u.halo = new THREE.Mesh(flatGeo, hlMat(haloTex)); u.gfx = new THREE.Mesh(flatGeo, hlMat(gfxTex));
+    for (const m of [u.halo, u.gfx]) { m.visible = false; m.renderOrder = 1; m.frustumCulled = false; hlG.add(m); }
+    Object.assign(u, { apL: 0, pr: 0, lvl: 0, pk: 0 });
+  }
+  const easeBack = (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+  const easeOut = (t) => 1 - (1 - t) ** 3;
+  const cA = new THREE.Color(), cB = new THREE.Color();
+  // tg: 0 / .55 (square-mate) / 1 (hovered or selected); u.apL is the smoothed approach 0..1
+  function hlStep(g, u, tg, dt) {
+    u.lvl += (tg - u.lvl) * 0.4;
+    const up = tg > 0;
+    u.pr = up ? Math.min(1, u.pr + dt / HL.snap) : Math.max(0, u.pr - dt / (HL.snap * 0.6));
+    u.pk = u.lvl * (up && HL.over ? easeBack(u.pr) : easeOut(u.pr));
+    const kk = Math.min(u.pk, 1), a0 = HL.apInt * Math.pow(u.apL, HL.gamma), I = Math.max(0, a0 + (HL.pkInt - a0) * u.pk), on = I > 0.003;
+    cA.set(HL.apC).lerp(cB.set(HL.pkC), kk);
+    const fu = u.fu;
+    fu.uRimK.value = HL.fre && on ? I * 1.8 : 0; fu.uRimP.value = HL.frePow; fu.uRimB.value = HL.freBias; fu.uRimC.value.copy(cA);
+    // Sized from the body's own half-width; never past the edge of its square (radius .5).
+    const R = u.half * 1.35 + 0.04, CAP = 0.48, p = g.position, y = u.floorY, h = u.halo, r = u.gfx;
+    h.visible = HL.halo && on;
+    if (h.visible) { h.material.color.copy(cA); h.material.opacity = Math.min(1, I * 0.5); h.scale.setScalar(2 * Math.min(0.5, R * 1.5 * (1.25 - 0.25 * u.pk))); h.position.set(p.x, y + 0.015, p.z); }
+    r.visible = HL.gfx && kk > 0.01;
+    if (r.visible) { r.material.color.copy(cA); r.material.opacity = Math.min(1, kk * HL.pkInt * 0.8); r.scale.setScalar(Math.min(CAP, R * (1.5 - 0.5 * u.pk)) / 0.4); r.position.set(p.x, y + 0.025, p.z); r.rotation.y = u.pr < 1 ? (1 - u.pr) * 0.9 : 0; }
+  }
+
   function makeToken(c) {
-    const g = new THREE.Group();
-    const color = new THREE.Color(SIDE_COLOR[c.side] || SIDE_COLOR.neutral);
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.38, 0.08, 28), new THREE.MeshStandardMaterial({ color: '#1f1d18', roughness: 0.6 }));
-    base.position.y = 0.04; base.castShadow = true; base.receiveShadow = true;
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.03, 8, 40), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, roughness: 0.4 }));
-    rim.rotation.x = Math.PI / 2; rim.position.y = 0.08;
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6), new THREE.MeshStandardMaterial({ color: '#2a2822' }));
-    stem.position.y = 0.33;
+    const g = new THREE.Group(), color = new THREE.Color(SIDE_COLOR[c.side] || SIDE_COLOR.neutral);
+    const add = (geo, m, x, y, z, rim = true) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; o.userData.rim = rim; g.add(o); return o; };
+    const std = (col, o = {}) => new THREE.MeshStandardMaterial({ color: col, roughness: 0.6, ...o });
+    const base = add(BASE_GEO, std('#1f1d18'), 0, 0.03, 0);
+    const ring = add(RIM_GEO, std(color, { emissive: color, emissiveIntensity: 0.35, roughness: 0.4 }), 0, 0.065, 0, false);
+    ring.rotation.x = Math.PI / 2; ring.castShadow = false;
+    const torso = add(TORSO_GEO, std('#8a806c'), 0, 0.5, 0), head = add(HEAD_GEO, std(SKIN), 0, 1.05, 0);
+    const shield = add(SHIELD_GEO, std('#8b8f96', { metalness: 0.7, roughness: 0.4 }), 0.27, 0.55, 0); shield.rotation.z = Math.PI / 2; shield.visible = false;
+    const sideHalo = new THREE.Mesh(SIDE_HALO, new THREE.MeshBasicMaterial({ map: haloTex, color, transparent: true, opacity: 0.2, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    sideHalo.position.y = 0.01; sideHalo.scale.setScalar(1.1); g.add(sideHalo);
+    // temporary name label (Phase B's icon replaces it)
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
-    sprite.scale.set(0.72, 0.72, 1); sprite.position.y = 0.92;
+    sprite.scale.set(0.6, 0.6, 1);
     const turnRing = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.025, 8, 48), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true }));
     turnRing.rotation.x = Math.PI / 2; turnRing.position.y = 0.03;
-    const selRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.53, 48), new THREE.MeshBasicMaterial({ color: '#e9e3d3', side: THREE.DoubleSide, transparent: true, opacity: 0.8 }));
-    selRing.rotation.x = -Math.PI / 2; selRing.position.y = 0.025;
-    g.add(base, rim, stem, sprite, turnRing, selRing);
-    g.traverse((o) => { o.userData.id = c.id; });
-    g.userData = { id: c.id, sprite, turnRing, selRing, rim, stem, key: null, path: [], target: null, offset: new THREE.Vector3() };
+    g.add(sprite, turnRing);
+    g.userData = { id: c.id, sprite, turnRing, torso, head, shield, base, ring, sideHalo, key: null, path: [], target: null, offset: new THREE.Vector3(),
+      top: 1.25, half: 0.26, prone: false, floorY: 0, apL: 0 };
+    hlAttach(g, g.userData);
     tokens.add(g);
     return g;
+  }
+  function disposeToken(g) {
+    const u = g.userData;
+    for (const m of [u.halo, u.gfx]) { hlG.remove(m); m.material.dispose(); }
+    g.traverse((o) => { if (o.material) { if (o.material.map && o.material.map !== haloTex) o.material.map.dispose(); o.material.dispose(); } });
+  }
+  function posture(u, prone) {
+    u.prone = prone;
+    if (prone) { u.torso.rotation.z = Math.PI / 2; u.torso.position.set(0, 0.22, 0); u.head.position.set(0.5, 0.2, 0); u.shield.position.set(0, 0.3, 0.27); u.shield.rotation.set(Math.PI / 2, 0, 0); }
+    else { u.torso.rotation.z = 0; u.torso.position.set(0, 0.5, 0); u.head.position.set(0, 1.05, 0); u.shield.position.set(0.27, 0.55, 0); u.shield.rotation.set(0, 0, Math.PI / 2); }
+    u.top = prone ? 0.45 : 1.25; u.half = prone ? 0.45 : 0.26;
+    u.sprite.position.y = u.top + 0.4;
   }
 
   function updateTokens(v, selected) {
@@ -481,31 +602,33 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const p = cellOf(c.pos);
       const target = new THREE.Vector3(p.x + 0.5, (c.elev || 0) * FT, p.y + 0.5);
       if (!g) { g = makeToken(c); tokenObjs.set(c.id, g); g.position.copy(target); }
-      g.userData.target = target;
+      const u = g.userData;
+      u.target = target;
       const isTurn = v.current === c.id;
-      const key = JSON.stringify([labels[c.id], c.hp, c.maxHp, c.health, c.hidden, c.conditions, c.side, isTurn]);
-      if (key !== g.userData.key) {
-        const old = g.userData.sprite.material.map;
-        const t = new THREE.CanvasTexture(tokenCanvas(c, labels[c.id], isTurn)); t.colorSpace = THREE.SRGBColorSpace;
-        g.userData.sprite.material.map = t; g.userData.sprite.material.needsUpdate = true;
-        if (old) old.dispose();
-        g.userData.key = key;
-      }
       const down = c.hp !== undefined ? c.hp <= 0 : c.health === 'down';
-      g.userData.sprite.material.opacity = c.hidden ? 0.55 : 1;
-      g.userData.sprite.position.y = down ? 0.3 : 0.92;
-      g.userData.stem.visible = !down;
-      g.userData.turnRing.visible = isTurn;
-      g.userData.selRing.visible = selected === c.id;
+      const key = JSON.stringify([labels[c.id], c.hp, c.maxHp, c.health, c.hidden, c.conditions, c.side, isTurn]);
+      if (key !== u.key) {
+        const old = u.sprite.material.map;
+        const t = new THREE.CanvasTexture(tokenCanvas(c, labels[c.id], isTurn)); t.colorSpace = THREE.SRGBColorSpace;
+        u.sprite.material.map = t; u.sprite.material.needsUpdate = true;
+        if (old) old.dispose();
+        u.key = key;
+      }
+      const prone = down || (c.conditions || []).some((x) => x.name === 'prone');
+      if (prone !== u.prone || !u.armored) posture(u, prone);
+      const ak = JSON.stringify(c.armor || null);
+      if (ak !== u.armored) { applyArmor(u, c.armor); u.armored = ak; }
+      const fade = c.hidden ? 0.55 : 1;
+      g.traverse((o) => { if (o.material && o.userData.rim !== undefined && o.material.opacity !== fade) { o.material.transparent = fade < 1; o.material.opacity = fade; o.material.needsUpdate = true; } });
+      u.sprite.material.opacity = fade;
+      u.turnRing.visible = isTurn;
     }
     for (const [id, g] of tokenObjs) if (!seen.has(id)) {
       tokens.remove(g); tokenObjs.delete(id);
       if (glides.has(id)) { const r = glides.get(id); glides.delete(id); r(); }
-      g.traverse((o) => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
-      });
+      disposeToken(g);
       if (hoveredId === id) hoveredId = null;
+      if (ptrHover === id) ptrHover = null;
     }
   }
 
@@ -618,7 +741,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     cold: { color: '#9fe3ff', shape: 'orb', glow: true }, necrotic: { color: '#b48cff', shape: 'orb', glow: true }, lightning: { color: '#cfe8ff', shape: 'orb', glow: true },
     default: { color: GOLD, shape: 'orb' },
   };
-  const tokenPoint = (id, up = 0.7) => { const g = tokenObjs.get(id); return g ? g.position.clone().setY(g.position.y + up) : null; };
+  const tokenPoint = (id, up) => { const g = tokenObjs.get(id); return g ? g.position.clone().setY(g.position.y + (up ?? g.userData.top * 0.7)) : null; };
   function shoot(fromId, toId, kind) {
     return new Promise((done) => {
       const a = tokenPoint(fromId), b = tokenPoint(toId);
@@ -672,7 +795,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
     s.scale.set(big ? 1.5 : 1.1, big ? 0.75 : 0.55, 1);
     fx.add(s);
-    const born = performance.now(), base = g.position.clone().setY(g.position.y + 1.4);
+    const born = performance.now(), base = g.position.clone().setY(g.position.y + g.userData.top + 0.35);
     effects.push((now) => {
       const k = (now - born) * speed / 1300;
       s.position.copy(base).setY(base.y + k * 0.8);
@@ -687,15 +810,15 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (!g) return;
     if (text) floatText(id, text, color, big);
     if (!flash) return;
-    const m = g.userData.sprite.material, born = performance.now();
+    const u = g.userData, ms = [u.torso.material, u.head.material, u.base.material], born = performance.now();
     let prev = new THREE.Vector3();
     effects.push((now) => {
       const k = Math.min(1, (now - born) * speed / (big ? 520 : 380));
-      m.color.setRGB(1, 0.35 + 0.65 * k, 0.3 + 0.7 * k);
+      for (const m of ms) { m.emissive.setRGB(1, 0.2, 0.12); m.emissiveIntensity = (1 - k) * 0.9; }
       const amp = (1 - k) * (big ? 0.12 : 0.07), off = new THREE.Vector3(Math.sin(now / 18) * amp, 0, Math.cos(now / 23) * amp);
       g.userData.offset.add(off.clone().sub(prev)); prev = off;
       if (k < 1) return false;
-      g.userData.offset.sub(prev); m.color.setRGB(1, 1, 1); return true;
+      g.userData.offset.sub(prev); for (const m of ms) { m.emissive.setRGB(0, 0, 0); m.emissiveIntensity = 1; } return true;
     });
   }
 
@@ -716,7 +839,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   function screenOf(ref) {
     const g = tokenObjs.get(ref);
     let p, half = 0.4;
-    if (g) p = g.position.clone().setY(g.position.y + 0.45);
+    if (g) { p = g.position.clone().setY(g.position.y + g.userData.top); half = Math.max(0.2, g.userData.half); } // Phase B: the icon
     else if (lastState && /^[A-Za-z]\d+$/.test(ref)) { const q = cellOf(ref.toUpperCase()); p = new THREE.Vector3(q.x + 0.5, cellElev(lastState, q.x, q.y) * FT, q.y + 0.5); half = 0.5; }
     else return null;
     camera.updateMatrixWorld();
@@ -762,46 +885,179 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     sun.target.position.set(cx, 0, cz);
   }
 
-  // ---------- picking ----------
+  // ---------- hover & picking (screen space, from the mockup) ----------
+  // Each body is an ellipse on screen (its projected height and width plus its footprint on the floor, padded, never tiny); its
+  // score is the cursor's distance from the centre in units of those radii, so < 1 is inside. Where ellipses overlap, the body
+  // the cursor is relatively nearer to wins. Line of sight (the costly part) is only checked for bodies the cursor is inside.
   const ray = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
-  function pick(e) {
-    const r = renderer.domElement.getBoundingClientRect();
-    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
-    const hit = ray.intersectObjects([...tokens.children, ...terrain.children], true).find((h) => h.object.userData.id || h.object.userData.cell);
-    if (!hit) return null;
-    if (hit.object.userData.id) return { id: hit.object.userData.id };
-    return { cell: hit.object.userData.cell };
+  const tmp = new THREE.Vector3(), camRight = new THREE.Vector3(), camFwd = new THREE.Vector3(), shapePts = [];
+  let rect = renderer.domElement.getBoundingClientRect(), occ = null;
+  const viewCache = new Map();
+  const toScr = (v) => {
+    tmp.copy(v).project(camera);
+    return { x: rect.left + (tmp.x + 1) / 2 * rect.width, y: rect.top + (1 - tmp.y) / 2 * rect.height, front: tmp.z < 1 && Math.abs(tmp.x) < 1.15 && Math.abs(tmp.y) < 1.15 };
+  };
+  const occluders = () => occ || (occ = terrain.children.filter((o) => o.isMesh && !o.userData.dispose));
+  // Where each body stands this frame: its square, the floor under it, whether it floats above it, whether it shares the square.
+  function bodyInfo() {
+    const counts = {};
+    for (const g of tokens.children) {
+      const u = g.userData, cx = Math.floor(g.position.x), cy = Math.floor(g.position.z);
+      u.cellKey = cx + ',' + cy; u.floorY = lastState ? cellElev(lastState, cx, cy) * FT : 0; u.alt = g.position.y - u.floorY > 0.08;
+      if (!u.alt) counts[u.cellKey] = (counts[u.cellKey] || 0) + 1;
+    }
+    for (const g of tokens.children) g.userData.shared = !g.userData.alt && counts[g.userData.cellKey] > 1;
   }
-  let downAt = null;
-  renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
-  renderer.domElement.addEventListener('pointerup', (e) => {
+  // In view = some part of the body or of its stem (middle, top, or along the stem) has a clear line from the camera.
+  function inView(g) {
+    if (viewCache.has(g)) return viewCache.get(g);
+    const u = g.userData, occs = occluders();
+    let ok = false;
+    for (const h of [u.top, u.top / 2, u.top + STEM_W * 0.5, u.top + STEM_W]) {
+      const p = g.position.clone().setY(g.position.y + h + 0.02), d = p.distanceTo(camera.position);
+      ray.set(camera.position, p.sub(camera.position).normalize()); ray.far = d - 0.05;
+      if (!ray.intersectObjects(occs, false).length) { ok = true; break; }
+    }
+    viewCache.set(g, ok); return ok;
+  }
+  // A body's screen shape: the box around its top, its sides and its footprint (a 0.7-wide square under a body alone in its
+  // square), so the centre sits low and hovering the ground under a body counts a little. Flyers use their own underside.
+  function shapeOf(g) {
+    const u = g.userData, p = g.position, mid = p.y + u.top / 2, foot = u.alt ? p.y : u.floorY;
+    camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    camera.getWorldDirection(camFwd).setY(0).normalize();
+    shapePts.length = 0;
+    const at = (y, rs, fs) => shapePts.push(toScr(tmp.set(p.x, y, p.z).addScaledVector(camRight, rs).addScaledVector(camFwd, fs)));
+    at(p.y + u.top, 0, 0); at(mid, u.half, 0); at(mid, -u.half, 0);
+    const f = u.alt || u.shared ? u.half + 0.06 : Math.max(u.half, 0.35);
+    at(foot, f, 0); at(foot, -f, 0); at(foot, 0, f); at(foot, 0, -f);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const q of shapePts) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+    return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, front: shapePts[1].front,
+      rx: Math.max((x1 - x0) / 2, HOVER_MIN) + HOVER_PAD, ry: Math.max((y1 - y0) / 2, HOVER_MIN) + HOVER_PAD };
+  }
+  function hoverScores(x, y) {
+    for (const g of tokens.children) {
+      const h = g.userData.hv = shapeOf(g);
+      h.s = h.front && x > -1e3 ? Math.hypot((x - h.x) / h.rx, (y - h.y) / h.ry) : Infinity;
+    }
+  }
+  // The body at (x, y). `cur` (the last pick) holds on until another body scores clearly better, so edges don't flicker.
+  function bodyAt(x, y, cur) {
+    hoverScores(x, y);
+    const best = tokens.children.filter((g) => g.userData.hv.s < 1).sort((a, b) => a.userData.hv.s - b.userData.hv.s).find(inView) || null;
+    if (cur && cur.parent === tokens && cur !== best && cur.userData.hv.s < 1 && (!best || best.userData.hv.s > cur.userData.hv.s * STICKY) && inView(cur)) return cur;
+    return best;
+  }
+  // The square under the cursor (terrain only; walls' own segments don't count).
+  function cellAt(x, y) {
+    ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera); ray.far = Infinity;
+    const hit = ray.intersectObjects(occluders(), false).find((h) => h.object.userData.cell);
+    return hit ? hit.object.userData.cell : null;
+  }
+  const cellOfBody = (g) => { const q = cellOf(lastState.creatures[g.userData.id].pos); return [q.x, q.y]; };
+  // Hover from the pointer. `emit` (a real pointer move) always tells onHover; a frame only does when a body's square changed.
+  function updateHover(emit) {
+    const free = mouse.x > -1e3 && !mouse.btn && lastState;
+    if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
+    ptrHover = lastBody ? lastBody.userData.id : null;
+    renderer.domElement.style.cursor = ptrHover ? 'pointer' : '';
+    if (!free || !onHover) return;
+    let c = null;
+    if (lastBody) c = cellOfBody(lastBody); else if (emit) { const q = cellAt(mouse.x, mouse.y); c = q ? [q.x, q.y] : [-1, -1]; } else return;
+    const key = c.join(',');
+    if (emit || key !== hoverKey) { hoverKey = key; onHover(c[0], c[1]); }
+  }
+  // Debug (?debug): draw the hover ellipses.
+  let dbg = null;
+  function drawHits() {
+    if (!DEBUG) return;
+    if (!dbg) { dbg = document.createElement('canvas'); dbg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none'; container.style.position = container.style.position || 'relative'; container.appendChild(dbg); }
+    const w = container.clientWidth, h = container.clientHeight; if (dbg.width !== w) dbg.width = w; if (dbg.height !== h) dbg.height = h;
+    const g = dbg.getContext('2d'); g.clearRect(0, 0, w, h);
+    for (const t of tokens.children) { const q = t.userData.hv; if (!q || !q.front) continue;
+      g.strokeStyle = t === lastBody ? '#d8b45a' : 'rgba(233,227,211,.4)'; g.setLineDash(q.s < 1 ? [] : [3, 3]);
+      g.beginPath(); g.ellipse(q.x - rect.left, q.y - rect.top, q.rx, q.ry, 0, 0, 7); g.stroke(); }
+  }
+
+  // The highlight each frame: hovered or selected 1, their square-mates .55; the approach grows as the cursor nears.
+  function stepHighlights(dt) {
+    const eff = ptrHover || hoveredId, cells = new Set();
+    for (const id of [eff, lastSelected]) { const g = id && tokenObjs.get(id); if (g) cells.add(g.userData.cellKey); }
+    for (const g of tokens.children) {
+      const u = g.userData, sel = lastSelected === u.id, hov = eff === u.id;
+      let ap = 0;
+      const s = u.hv ? u.hv.s : Infinity, q = Math.min(1, (HL.range - s) / Math.max(0.05, HL.range - HL.full));
+      if (hov) ap = 1; else if (q > 0 && inView(g)) ap = Math.min(q, 0.97);
+      u.apL += (ap - u.apL) * 0.35; if (u.apL < 0.002) u.apL = 0;
+      hlStep(g, u, hov || sel ? 1 : cells.has(u.cellKey) ? 0.55 : 0, dt);
+    }
+  }
+
+  // The selected square on the floor: a gold fill plus an outline, for a picked square.
+  const selSq = new THREE.Group();
+  {
+    const g = new THREE.PlaneGeometry(0.94, 0.94).rotateX(-Math.PI / 2);
+    selSq.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.22, depthWrite: false })),
+      new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: GOLD })));
+    selSq.visible = false; scene.add(selSq);
+  }
+  function showSquare(cell) { // cell: {x, y} or null
+    pickedCell = cell;
+    selSq.visible = !!cell;
+    if (cell && lastState) selSq.position.set(cell.x + 0.5, cellElev(lastState, cell.x, cell.y) * FT + 0.012, cell.y + 0.5);
+  }
+
+  // ---------- input ----------
+  // LMB drags the ground (the floor point under the cursor stays under it); RMB orbits, the wheel zooms, MMB dollies.
+  // A click is a press and release under ~5 px without movement.
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  let grab = null, downAt = null;
+  function groundAt(x, y) {
+    ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera);
+    return ray.ray.intersectPlane(ground, new THREE.Vector3());
+  }
+  const dom = renderer.domElement;
+  dom.addEventListener('pointerdown', (e) => {
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld();
+    downAt = [e.clientX, e.clientY, e.button]; mouse.btn = e.buttons;
+    if (e.button === 0 && e.pointerType === 'mouse') { grab = groundAt(e.clientX, e.clientY); try { dom.setPointerCapture(e.pointerId); } catch { /* ignore */ } }
+  });
+  dom.addEventListener('pointermove', (e) => {
+    mouse.x = e.clientX; mouse.y = e.clientY; mouse.btn = e.buttons;
+    if (e.buttons) {
+      ptrHover = lastBody = null;
+      if (grab && (e.buttons & 1)) {
+        const p = groundAt(e.clientX, e.clientY);
+        if (p && p.distanceTo(grab) < 30) { const d = grab.clone().sub(p); camera.position.add(d); controls.target.add(d); camera.updateMatrixWorld(); } // near the horizon the plane runs away
+      }
+      return;
+    }
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
+    updateHover(true);
+  });
+  const release = () => { grab = null; mouse.btn = 0; };
+  dom.addEventListener('pointercancel', release);
+  dom.addEventListener('pointerup', (e) => {
+    release();
     if (e.pwHandled) return;   // the action wheel used this click
-    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
-    const p = pick(e);
-    if (p && p.id && onSelect) onSelect(p.id);
-    else if (p && p.cell && onCell) onCell(p.cell.x, p.cell.y);
+    if (!downAt || downAt[2] !== 0 || e.button !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !lastState) return;
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
+    const g = bodyAt(e.clientX, e.clientY, lastBody);
+    if (g) { showSquare(null); if (onSelect) onSelect(g.userData.id); return; }
+    const c = cellAt(e.clientX, e.clientY);
+    if (c) { showSquare(c); if (onCell) onCell(c.x, c.y); }
   });
-  renderer.domElement.addEventListener('pointermove', (e) => {
-    if (e.buttons) { hoveredId = null; return; }
-    const p = pick(e);
-    hoveredId = p && p.id || null;
-    if (!onHover) return;
-    if (p && p.id && lastState) { const q = cellOf(lastState.creatures[p.id].pos); onHover(q.x, q.y); }
-    else if (p && p.cell) onHover(p.cell.x, p.cell.y);
-    else onHover(-1, -1);
-  });
-  renderer.domElement.addEventListener('pointerleave', () => { hoveredId = null; if (onHover) onHover(-1, -1); });
+  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = lastBody = null; hoverKey = null; if (onHover) onHover(-1, -1); });
 
   const wallRay = new THREE.Raycaster();
   function fadeOccludingWalls(dt) {
     const blocked = new Set();
     scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
-    for (const id of new Set([lastState && lastState.current, lastSelected, hoveredId])) {
+    for (const id of new Set([lastState && lastState.current, lastSelected, ptrHover || hoveredId])) {
       const c = lastState && lastState.creatures[id], g = tokenObjs.get(id);
       if (!c || c.hidden || !g) continue;
-      for (const up of [0.55, 0.95]) {
+      for (const up of [0.55, 0.95, g.userData.top]) {
         const point = g.position.clone().add(new THREE.Vector3(0, up, 0));
         const dir = point.sub(camera.position), distance = dir.length();
         wallRay.set(camera.position, dir.normalize()); wallRay.far = Math.max(0, distance - 0.05);
@@ -840,7 +1096,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       s.position.y = s.userData.y + (k - 1) * 0.1;
     }
     for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
-    for (const w of waters) { const m = w.material.map; m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; }
+    for (const w of waters) { const m = w.material.map; if (m) { m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; } }
     for (const g of tokens.children) {
       const u = g.userData;
       // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
@@ -874,6 +1130,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     stepEase(now);
     controls.update();
+    camera.updateMatrixWorld(); rect = renderer.domElement.getBoundingClientRect(); viewCache.clear();
+    if (lastState) { bodyInfo(); updateHover(false); stepHighlights(dt * 1000); drawHits(); }
     fadeOccludingWalls(dt);
     renderer.render(scene, camera);
   }
@@ -886,9 +1144,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   return {
     update(v, { selected, cursor, hovered } = {}) {
       const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
-      if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = null; ease = null; framed = false; }
+      if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = ptrHover = null; ease = null; framed = false; showSquare(null); }
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
+      if (pickedCell && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
@@ -897,7 +1156,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       setCursor(v, cursor);
     },
     ping: addPing,
-    setPath, shoot, bump, hit, glide, snap,
+    setPath, shoot, bump, hit, glide, snap, showSquare,
     setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
@@ -930,3 +1189,4 @@ function tokenLabels(v) {
   for (const [id, b] of Object.entries(base)) out[id] = count[b] > 1 ? b[0] + ((id.match(/\d+$/) || [''])[0] || id.slice(-1)) : b;
   return out;
 }
+function cellName(x, y) { return String.fromCharCode(65 + x) + (y + 1); }

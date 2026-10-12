@@ -46,6 +46,8 @@ try {
   const pv = C.view(st, 'player'), dv = C.view(st, 'dm');
   expect('hidden bugbear absent from player view', !pv.creatures.grall, JSON.stringify(Object.keys(pv.creatures)));
   expect('hidden bugbear present in DM view', !!dv.creatures.grall, '');
+  expect('view carries armor kind and shield', pv.creatures.rook && ['none', 'light', 'medium', 'heavy'].includes(pv.creatures.rook.armor.kind) && typeof pv.creatures.rook.armor.shield === 'boolean', JSON.stringify(pv.creatures.rook));
+  expect('armor from explicit field and keywords', C.armorOf({ armor: { kind: 'heavy', shield: true } }).kind === 'heavy' && C.armorOf({ notes: 'wears studded leather and carries a shield' }).kind === 'light' && C.armorOf({ notes: 'Plate armor' }).kind === 'heavy' && C.armorOf({ notes: 'Spell: Shield of Faith' }).shield === false && C.armorOf({}).kind === 'none', '');
   expect('enemy HP hidden from player view', pv.creatures.gob1 && pv.creatures.gob1.hp === undefined, JSON.stringify(pv.creatures.gob1));
 
   r = run('ruling', 'rook', 'athletics', '12');
