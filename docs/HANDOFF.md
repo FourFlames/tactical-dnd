@@ -5,6 +5,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 ## Rules (every session)
 - **A live game may be running** on port 5173 from `state.json` in the repo root. Never run engine commands there, and never edit `state.json` or `log.jsonl`.
 - Test in the sandbox: `node tools/sandbox.js <engine command>` (data in `.sandbox/`), and the viewer via `preview_start viewer-sandbox` (port 5174). `node test.js` and `node test-minds.js` use a temp folder on their own.
+- **3D in a cloud session:** the sandbox can't reach the CDN, so `?3d` says "couldn't load". Run `npm pack three@0.160.0` in a scratch folder and untar it. Then, in headless Playwright (Chromium at `/opt/pw-browsers/chromium`, launched with `--use-gl=swiftshader --enable-unsafe-swiftshader`), serve it in place of the CDN: `page.route('https://cdn.jsdelivr.net/npm/three@0.160.0/**', (r) => r.fulfill({ path: '<scratch>/package/' + r.request().url().split('three@0.160.0/')[1], contentType: 'text/javascript' }))`. Join links keep extras: `/j/<code>?3d`. A double-click needs two `mouse.click`s under 400 ms apart (`locator.click` waits too long).
 - The server reads `viewer.html` fresh on every page load, so work on the branch below and don't leave half-done viewer edits on `main`.
 - Design references, read only if your card names them: [plan-playable.md](plan-playable.md) (the why), [wheel-lexicon.md](wheel-lexicon.md) (wheel slot intuitions; a scratchpad, the code wins).
 - Match the surrounding code: no build step, no dependencies, plain JS, comments only where the why isn't obvious.
@@ -30,7 +31,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - Side projects (atomic history, council, recognition, sword icons, codex) are parked on their own branches and in `git stash`; keep them off `playable-1`.
 - HUD (Card 3): one `.float.hud` bottom-left (`drawAct`/`drawTurn` fill it; turn strip is `#turnSec` inside it); Character tab = `#sheet` in the sidebar, localStorage `sideView`. Party view now carries `resources` and `char`.
 - Card 4: `#look` is one `.ecard` (`cardHtml()`); hover preview + `#hovchip` via `hoverCell`/`hoverCache` (cleared in `refresh()`). No hit % (would leak AC). Click selects, double-click focuses: `selectRef(ref, src)` / `focusRef(ref)` for creature ids and cells, from portraits, 2D tokens, 3D models (`onSelect`) and any `[data-ref]` (log name/cell chips via `linkRefs`, ids from entry data, unique names only, never ids the viewer lacks). Timed clicks (400 ms), not dblclick. 3D cell focus is a no-op until `map3d.focus` takes cells.
-- Turn feel (now Card 7) landed from another session and works in the sandbox: Follow turn (`setFollow`/`focusOn` in map3d; yields on press, drag or zoom, not hover), 3D glide (`moveQueue`/`startNextMove`), ticker (`#actionTicker`), "DM is resolving…" (`#dmResolving`), Story/Details log with chips. Wall fade (`fadeOccludingWalls`) is in but not yet seen working. Its new-event tracking (`logArrival`, map3d `playMoves`) is what Card 6 replaces.
+- Turn feel (now Card 7) landed from another session and works in the sandbox: Follow turn (`setFollow`/`focusOn` in map3d; yields on press, drag or zoom, not hover), 3D glide (`moveQueue`/`startNextMove`), ticker (`#actionTicker`), "DM is resolving…" (`#dmResolving`), Story/Details log with chips. Wall fade (`fadeOccludingWalls`) checked on `tollhouse`. Its new-event tracking (`logArrival`, map3d `playMoves`) is what Card 6 replaces.
 - Next card: **6**, then **7** (finish), then **5**/**8**.
 
 ## Cards (in order; each fits one session)
@@ -50,6 +51,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 9. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-12: Wall fade seen working (tollhouse, DM view, Morrow behind the south wall). `/j/<code>` keeps extra params (`?3d`). How to run 3D headless in a cloud session added to Rules.
 - 2026-10-12: Review of PR #11: Card 6 is now the event stream (sliding 80-entry window silences fx/ticker); old 6-8 renumbered 7-9. Follow turn no longer yields to plain hover or leaving the canvas.
 - 2026-10-12: Double-click focus generalized (Sonnet): portraits, map tokens/models, log name and cell chips all go through `selectRef`; checked in 2D and on a 3D model.
 - 2026-10-12: Card 4 (Sonnet): entity card with side stripe, health chip/HP bar, odds cells, attack chips; hover preview and pointer chip; portrait double-click focuses the camera (2D and 3D). Fixed a look request racing the cursor (`cell=null`). Card 6 partial work from the other session committed alongside.
@@ -57,4 +59,3 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - 2026-10-11: The wheel unfolds out of the entity's icon (smaller, .8); icon, stem and label stay, other icons drop lower and behind; clicking the icon deselects; fold = pips slide under the icon, unfold = rush out in a line toward the pointer then fan to the hexagon.
 - 2026-10-11: Icons and labels share one layer, stacked by distance to the cursor (nearest on top); each label is one z-step above its own icon.
 - 2026-10-11: Icon mode hits icons by distance (`iconHit`): 25% wider than drawn, nearest centre wins; DOM pointer events off there, clicks go through the canvas handler.
-- 2026-10-11: Trace back down from the last hovered icon in icon mode (blend in reverse; an icon in the way takes over); hovered icon in icon mode grows 1.3×; calmer spark. Spread displacement off (`SPREAD = false`, crowd labels apply in icon mode); a 36-rat swarm square (H8) for trying it.
