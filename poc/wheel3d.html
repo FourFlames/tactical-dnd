@@ -107,6 +107,7 @@
   <span class="seg" id="seg"><button data-m="wheel">Wheel</button><button data-m="bar">Bar</button></span>
   <span id="hint"></span>
   <label><input type="checkbox" id="slow"> slow-mo spin</label>
+  <label><input type="checkbox" id="hits"> hit areas</label>
 </div>
 <div class="hud" id="card"></div>
 <div class="hud" id="log"></div>
@@ -117,8 +118,6 @@ import { createPipWheel } from './pip-wheel.js';
 
 const COLS = 12, ROWS = 9, FT = 1 / 5;
 const SPIN = () => (document.getElementById('slow').checked ? 600 : 150);
-const NEAR_PX = 170;     // how close the cursor must be for a marker to show
-const NEAR_BAR_PX = 100; // Bar mode: how close to the body itself before its icon shows
 const colName = (c) => String.fromCharCode(65 + c);
 const cellName = (c, r) => colName(c) + (r + 1);
 
@@ -197,7 +196,6 @@ for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
   scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: .25 })));
 }
 
-const pickables = [...occluders];   // what a click or hover ray can hit: floors, walls and (once built) entity bodies
 
 // ---------- entity bodies ----------
 const SIDE = { party: '#4fb3a4', enemy: '#cf6a4c', object: '#a59f8e' };
@@ -208,24 +206,24 @@ function body(e) {
   if (e.item) {
     add(new THREE.BoxGeometry(.07, .03, .55), M('#b9b4a8', { metalness: .7, roughness: .3 }), 0, .03, -.05);
     add(new THREE.BoxGeometry(.22, .04, .05), M('#6b4a2b'), 0, .03, .22);
-    e.top = .12;
+    e.top = .12; e.half = .3;
   } else if (e.kind === 'object') {
     add(new THREE.BoxGeometry(.9, 1.5, .14), M('#6b4a2b'), 0, .75, 0).rotation.y = Math.PI / 2;
-    e.top = 1.55;
+    e.top = 1.55; e.half = .45;
   } else if (e.rat) {
     add(new THREE.SphereGeometry(.11, 12, 8), col, 0, .1, 0).scale.set(1, .8, 1.5);
     add(new THREE.SphereGeometry(.06, 10, 8), col, 0, .14, .16);
-    e.top = .22;
+    e.top = .22; e.half = .14;
   } else if (e.id === 'bat') {
     add(new THREE.SphereGeometry(.16, 14, 10), col, 0, 0, 0);
     for (const s of [-1, 1]) add(new THREE.BoxGeometry(.5, .02, .28), col, s * .32, .04, 0).rotation.z = s * .35;
-    e.top = .2;
+    e.top = .2; e.half = .55;
   } else {
     const torso = add(new THREE.CapsuleGeometry(.2, .5, 6, 14), col, 0, .5, 0);
     const head = add(new THREE.SphereGeometry(.15, 16, 12), M('#d8c7a8'), 0, 1.05, 0);
     add(new THREE.CylinderGeometry(.34, .36, .06, 24), M('#1f1d18'), 0, .03, 0);
     if (e.prone) { torso.rotation.z = Math.PI / 2; torso.position.set(0, .22, 0); head.position.set(.5, .2, 0); }
-    e.top = e.prone ? .45 : 1.25;
+    e.top = e.prone ? .45 : 1.25; e.half = e.prone ? .45 : .26;
   }
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.material = o.material.clone(); } });
   scene.add(g);
@@ -249,7 +247,6 @@ function layout() {
   }
   for (const e of ents) if (!e.obj) {
     e.obj = body(e); e.obj.position.copy(e.target);
-    if (!e.me) e.obj.traverse((o) => { if (o.isMesh) { o.userData.ent = e; pickables.push(o); } });
   }
 }
 layout();
@@ -397,20 +394,18 @@ function updateMarkers() {
     e.anchor = s;
     e.mk.base.copy(e.obj.position).y += e.top;
     e.mk.ta = toScreen(tmp.copy(e.mk.base).setY(e.mk.base.y + STEM_W));
-    e.cs = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top / 2));
     const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
     let want = 0;
     if (bar) {
       // direct hover shows the icon at full; "near" fades it in (only while nothing is selected)
-      const near = Math.min(Math.hypot(mouse.x - e.cs.x, mouse.y - e.cs.y), pillD);
-      const ramp = Math.max(0, Math.min(1, (NEAR_BAR_PX - near) / 40));
+      const ramp = Math.max(nearRamp(e, NEAR_SCORE), Math.min(1, Math.max(0, (60 - pillD) / 30)));
       if (B?.ent === e) want = 0;   // its icon is in the bar
       else if (B && !B.ent && B.square.c === e.c && B.square.r === e.r) want = 1;
       else if (s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = B?.ent !== e && s.front && !(B && !B.ent);
     } else {
-      const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
-      if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+      const ramp = Math.max(nearRamp(e, NEAR_SCORE_PILLS), Math.min(1, Math.max(0, (60 - pillD) / 30)));
+      if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = !busy && s.front;
     }
     e.want = want;
@@ -596,13 +591,7 @@ function squareRoot(s) {
 let W = null;   // { ent } or { square }
 const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel() });
 const camRight = new THREE.Vector3();
-function bodyAnchor(e) {
-  const p = e.obj.position, c = toScreen(tmp.copy(p).setY(p.y + e.top / 2));
-  const t = toScreen(tmp.copy(p).setY(p.y + e.top)), b = toScreen(p);
-  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-  const s = toScreen(tmp.copy(p).setY(p.y + e.top / 2).addScaledVector(camRight, .4));
-  return { x: c.x, y: c.y, r: Math.max(Math.hypot(t.x - b.x, t.y - b.y) / 2, Math.hypot(s.x - c.x, s.y - c.y), 14) + 6 };
-}
+function bodyAnchor(e) { const h = shapeOf(e); return { x: h.x, y: h.y, r: Math.max(h.rx, h.ry) }; }
 function squareAnchor(c, r) {
   const y = floorTop(c, r), m = toScreen(new THREE.Vector3(c + .5, y, r + .5));
   const a = toScreen(new THREE.Vector3(c, y, r)), b = toScreen(new THREE.Vector3(c + 1, y, r + 1));
@@ -649,35 +638,63 @@ function setMode(m) {
 const pickEntity = (e) => (mode === 'bar' ? barSelectEnt(e) : openWheelOn(e));
 const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : null);
 
-// Screen-space picking: the body under the cursor (nearest hit, so walls hide things), else the floor cell.
-function pickAt(x, y) {
-  ray.setFromCamera(new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), camera); ray.far = Infinity;
-  const o = ray.intersectObjects(pickables, false)[0]?.object;
-  return { ent: o?.userData.ent || null, cell: o?.userData.ent ? null : o?.userData.cell };
+// Hover, worked out on the fly in screen space: each body is an ellipse (its projected half-height and half-width,
+// padded, never tiny), and its score is the cursor's distance from the centre in units of those radii, so < 1 is
+// inside. Where ellipses overlap, the body whose centre the cursor is relatively nearer wins: move toward the one you
+// mean. Line of sight (the costly part) is only checked for bodies the cursor is inside, best first.
+const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = .8;
+const NEAR_SCORE = 2.5, NEAR_SCORE_PILLS = 4;   // faint glow / pills fade in below these scores
+function shapeOf(e) {
+  const p = e.obj.position, c = toScreen(tmp.copy(p).setY(p.y + e.top / 2));
+  const t = toScreen(tmp.copy(p).setY(p.y + e.top)), b = toScreen(p);
+  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const sd = toScreen(tmp.copy(p).setY(p.y + e.top / 2).addScaledVector(camRight, e.half));
+  return { x: c.x, y: c.y, front: c.front,
+    rx: Math.max(Math.hypot(sd.x - c.x, sd.y - c.y), HOVER_MIN) + HOVER_PAD,
+    ry: Math.max(Math.hypot(t.x - b.x, t.y - b.y) / 2, HOVER_MIN) + HOVER_PAD };
 }
-// Thin things (a sword on the floor) are hard to hit: a body centre within a few px counts.
-function nearBody(x, y) {
-  let best = null, bd = 18;
+function hoverScores(x, y) {
   for (const e of ents) {
-    if (e.me || !e.cs) continue;
-    const d = Math.hypot(x - e.cs.x, y - e.cs.y);
-    if (d < bd && inView(e)) { best = e; bd = d; }
+    if (e.me) continue;
+    const h = e.hv = shapeOf(e);
+    h.s = h.front ? Math.hypot((x - h.x) / h.rx, (y - h.y) / h.ry) : Infinity;
   }
+}
+const nearRamp = (e, limit) => Math.max(0, Math.min(1, (limit - (e.hv?.s ?? Infinity)) / (limit - 1.2)));
+// The body at (x, y). `cur` (the last pick) holds on until another body scores clearly better, so edges don't flicker.
+function bodyAt(x, y, cur) {
+  hoverScores(x, y);
+  const best = ents.filter((e) => e.hv?.s < 1).sort((a, b) => a.hv.s - b.hv.s).find(inView) || null;
+  if (cur && cur !== best && cur.hv?.s < 1 && (!best || best.hv.s > cur.hv.s * STICKY) && inView(cur)) return cur;
   return best;
 }
-const pickEnt = (x, y) => pickAt(x, y).ent || nearBody(x, y);
+function cellAt(x, y) {
+  ray.setFromCamera(new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), camera); ray.far = Infinity;
+  const cell = ray.intersectObjects(occluders, false)[0]?.object.userData.cell;
+  return cell && !walls.has(cellName(cell.c, cell.r)) ? cell : null;
+}
+let lastBody = null;
 function updateHover() {
-  hoverEnt = mkHover;
-  if (W) return;
-  if (!hoverEnt && !mouse.ui && !mouse.btn && mouse.x > -1e3) hoverEnt = pickEnt(mouse.x, mouse.y);
+  const free = !W && !mouse.ui && !mouse.btn && mouse.x > -1e3;
+  if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
+  hoverEnt = W ? null : mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
+  drawHits();
 }
 function barClick(x, y) {
-  const p = pickAt(x, y);
-  const e = p.ent || nearBody(x, y);
+  const e = bodyAt(x, y, lastBody);
   if (e) return barSelectEnt(e);
-  if (p.cell && !walls.has(cellName(p.cell.c, p.cell.r))) return barSelectSquare(p.cell.c, p.cell.r);
+  const cell = cellAt(x, y);
+  if (cell) return barSelectSquare(cell.c, cell.r);
   closeBar();
+}
+// Debug: draw the hover ellipses.
+const hitsEl = document.createElementNS(SVGNS, 'g');
+stems.appendChild(hitsEl);
+function drawHits() {
+  if (!document.getElementById('hits').checked) { if (hitsEl.firstChild) hitsEl.innerHTML = ''; return; }
+  hitsEl.innerHTML = ents.filter((e) => e.hv?.front).map((e) => { const h = e.hv;
+    return `<ellipse cx="${h.x}" cy="${h.y}" rx="${h.rx}" ry="${h.ry}" fill="none" stroke="${e === hoverEnt ? '#d8b45a' : '#e9e3d366'}" stroke-dasharray="${h.s < 1 ? '' : '3 3'}"/>`; }).join('');
 }
 
 // The selected square, drawn on the floor.
@@ -865,10 +882,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.cli
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
-  const p = pickAt(ev.clientX, ev.clientY);
-  const e = p.ent || nearBody(ev.clientX, ev.clientY);
+  const e = bodyAt(ev.clientX, ev.clientY, lastBody);
   if (e) return openWheelOn(e);
-  if (p.cell && !walls.has(cellName(p.cell.c, p.cell.r))) openWheelOnSquare(p.cell.c, p.cell.r);
+  const cell = cellAt(ev.clientX, ev.clientY);
+  if (cell) openWheelOnSquare(cell.c, cell.r);
 });
 addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
