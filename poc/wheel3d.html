@@ -37,23 +37,6 @@
   .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1ef0; }
 
   /* the wheel (same as poc/wheel.html) */
-  #wheel { position: absolute; width: 0; height: 0; z-index: 10; }
-  #wheel svg { position: absolute; left: -150px; top: -150px; width: 300px; height: 300px; overflow: visible; pointer-events: none; }
-  #wheel .sector { fill: #1c1b16e0; stroke: var(--line); stroke-width: 1.5; pointer-events: all; cursor: pointer; transition: fill .08s; }
-  #wheel .sector.hot { fill: #2e2a1ef2; stroke: var(--gold); }
-  #wheel .sector.off { fill: #181713e6; cursor: not-allowed; }
-  #wheel .sector.back { fill: #201f1aee; }
-  #wheel .hub { fill: #14130ff2; stroke: var(--gold); stroke-width: 1.5; pointer-events: all; cursor: pointer; }
-  .lab { position: absolute; width: 104px; margin-left: -52px; transform: translateY(-50%); text-align: center; pointer-events: none; line-height: 1.15; }
-  .lab .role { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
-  .lab .what { font-size: 12.5px; font-weight: 600; }
-  .lab .odds { font-size: 11px; color: var(--gold); }
-  .lab .key { position: absolute; left: 50%; top: -15px; margin-left: -7px; width: 14px; height: 14px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); font: 9px/12px ui-monospace, monospace; color: var(--ink-dim); }
-  .lab .self { font-size: 9px; color: var(--party); border: 1px solid var(--party); border-radius: 3px; padding: 0 3px; margin-left: 3px; vertical-align: 1px; }
-  .lab.off .what { color: var(--ink-faint); font-weight: 400; }
-  .lab.off .odds { color: var(--ink-faint); }
-  .lab.hot .what { color: var(--gold); }
-  .hubtxt { position: absolute; width: 70px; margin-left: -35px; transform: translateY(-50%); text-align: center; font-size: 10.5px; color: var(--ink-dim); pointer-events: none; line-height: 1.15; }
 
   .morelist { position: absolute; pointer-events: all; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; max-height: 180px; overflow: auto; z-index: 11; min-width: 120px; }
   .morelist div { padding: 3px 8px; cursor: pointer; border-radius: 4px; }
@@ -128,6 +111,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createPipWheel } from './pip-wheel.js';
 
 const COLS = 12, ROWS = 9, FT = 1 / 5;
 const SPIN = () => (document.getElementById('slow').checked ? 600 : 150);
@@ -370,7 +354,6 @@ function updateMarkers() {
     e.mk.base.copy(e.obj.position).y += e.top;
     e.mk.ta = toScreen(tmp.copy(e.mk.base).setY(e.mk.base.y + STEM_W));
     e.cs = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top / 2));
-    const sel = W && W.ent === e;
     const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
     let want = 0;
     if (bar) {
@@ -382,8 +365,7 @@ function updateMarkers() {
       else if (!listEl && s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
     } else {
       const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
-      if (sel) want = 1;
-      else if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+      if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
     }
     e.want = want;
     if (want > 0 || e.mk.alpha > .02) live.push(e);
@@ -407,8 +389,7 @@ function updateMarkers() {
   }
   for (const m of Object.values(moreMk)) if (!crowded.has(m)) m.want = 0;
   // the square marker exists only while its wheel is open
-  if (W && W.square) { sqMk.base.copy(W.square.point); sqMk.ta = toScreen(tmp.copy(sqMk.base).setY(sqMk.base.y + STEM_W)); sqMk.hasBase = true; sqMk.want = 1; sqMk.el.lastChild.textContent = cellName(W.square.c, W.square.r); }
-  else sqMk.want = 0;
+  sqMk.want = 0;
 
   // 3. each pill starts straight above its stem's top; pills on similar screen-y then relax sideways in
   //    left-to-right order of their stems, moving only as far as they must (clusters pack and centre on their stems)
@@ -432,9 +413,8 @@ function updateMarkers() {
     m.x += (m.tx - m.x) * .35; m.y += (m.ty - m.y) * .35;
     const a = m.alpha < .02 ? 0 : m.alpha;
     m.el.style.opacity = a;
-    m.el.style.pointerEvents = a > .4 && !(W && m !== W.mk) ? 'auto' : 'none';
+    m.el.style.pointerEvents = a > .4 && !W ? 'auto' : 'none';
     m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
-    m.el.style.visibility = W && m === W.mk ? 'hidden' : '';   // the wheel's hub takes the pill's place
     // the world stem: placed at the base, faded with the pill
     const hot = m.el.classList.contains('hot');
     for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
@@ -452,7 +432,7 @@ function updateMarkers() {
     if (bar) {
       const mate = B && !B.ent && B.square.c === e.c && B.square.r === e.r;
       glow(e, hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want);
-    } else glow(e, (W && W.ent === e) || hoverEnt === e);
+    } else glow(e, W?.ent === e ? .45 : hoverEnt === e ? .55 : W ? 0 : .16 * e.want);
     e.mk.el.classList.toggle('hot', hoverEnt === e);
   }
 }
@@ -569,111 +549,38 @@ function squareRoot(s) {
   };
 }
 
-// ---------- the wheel (same as the 2D mockup, but it rides on a pill) ----------
-const wheelEl = document.createElement('div');
-wheelEl.id = 'wheel'; wheelEl.hidden = true;
-overlay.appendChild(wheelEl);
-const R_IN = 40, R_OUT = 138, R_LAB = 90, GAP = 1.6;
-const slotAngle = (k) => -90 + (k - 1) * 60;
-let W = null;
-const rad = (a) => a * Math.PI / 180;
-function sectorPath(a) {
-  const a0 = rad(a - 30 + GAP), a1 = rad(a + 30 - GAP);
-  const p = (r, t) => `${(r * Math.cos(t)).toFixed(2)} ${(r * Math.sin(t)).toFixed(2)}`;
-  return `M ${p(R_IN, a0)} L ${p(R_OUT, a0)} A ${R_OUT} ${R_OUT} 0 0 1 ${p(R_OUT, a1)} L ${p(R_IN, a1)} A ${R_IN} ${R_IN} 0 0 0 ${p(R_IN, a0)} Z`;
+// ---------- Wheel mode: a pip wheel around the body (poc/pip-wheel.js) ----------
+// The ring is centred on what was picked and sized from its on-screen footprint, so the body stays visible inside it.
+let W = null;   // { ent } or { square }
+const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel() });
+const camRight = new THREE.Vector3();
+function bodyAnchor(e) {
+  const p = e.obj.position, c = toScreen(tmp.copy(p).setY(p.y + e.top / 2));
+  const t = toScreen(tmp.copy(p).setY(p.y + e.top)), b = toScreen(p);
+  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const s = toScreen(tmp.copy(p).setY(p.y + e.top / 2).addScaledVector(camRight, .4));
+  return { x: c.x, y: c.y, r: Math.max(Math.hypot(t.x - b.x, t.y - b.y) / 2, Math.hypot(s.x - c.x, s.y - c.y), 14) + 6 };
 }
+function squareAnchor(c, r) {
+  const y = floorTop(c, r), m = toScreen(new THREE.Vector3(c + .5, y, r + .5));
+  const a = toScreen(new THREE.Vector3(c, y, r)), b = toScreen(new THREE.Vector3(c + 1, y, r + 1));
+  return { x: m.x, y: m.y, r: Math.hypot(a.x - b.x, a.y - b.y) / 2 };
+}
+function showSel(c, r) { selSq.visible = true; selSq.position.set(c + .5, floorTop(c, r) + .012, r + .5); }
 function openWheelOn(e) {
   closeAll();
-  W = { ent: e, mk: e.mk, stack: [rootFor(e)], hot: 0, offset: 0, spin: null };
-  startWheel();
+  W = { ent: e };
+  showSel(e.c, e.r);
+  pw.open(rootFor(e), () => bodyAnchor(e));
 }
 function openWheelOnSquare(c, r) {
   closeAll();
-  W = { square: { c, r, point: new THREE.Vector3(c + .5, floorTop(c, r), r + .5) }, mk: sqMk, stack: [squareRoot({ c, r })], hot: 0, offset: 0, spin: null };
-  sqMk.x = null;
-  startWheel();
+  W = { square: { c, r } };
+  showSel(c, r);
+  pw.open(squareRoot({ c, r }), () => squareAnchor(c, r));
 }
-function startWheel() {
-  wheelEl.hidden = false;
-  buildWheel();
-  spin(+1, .5);
-}
-function closeWheel() { W = null; wheelEl.hidden = true; wheelEl.innerHTML = ''; }
+function closeWheel() { if (!W) return; W = null; pw.close(); selSq.visible = false; }
 function closeAll() { closeWheel(); closeMore(); closeBar(); }
-const curMenu = () => W.stack[W.stack.length - 1];
-const slotOf = (menu, k) => (W.stack.length > 1 && k === 4 ? { what: 'Back', back: true } : menu.slots[k] || null);
-
-function buildWheel() {
-  const menu = curMenu();
-  const depth = W.stack.length;
-  let svg = '<svg viewBox="-150 -150 300 300"><g id="ring">';
-  for (let k = 1; k <= 6; k++) {
-    const s = slotOf(menu, k);
-    const cls = !s ? 'sector off' : s.back ? 'sector back' : s.off ? 'sector off' : 'sector';
-    svg += `<path class="${cls}" data-k="${k}" d="${sectorPath(slotAngle(k))}"/>`;
-  }
-  svg += `</g><circle class="hub" r="${R_IN - 4}"/></svg>`;
-  let labs = '';
-  for (let k = 1; k <= 6; k++) {
-    const s = slotOf(menu, k);
-    if (!s) { labs += `<div class="lab off" data-k="${k}"><span class="key">${k}</span></div>`; continue; }
-    const role = depth === 1 && s.role && s.role !== s.what ? `<div class="role">${s.role}</div>` : '';
-    const what = s.back ? '↶ Back' : s.what + (s.sub ? ' ▸' : '');
-    labs += `<div class="lab${s.off ? ' off' : ''}" data-k="${k}"><span class="key">${k}</span>${role}<div class="what">${what}${s.self ? '<span class="self">self</span>' : ''}</div>${s.odds ? `<div class="odds">${s.odds}</div>` : ''}</div>`;
-  }
-  wheelEl.innerHTML = svg + labs + `<div class="hubtxt" style="top:0">${depth > 1 ? '‹ ' : ''}${menu.title}</div>`;
-  wheelEl.querySelectorAll('.sector').forEach((p) => {
-    const k = +p.dataset.k;
-    p.onmouseenter = () => setHot(k);
-    p.onmouseleave = () => setHot(0);
-    p.onclick = (ev) => { ev.stopPropagation(); choose(k, ev.shiftKey); };
-  });
-  wheelEl.querySelector('.hub').onclick = (ev) => { ev.stopPropagation(); back(); };
-  setHot(W.hot);
-  place();
-}
-function setHot(k) {
-  if (!W) return;
-  W.hot = k;
-  wheelEl.querySelectorAll('.sector').forEach((p) => p.classList.toggle('hot', +p.dataset.k === k && !p.classList.contains('off')));
-  wheelEl.querySelectorAll('.lab').forEach((l) => l.classList.toggle('hot', +l.dataset.k === k));
-}
-function spin(dir, frac = 1) { W.spin = { from: -dir * 60 * frac, t0: performance.now(), dur: SPIN() }; }
-const ease = (t) => 1 - Math.pow(1 - t, 3);
-function place() {
-  const ring = wheelEl.querySelector('#ring');
-  if (ring) ring.setAttribute('transform', `rotate(${W.offset.toFixed(2)})`);
-  wheelEl.querySelectorAll('.lab').forEach((l) => {
-    const a = rad(slotAngle(+l.dataset.k) + W.offset);
-    l.style.left = (R_LAB * Math.cos(a)).toFixed(1) + 'px';
-    l.style.top = (R_LAB * Math.sin(a) + 4).toFixed(1) + 'px';
-  });
-}
-// The wheel sits on its pill and follows it as the camera moves, kept inside the window.
-function updateWheel(now) {
-  if (!W) return;
-  if (W.spin) {
-    const t = Math.min(1, (now - W.spin.t0) / W.spin.dur);
-    W.offset = W.spin.from * (1 - ease(t));
-    if (t >= 1) W.spin = null;
-    place();
-  }
-  const m = W.mk;
-  const R = R_OUT + 4;
-  W.x = Math.max(R, Math.min(innerWidth - R, m.x));
-  W.y = Math.max(R, Math.min(innerHeight - R, m.y));
-  wheelEl.style.left = W.x + 'px'; wheelEl.style.top = W.y + 'px';
-}
-function choose(k, shift) {
-  if (!W) return;
-  const s = slotOf(curMenu(), k);
-  if (!s || s.off) return;
-  if (s.back) return back();
-  if (shift && s.full && W.stack.length === 1) return drill(s.full());
-  if (s.sub) return drill(s.sub());
-  runSlot(s);
-  closeWheel();
-}
 // what running an action does in the mockup (shared by both modes)
 function runSlot(s) {
   if (s.inspect) inspect(s.inspect);
@@ -681,18 +588,12 @@ function runSlot(s) {
   if (s.act) log(s.what, s.act);
   if (s.moveTo) { Object.assign(me(), { c: s.moveTo.c, r: s.moveTo.r }); layout(); }
 }
-function drill(menu) { W.stack.push(menu); W.hot = 0; buildWheel(); spin(+1); }
-function back() {
-  if (!W) return closeMore();
-  if (W.stack.length === 1) return closeWheel();
-  W.stack.pop(); W.hot = 0; buildWheel(); spin(-1);
-}
 
 // ---------- Bar mode: hover, pick, and the action bar under the selected square ----------
 let startMode = 'wheel';
 try { if (localStorage.getItem('wheel3d.mode') === 'bar') startMode = 'bar'; } catch (e) { /* storage blocked: default */ }
 const HINTS = {
-  wheel: 'Hover near a body, click its pill · floor click = square wheel · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
+  wheel: 'Click a body or its pill, or the floor · aim anywhere toward a pip, click · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
   bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
 };
 function setMode(m) {
@@ -704,7 +605,7 @@ function setMode(m) {
   try { localStorage.setItem('wheel3d.mode', m); } catch (e) { /* ignore */ }
 }
 const pickEntity = (e) => (mode === 'bar' ? barSelectEnt(e) : openWheelOn(e));
-const goBack = () => (mode === 'bar' ? barBack() : back());
+const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : closeMore());
 
 // Screen-space picking: the body under the cursor (nearest hit, so walls hide things), else the floor cell.
 function pickAt(x, y) {
@@ -725,7 +626,7 @@ function nearBody(x, y) {
 const pickEnt = (x, y) => pickAt(x, y).ent || nearBody(x, y);
 function updateHover() {
   hoverEnt = mkHover;
-  if (mode !== 'bar') return;
+  if (W) return;
   if (!hoverEnt && !mouse.ui && !mouse.btn && mouse.x > -1e3) hoverEnt = pickEnt(mouse.x, mouse.y);
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
 }
@@ -917,19 +818,18 @@ document.addEventListener('pointerover', (ev) => setTip(ev.target.closest?.('.ti
 document.documentElement.addEventListener('pointerleave', () => setTip(null));
 
 // ---------- input ----------
-// A click (not a drag) on the scene: close what's open, or open the square wheel on the floor that was hit.
-// Bodies are never click targets; their pills are.
+// A click (not a drag) on the scene picks the body under the cursor, else the floor. While the pip wheel is open it
+// takes clicks itself, so none reach here.
 let down = null;
 renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; });
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
-  if (W || listEl) return closeAll();
-  const ndc = new THREE.Vector2(ev.clientX / innerWidth * 2 - 1, -(ev.clientY / innerHeight) * 2 + 1);
-  ray.setFromCamera(ndc, camera); ray.far = Infinity;
-  const hit = ray.intersectObjects(occluders, false)[0];
-  const cell = hit?.object.userData.cell;
-  if (cell && !walls.has(cellName(cell.c, cell.r))) openWheelOnSquare(cell.c, cell.r);
+  if (listEl) return closeMore();
+  const p = pickAt(ev.clientX, ev.clientY);
+  const e = p.ent || nearBody(ev.clientX, ev.clientY);
+  if (e) return openWheelOn(e);
+  if (p.cell && !walls.has(cellName(p.cell.c, p.cell.r))) openWheelOnSquare(p.cell.c, p.cell.r);
 });
 addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
@@ -937,7 +837,6 @@ addEventListener('contextmenu', (ev) => {
   if (!dragged) goBack();
 });
 addEventListener('keydown', (ev) => {
-  if (/^Digit[1-6]$/.test(ev.code) && W) { const k = +ev.code.slice(5); setHot(k); choose(k, ev.shiftKey); return; }
   if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); goBack(); }
 });
 
@@ -964,7 +863,6 @@ renderer.setAnimationLoop((now) => {
   bat.obj.position.y = bat.target.y + Math.sin(now / 400) * .08;
   renderer.render(scene, camera);
   updateMarkers();
-  updateWheel(now);
   updateBar(now);
   tickTip();
 });
