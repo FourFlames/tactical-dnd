@@ -22,7 +22,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - 3D mockup map, for tweaking (`poc/wheel3d.html` unless noted):
   - Hover: `shapeOf`/`hoverScores`/`bodyAt` (screen ellipse incl. footprint, score <1 = inside, 20% stickiness); "hit areas" toggle draws them.
   - Highlight: `hlStep` (fresnel rim, floor halo, gold ring sized from `e.half`, capped at the square; ~100 ms snap); "Highlight" panel, saved in localStorage `wheel3d.hl`.
-  - Markers: equal world stems (`STEM_W`, Line2, dashed when hidden), icon on the stem top, label always above (wheel-caption style); tracing a stem (≤11 px) holds hover, gold + spark; top of stem → icon mode (that square's icons spread by a fixed-pass force layout, stems lean).
+  - Markers: equal world stems (`STEM_W`, Line2, dashed when hidden), icon on the stem top, label always above (wheel-caption style); tracing a stem (≤11 px) holds hover, gold + spark; last 15% of a trace blends into icon mode (`pre`, traced icon pinned), others' growth locked to `trace.lock`; top of stem → icon mode (that square's icons spread by a fixed-pass force layout, stems lean).
   - Pip wheel (`poc/pip-wheel.js`): icons on a hexagon, title caption under each, details in one tooltip; anchored by `bodyAnchor` to the gold ring (centre + ¼ height), size .85-1.15; folds by unsigned distance to the nearest grey line (`NEAR` 96 px), pops back on full-size ring/icons (+`GRACE` 10); clicking inside the ring re-picks a square-mate (`onInnerClick`).
   - Rook (`me`) is selectable: self wheel, status strip `.rk`, full sheet in `#card`, movement spent by moves.
   - Controls: LMB drags the ground, RMB orbits, wheel zooms; pills grey out while dragging.
@@ -40,6 +40,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-11: Tracing a stem: its last 15% blends into icon mode (square-mates grow and spread around the pinned traced icon, others fade), committing at the top; other stems' growth uses the point where the trace began.
 - 2026-10-11: Spark ¼ size; marker labels always above their icon (no flip in icon mode) and styled like the wheel captions; wheel captions tuck 4 px under their icon.
 - 2026-10-11: Markers (Sonnet): icons ride equal world stems, no screen kinks; tracing a stem holds the hover with a gold, wider section and a spark; reaching the top spreads that square's icons (fixed-pass force layout, stems lean in world space).
 - 2026-10-11: Pip wheel anchors to the gold selection ring (its centre, raised a quarter of the model's height) and scales .85-1.15 with the ring's screen size.

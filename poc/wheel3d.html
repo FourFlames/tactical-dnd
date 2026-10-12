@@ -430,9 +430,11 @@ function inView(e) {
 // Icon mode: hovering an icon, or tracing a stem to its top, spreads the icons of everything in that square a little. A fixed
 // number of relaxation passes from the stem tops each frame (no running simulation), so it is stable while orbiting. Each
 // icon's offset is turned back into world space at its stem top's depth, so the stem leans to it: no screen-space lines.
-let iconMode = null, escHold = false;   // { c, r, list } or null (graphic mode)
+let iconMode = null, escHold = false;   // { c, r, list, pin } or null (graphic mode)
+let pre = null;   // the last 15% of a traced stem blends into icon mode: { list, pin, k } with k 0..1
 const SPREAD_D = 26, SPREAD_EXIT = 50;
-function spreadLayout(list) {
+// `pin` (the icon you came in by) keeps its place; the others move around it
+function spreadLayout(list, pin) {
   const home = list.map((e) => e.mk.ta), p = home.map((h) => ({ x: h.x, y: h.y }));
   for (let it = 0; it < 24; it++) {
     for (let i = 0; i < p.length; i++) for (let j = i + 1; j < p.length; j++) {
@@ -444,7 +446,8 @@ function spreadLayout(list) {
     }
     for (let i = 0; i < p.length; i++) { p[i].x += (home[i].x - p[i].x) * .1; p[i].y += (home[i].y - p[i].y) * .1; }
   }
-  return p.map((q, i) => ({ x: q.x - home[i].x, y: q.y - home[i].y }));
+  const j = list.indexOf(pin), px = j >= 0 ? p[j].x - home[j].x : 0, py = j >= 0 ? p[j].y - home[j].y : 0;
+  return p.map((q, i) => ({ x: q.x - home[i].x - px, y: q.y - home[i].y - py }));
 }
 const camF = new THREE.Vector3(), rayD = new THREE.Vector3();
 function worldAt(x, y, ref) {   // the point under screen (x, y) on the camera-facing plane through ref
@@ -454,7 +457,8 @@ function worldAt(x, y, ref) {   // the point under screen (x, y) on the camera-f
 }
 function enterSpread(e) {
   const list = ents.filter((o) => o.c === e.c && o.r === e.r);
-  if (list.length > 1) iconMode = { c: e.c, r: e.r, list };
+  if (list.length > 1) iconMode = { c: e.c, r: e.r, list, pin: e };
+  pre = null;
 }
 const inSpread = (e) => iconMode?.list.includes(e);
 
@@ -483,6 +487,7 @@ function updateMarkers() {
       else if (bar && B?.ent === e) tp = 0;   // its icon is in the bar
       else if (inView(e)) tp = hoverEnt === e ? 1 : bar && B ? 0 : e.apL;
       if (e.me && !iconMode && !(bar && B?.ent === e)) tp = 1;   // you are always on the map, dimmer from afar
+      if (pre && !iconMode) tp = pre.list.includes(e) ? Math.max(tp, pre.k) : tp * (1 - pre.k);
     }
     m.gp += (tp - m.gp) * .3; if (m.gp < .002) m.gp = 0;
     // approach: 0 far .. 1 when picked (or at the `full` score); not while a wheel or the bar is up
@@ -499,11 +504,12 @@ function updateMarkers() {
     const x0 = Math.min(...xs) - SPREAD_EXIT, x1 = Math.max(...xs) + SPREAD_EXIT, y0 = Math.min(...ys) - SPREAD_EXIT - 20, y1 = Math.max(...ys) + SPREAD_EXIT + 20;
     if (busy || mouse.x < x0 || mouse.x > x1 || mouse.y < y0 || mouse.y > y1) iconMode = null;
   }
-  const offs = iconMode ? spreadLayout(iconMode.list) : null;
+  const spr = iconMode || pre, sk = iconMode ? 1 : pre?.k || 0;
+  const offs = spr ? spreadLayout(spr.list, spr.pin).map((o) => ({ x: o.x * sk, y: o.y * sk })) : null;
   // 3. draw: the stem grows with the approach, the icon rides its top from 40% growth, the label grows out of the icon near the end
   for (const e of ents) {
     const m = e.mk, sel = W?.ent === e || B?.ent === e, mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
-    const k = iconMode ? iconMode.list.indexOf(e) : -1, o = k >= 0 ? offs[k] : { x: 0, y: 0 };
+    const k = spr ? spr.list.indexOf(e) : -1, o = k >= 0 ? offs[k] : { x: 0, y: 0 };
     m.ox += (o.x - m.ox) * .3; m.oy += (o.y - m.oy) * .3;
     if (Math.abs(m.ox) + Math.abs(m.oy) < .05) m.ox = m.oy = 0;
     m.dim += ((e.me && hoverEnt !== e && !sel ? .6 : 1) - m.dim) * .2;
@@ -710,7 +716,7 @@ const HINTS = {
   bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
 };
 function setMode(m) {
-  closeAll(); mode = m; mkHover = null; hoverEnt = null; trace.e = null; iconMode = null;
+  closeAll(); mode = m; mkHover = null; hoverEnt = null; trace.e = null; iconMode = pre = null;
   document.body.classList.toggle('barmode', m === 'bar');
   document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   document.getElementById('hint').innerHTML = HINTS[m];
@@ -783,13 +789,21 @@ const pickAt = (x, y) => traceAt(x, y) || bodyAt(x, y, lastBody);
 let lastBody = null;
 function updateHover() {
   // hover keeps working while a wheel is open, except over its icons, so you can re-aim within the selected square
-  const free = !(wheelUp() && pw.hot) && !mouse.ui && !mouse.btn && mouse.x > -1e3;
+  const onOwnIcon = trace.e && mkHover === trace.e;   // tracing carries on over the stem's own icon, so the blend can finish
+  const free = !(wheelUp() && pw.hot) && (!mouse.ui || onOwnIcon) && !mouse.btn && mouse.x > -1e3;
   if (free && !iconMode) {
-    const b = bodyAt(mouse.x, mouse.y, lastBody); traceAt(mouse.x, mouse.y); lastBody = trace.e || b;
+    const was = trace.e, b = bodyAt(mouse.x, mouse.y, lastBody); traceAt(mouse.x, mouse.y); lastBody = trace.e || b;
+    // while a stem is traced, the other stems' growth uses where the trace began, so they hold still as the cursor climbs
+    if (trace.e && trace.e !== was) trace.lock = { x: mouse.x, y: mouse.y };
+    if (trace.e) hoverScores(trace.lock.x, trace.lock.y);
   } else { hoverScores(mouse.x, mouse.y); trace.e = lastBody = null; }
   // icon mode starts when a trace reaches the top of its stem, or the pointer is on an icon (Esc holds it off until the pointer leaves)
-  const top = !iconMode && !wheelUp() && (mkHover || (trace.e && trace.t > .93 ? trace.e : null));
-  if (!top) escHold = false; else if (!escHold) enterSpread(top);
+  // (a traced stem blends in over its last 15% and commits at the very top; an icon reached any other way is instant)
+  const top = !iconMode && !wheelUp() && (mkHover && mkHover !== trace.e ? mkHover : trace.e && trace.t >= .995 ? trace.e : null);
+  const blend = !iconMode && !wheelUp() && trace.e ? sstep(.85, 1, trace.t) : 0;
+  if (!top && !blend) escHold = false; else if (top && !escHold) enterSpread(top);
+  const mates = blend && !escHold && !iconMode ? ents.filter((o) => o.c === trace.e.c && o.r === trace.e.r) : [];
+  pre = mates.length > 1 ? { list: mates, pin: trace.e, k: blend } : null;
   hoverEnt = mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
   drawHits();
