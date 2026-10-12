@@ -188,6 +188,8 @@
   .ecard .movebox { border-top: 0; margin-top: 8px; padding-top: 0; }
   .ecard .btn.gold { background: none; color: var(--gold); }
   .ecard .btn.gold small { color: var(--ink-faint); }
+  .ref { cursor: pointer; border-bottom: 1px dotted var(--c, var(--ink-faint)); }
+  .ref:hover { color: var(--gold); }
   .hovchip { position: absolute; z-index: 6; pointer-events: none; padding: 3px 9px; border: 1px solid var(--c, var(--line)); border-radius: 10px; background: rgba(28, 27, 22, .92); font: 11px/1.4 var(--mono); color: var(--ink); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
   .hovchip.faint { color: var(--ink-faint); }
   .hovchip small { display: block; font-size: 11px; color: var(--gold); }
@@ -580,14 +582,14 @@ function setViewBox(vb) {
   svg.setAttribute('viewBox', `${view2d.vb.x} ${view2d.vb.y} ${view2d.vb.w} ${view2d.vb.h}`);
   document.getElementById('mapwrap').classList.toggle('pannable', view2d.vb.w < b.w);
 }
-// Glide the 2D view (keeping the zoom) so a creature's square is centred; 3D has its own camera move.
+// Glide the 2D view (keeping the zoom) so a creature's or square's cell is centred; 3D has its own camera move.
 let panAnim = 0;
-function focusCreature(id) {
-  const c = state && state.creatures[id];
-  if (!c) return;
-  if (THREE_D) { if (map3d && map3d.focus) map3d.focus(id); return; }
-  if (!svg || !view2d) return;
-  const p = parseCell(c.pos), from = Object.assign({}, view2d.vb), cx = (p.x + .5) * CELL, cy = (p.y + .5) * CELL, t0 = performance.now();
+function focusRef(ref) {
+  const c = state && state.creatures[ref];
+  if (THREE_D) { if (c && map3d && map3d.focus) map3d.focus(ref); return; } // map3d.focus only knows creatures
+  const cell = c ? c.pos : /^[A-Z]\d+$/.test(ref) ? ref : null;
+  if (!cell || !svg || !view2d) return;
+  const p = parseCell(cell), from = Object.assign({}, view2d.vb), cx = (p.x + .5) * CELL, cy = (p.y + .5) * CELL, t0 = performance.now();
   cancelAnimationFrame(panAnim);
   const step = (now) => {
     const k = Math.min(1, (now - t0) / 350), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
@@ -596,6 +598,18 @@ function focusCreature(id) {
   };
   panAnim = requestAnimationFrame(step);
 }
+// Click selects; a second click on the same thing within 400 ms also centres the camera. Timed by hand because
+// the first click often redraws whatever was clicked, so the browser's dblclick never fires. ref: creature id or cell id.
+let lastRef = {};
+function selectRef(ref, src) {
+  const now = performance.now(), dbl = lastRef.ref === ref && now - lastRef.t < 400, isCreature = !!(state && state.creatures[ref]);
+  lastRef = dbl ? {} : { ref, t: now };
+  const point = () => isCreature ? pointCreature(ref, src !== 'map') : pointSquare(ref);
+  if (!dbl) return point();
+  if (isCreature ? cursor.id !== ref : cursor.cell !== ref) point(); // the second click toggled it off
+  focusRef(ref);
+}
+document.addEventListener('click', (e) => { const r = e.target.closest && e.target.closest('[data-ref]'); if (r) selectRef(r.dataset.ref, 'ref'); });
 function zoomBy(f, clientX, clientY) {
   if (!svg || !view2d) return;
   const vb = view2d.vb, r = svg.getBoundingClientRect();
@@ -722,7 +736,7 @@ function drawTokens(v) {
     if (!g) {
       g = el('g', { class: 'tok', 'data-id': c.id }, tokLayer);
       g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
-      g.addEventListener('click', (e) => { e.stopPropagation(); pointCreature(c.id); });
+      g.addEventListener('click', (e) => { e.stopPropagation(); selectRef(c.id, 'map'); });
     }
     g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
     g.innerHTML = '';
@@ -768,7 +782,7 @@ const hpColor = (f) => f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a';
 
 // The initiative strip: starting from whoever is acting, through the end of the round, a round
 // marker, then round to the current creature again. A '?' is creatures acting out of sight.
-let lastCurrent, lastPorClick = {};
+let lastCurrent;
 function drawInit(v) {
   const bar = document.getElementById('initbar');
   const order = v.turnOrder || [];
@@ -785,7 +799,7 @@ function drawInit(v) {
     if (down && c.side !== 'party') return '';
     const mine = me && me.creatures && me.creatures.includes(id);
     const tip = `${c.name}${c.hp !== undefined ? ` · ${c.hp}/${c.maxHp} HP` : c.health ? ` · ${c.health}` : ''}${c.hidden ? ' · hidden' : ''}`;
-    return `<button class="por${isCur ? ' cur' : ''}${isCur && changed ? ' pop' : ''}${down ? ' down' : ''}${c.hidden ? ' hid' : ''}${mine ? ' mine' : ''}" data-id="${id}" title="${esc(tip + ' · double-click to focus')}" style="--c:${SIDE_COLOR[c.side] || SIDE_COLOR.neutral}">`
+    return `<button data-ref="${id}" class="por${isCur ? ' cur' : ''}${isCur && changed ? ' pop' : ''}${down ? ' down' : ''}${c.hidden ? ' hid' : ''}${mine ? ' mine' : ''}" data-id="${id}" title="${esc(tip + ' · double-click to focus')}" style="--c:${SIDE_COLOR[c.side] || SIDE_COLOR.neutral}">`
       + `<span class="face">${esc(labels[id] || '?')}</span><span class="hpb"><i style="width:${f * 100}%;background:${hpColor(f)}"></i></span></button>`;
   };
   const rest = order.slice(start), wrap = order.slice(0, start);
@@ -795,16 +809,6 @@ function drawInit(v) {
   const cap = c ? `Round ${v.round} · <b>${esc(c.name)}</b>${me && me.creatures && me.creatures.includes(v.current) ? ' (you)' : ''}`
     : v.currentUnseen ? `Round ${v.round} · <span class="lurk">something moves out of sight…</span>` : `Round ${v.round}`;
   bar.innerHTML = `<div class="portraits">${html}</div><div class="initcap">${cap}</div>`;
-  // The first click redraws the strip, so the browser's dblclick never fires: time the clicks instead.
-  bar.onclick = (e) => {
-    const b = e.target.closest('.por[data-id]');
-    if (!b) return;
-    const id = b.dataset.id, now = performance.now(), dbl = lastPorClick.id === id && now - lastPorClick.t < 400;
-    lastPorClick = dbl ? {} : { id, t: now };
-    if (!dbl) return pointCreature(id, true);
-    if (cursor.id !== id) pointCreature(id, true); // the second click toggled it off
-    focusCreature(id);
-  };
   if (changed) turnBanner(c ? `${c.name}'s turn` : 'Something moves out of sight…', !c);
   lastCurrent = `${v.round}:${curKey}`;
 }
@@ -889,15 +893,39 @@ function mechanicsChips(e, inline = false) {
   const tag = inline ? 'span' : 'div';
   return chips.length ? `<${tag} class="mechanics">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</${tag}>` : '';
 }
+// Creature names in a log line become clickable refs: ids from the entry's data first, then any name that is
+// unique among the creatures this player can see. Nothing outside state.creatures is ever linked.
+function linkRefs(e) {
+  const text = esc(e.text), d = e.data || {}, cs = state && state.creatures;
+  if (!cs || d.unseen) return text;
+  const byName = {}, count = {};
+  for (const c of Object.values(cs)) count[c.name] = (count[c.name] || 0) + 1;
+  for (const c of Object.values(cs)) if (count[c.name] === 1) byName[c.name] = c.id;
+  const named = {};
+  for (const id of [d.attacker, d.target, d.id]) if (cs[id]) (named[cs[id].name] = named[cs[id].name] || new Set()).add(id);
+  for (const [n, ids] of Object.entries(named)) if (ids.size === 1) byName[n] = [...ids][0];
+  const cell = e.type === 'move' && typeof d.to === 'string' ? d.to : null;
+  const keys = Object.keys(byName).map((n) => esc(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const byEsc = Object.fromEntries(Object.entries(byName).map(([n, id]) => [esc(n), id]));
+  if (cell) keys.push(cell);
+  if (!keys.length) return text;
+  keys.sort((a, b) => b.length - a.length);
+  let cellDone = false;
+  return text.replace(new RegExp(`(?<![\\w])(?:${keys.join('|')})(?![\\w])`, 'g'), (m) => {
+    if (m === cell) { if (cellDone) return m; cellDone = true; return `<span class="ref" data-ref="${m}">${m}</span>`; }
+    const id = byEsc[m];
+    return id ? `<span class="ref" style="--c:${SIDE_COLOR[cs[id].side] || SIDE_COLOR.neutral}" data-ref="${id}">${m}</span>` : m;
+  });
+}
 function logEntry(e) {
-  return `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${esc(e.text)}${mechanicsChips(e)}</div>`;
+  return `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${linkRefs(e)}${mechanicsChips(e)}</div>`;
 }
 function drawLog(v) {
   const log = document.getElementById('log');
   const visible = (e) => (logFilters.story && STORY.has(e.type)) || (logFilters.combat && COMBAT(e));
   const atTop = log.scrollTop < 40;
   const filtersKey = JSON.stringify(logFilters);
-  const key = filtersKey + ':' + JSON.stringify(v.log);
+  const key = filtersKey + ':' + Object.values(v.creatures).map((c) => c.id + c.name + c.side).join() + ':' + JSON.stringify(v.log);
   if (log.dataset.key !== key) {
     const openDetails = new Set([...log.querySelectorAll('details[open]')].map((d) => d.dataset.detailKey));
     const groups = logGroups(foldUnseen(v.log));
@@ -1725,7 +1753,7 @@ function render3d() {
       const wrap = document.getElementById('mapwrap');
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
-        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: pointCreature, onCell: pointCell, onHover: hoverCell });
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => selectRef(id, 'map'), onCell: pointCell, onHover: hoverCell });
         map3d.setFollow(followTurn);
         render();
       }).catch((e) => {
