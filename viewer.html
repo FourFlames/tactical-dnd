@@ -1563,19 +1563,53 @@ const wheelView = () => disp || state;
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
-    pw = m.createPipWheel(document.body, { onLeaf: (s) => (s.go ? s.go(s) : undefined), onClose: () => closeWheel() });
+    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev) });
     return pw;
   }));
 }
 if (TOKEN) loadWheel(); // ready before the first click
-function closeWheel() { W = null; wheelSeq++; if (pw) pw.close(); }
+function closeWheel() {
+  calm3d(); W = null; wheelSeq++; if (pw) pw.close();
+}
+function calm3d() { // 3D: the other icons come back up and a square wheel's gold square goes (a leaf closes the wheel without onClose)
+  const mk = map3d && map3d.marks(); if (mk) mk.setLow();
+  if (W && W.sq && map3d) { W.sq = null; map3d.showSquare(null); }
+}
+// 3D: the wheel's element rides in the marks icon layer, stacked between the other icons and its own; `id` is the icon it came out of
+// (the others drop to the lower plane), null for a square's wheel.
+const WHEEL_S = .8;   // the size of a wheel around an icon (poc/wheel3d.html)
+function wheel3d(id) {
+  const mk = map3d && map3d.marks();
+  if (!mk) return;
+  if (pw.el.parentNode !== mk.layer) mk.layer.appendChild(pw.el);
+  mk.setLow(id, pw.el);
+}
+// Inside the ring in 3D: the icon it came out of deselects and closes; another body under the pointer (a square-mate, a flier above) re-picks.
+function innerClick3d(ev) {
+  const mk = map3d && map3d.marks();
+  if (!mk || !W) return false;
+  const ic = W.id && mk.iconOf(W.id);
+  if (ic && Math.hypot(ev.clientX - ic.x, ev.clientY - ic.y) < 11 * ic.scale + 4) {
+    closeWheel();
+    if (!(lastTap.ref && performance.now() - lastTap.t < 400)) clearCursor();   // a double keeps its selection: it goes on to focus
+    return true;
+  }
+  const id = mk.pickAt(ev.clientX, ev.clientY);
+  if (!id || id === W.id || !state.creatures[id]) return false;
+  openEntity(id);
+  return true;
+}
 // The wheel's anchor, polled every frame: the creature's (or cell's) centre in client px and its on-screen radius.
 function wheelAnchor(ref) {
   let last = { x: innerWidth / 2, y: innerHeight / 2, r: 24 };
   return () => {
     const v = wheelView(), c = v && v.creatures[ref];
     if (!c && !/^[A-Z]\d+$/.test(ref)) return last;
-    if (THREE_D) { const a = map3d && map3d.screenOf(ref); if (a) last = a; return last; }
+    if (THREE_D && map3d) {
+      const ic = c && map3d.marks().iconOf(ref), a = ic ? { x: ic.x, y: ic.y, r: 0, s: WHEEL_S } : c ? map3d.screenOf(ref) : map3d.squareAnchor(ref);   // out of its icon (a square's: around the square)
+      if (a) last = a;
+      return last;
+    }
     const m = svg && svg.getScreenCTM();
     if (!m) return last;
     const p = parseCell(c ? c.pos : ref), pt = svg.createSVGPoint();
@@ -1605,9 +1639,16 @@ function selectOnly(ref) { // the click may have toggled the selection off; the 
 
 async function openWheelAt(ref) {
   if (!wheelOk()) return;
-  const seq = ++wheelSeq, v = wheelView(), c = v.creatures[ref], cell = c ? c.pos : ref;
+  const v = wheelView(), c = v.creatures[ref], cell = c ? c.pos : ref;
   const here = Object.values(v.creatures).filter((x) => x.pos === cell), actor = wheelActor();
   if (!actor || !state.creatures[actor]) return;
+  const mk = THREE_D && map3d && map3d.marks();
+  if (mk && here.length > 1) {   // 3D answers a crowd with icon mode: a click on a square or body enters it, and an icon picked from it opens that wheel
+    if (c && mk.iconMode) return openEntity(c.id);
+    closeWheel(); mk.enter(c ? c.id : here[0].id);
+    return;
+  }
+  const seq = ++wheelSeq;
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
   await loadWheel();
   if (seq !== wheelSeq) return; // a newer click got here first
@@ -1617,6 +1658,7 @@ async function openWheelAt(ref) {
   selectOnly(cell);
   pw.open(menu, wheelAnchor(cell));
   W = { seq, turn: [state.round, state.turnIdx] };
+  if (mk) { const p = parseCell(cell); W.sq = cell; map3d.showSquare({ x: p.x, y: p.y }, true); wheel3d(null); }
 }
 async function openEntity(id, seq = ++wheelSeq) {
   const c = state.creatures[id], actor = wheelActor();
@@ -1626,8 +1668,10 @@ async function openEntity(id, seq = ++wheelSeq) {
   if (seq !== wheelSeq) return;
   selectOnly(id);
   await loadWheel();
+  if (W && W.sq && map3d) map3d.showSquare(null);
   pw.open(menu, wheelAnchor(id));
-  W = { seq, turn: [state.round, state.turnIdx] };
+  W = { seq, turn: [state.round, state.turnIdx], id };
+  if (THREE_D && map3d) wheel3d(id);
 }
 
 // ---- reasons a leaf is greyed ----

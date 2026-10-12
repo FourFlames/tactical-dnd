@@ -36,7 +36,8 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - Card 5a done: wheel block in viewer.html (`wheelTap` → `openWheelAt` → `enemyMenu`/`allyMenu`/`selfMenu`/`pickMenu`/`squareMenu`; leaves via `act`/`postIntent`; provoke = `'keep'` second click), `viewer/pip-wheel.js` (moved from poc; `keep`, `warn`, `sug`), `map3d.screenOf`. `wheelDefaults` parses class/spells out of the party view's `notes`/`resources` (`char` is only an id): 5b should replace that. Doors/walls get the square wheel. Not yet seen at full frame rate in a visible window.
 - Port of the 3D mockup (spec: [port-wheel3d.md](port-wheel3d.md)): Phase A done (bodies `makeToken`/`applyArmor`/`ARMOR_LOOK`, highlight `HL`/`hlStep`, screen hover `shapeOf`/`bodyAt`, `selSq`, LMB pan/RMB orbit, flat checker `FLOOR_TONES` with `TEXTURED=false`; server `armorOf`, builder creatures carry `armor`). Temporary medallion sprite until Phase B markers. No creature size in `view()` yet, so no body scaling.
 - Phase B done: `viewer/marks3d.js` (`createMarks`; `sync`/`hover`/`pickAt`/`step`/`screenOf`, and for C `iconOf`/`setLow`/`active`/`iconMode`/`tracing`, via `map3d.marks()`). Icons are hit by distance on the canvas, not DOM events, so pan/orbit work over them. Dashed (occluded) stems not yet seen.
-- Next: port **Phase C** (wheel out of the icon), then Card **5b**, then **8**.
+- Phase C done: in 3D the wheel lives in the marks icon layer (`wheel3d`, `calm3d`, `innerClick3d` in viewer.html; `marks.setLow(id, el)`, `marks.enter`; `map3d.squareAnchor`/`showSquare`). Crowded squares use icon mode in 3D, the pick wheel in 2D. Unverified in 3D: right-click, the provoke second click, off-turn greying; Esc after a failed click on slot 4 closed the whole wheel (untraced). At 375 px the clamped wheel drifts off its square.
+- Next: the user tries it in a real window, then fixes from that; then Card **5b**, then **8**.
 
 ## Cards (in order; each fits one session)
 1. [x] **Kill native dialogs + builder focus.** Replace `confirm()` at viewer.html ~1075 (end turn with the action unused) and ~1167 (move provokes) with an in-card second click ("Provokes gob1. Click again to move."). Builder: `save()` → `render()` redraws the form 500 ms after typing stops and steals focus (builder.html ~284); don't redraw `renderMain` while focus is inside it, or restore focus and caret.
@@ -50,6 +51,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 9. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-12: Port Phase C (Sonnet): the wheel unfolds out of the creature's icon in 3D, others drop, click the icon to close, re-pick inside the ring, icon mode for crowds, square wheel around the square.
 - 2026-10-12: Port Phase B (Sonnet): stems, icons and labels (marks3d.js), stem tracing and icon mode; medallion sprites gone; the seated creature is labelled "you".
 - 2026-10-12: Port Phase A (Sonnet): mockup bodies tinted by armor, highlight, screen-space hover, ground-drag controls, flat checker floor. Instant clicks (no 400 ms timer; double folds the wheel and focuses).
 - 2026-10-12: Card 5a (Sonnet): the pip wheel wired into the viewer, 2D and 3D, entity/self/square/pick wheels, smart Strike, provoke second click, class defaults; poc server now also serves /viewer/ so the mockup still loads.
@@ -57,4 +59,3 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - 2026-10-12: Card 6 (Sonnets, 6a server + 6b viewer): sequence-numbered log, one ordered playback queue (glide, then die, then ticker, then the log line), catch-up, Skip, ½-4× speed, scroll-back. Opus added timer fallbacks for frame-driven 3D effects.
 - 2026-10-12: Wall fade seen working (tollhouse, DM view, Morrow behind the south wall). `/j/<code>` keeps extra params (`?3d`). How to run 3D headless in a cloud session added to Rules.
 - 2026-10-12: Review of PR #11: Card 6 is now the event stream (sliding 80-entry window silences fx/ticker); old 6-8 renumbered 7-9. Follow turn no longer yields to plain hover or leaving the canvas.
-- 2026-10-12: Double-click focus generalized (Sonnet): portraits, map tokens/models, log name and cell chips all go through `selectRef`; checked in 2D and on a 3D model.

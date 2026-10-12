@@ -41,7 +41,7 @@ export function createMarks({ scene, camera, renderer, container, tokenObjs, inV
 
   const ents = new Map();   // id -> { id, g, u, mk, ... }
   let off = { x: 0, y: 0 }, W = 1, H = 1;   // the container's client offset and size this frame
-  let hoverEnt = null, mkHover = null, lastBody = null, lowEnt = null, youId = null, selId = null, escHold = false;
+  let hoverEnt = null, mkHover = null, lastBody = null, lowEnt = null, wheelEl = null, youId = null, selId = null, escHold = false;
   let iconMode = null;   // { key (the square), list, pin, from (the last icon hovered), full } or null
   let pre = null;        // the last 15% of a traced stem blends into icon mode: { list, pin, tr, k 0..1, full }
   const trace = { e: null, t: 0, lock: { x: 0, y: 0 } };
@@ -343,11 +343,13 @@ export function createMarks({ scene, camera, renderer, container, tokenObjs, inV
     if (!trace.e || iconMode) spark.visible = false;
     // 4. stacking: nearest to the cursor on top, each label one step above its icon
     const order = [...ents.values()].filter((e) => e.op > 0.02 || e.lab > 0).sort((a, b) => Math.hypot(lx - b.x, ly - b.y) - Math.hypot(lx - a.x, ly - a.y));
+    // with a wheel out of an icon: everything else, then the wheel, then that icon and its label (the pips fold under it)
     if (lowEnt) { const i = order.indexOf(lowEnt); if (i >= 0) order.splice(i, 1); order.push(lowEnt); }
     order.forEach((e, i) => {
-      const z = String(2 * i + 1);
+      const z = String(2 * i + 1 + (lowEnt === e ? 1 : 0));
       if (e.el.style.zIndex !== z) { e.el.style.zIndex = z; e.lb.style.zIndex = String(+z + 1); }
     });
+    if (wheelEl) wheelEl.style.zIndex = String(lowEnt ? 2 * order.length - 1 : 2 * order.length + 1);   // a square's wheel tops them all
   }
   const sizeV = new THREE.Vector2();
 
@@ -364,7 +366,15 @@ export function createMarks({ scene, camera, renderer, container, tokenObjs, inV
   return {
     sync, hover, pickAt, step, screenOf,
     iconOf(id) { const e = ents.get(id); return e ? { el: e.el, label: e.lb, x: off.x + e.x, y: off.y + e.y, scale: e.sc } : null; },
-    setLow(id) { lowEnt = id ? ents.get(id) || null : null; },   // a wheel is out of this icon: the others drop to the lower plane
+    // A wheel is out of this icon (the others drop to the lower plane) and `el` is its element, stacked between them and the icon;
+    // id null with an el: a square's wheel, above every icon; no arguments: closed.
+    setLow(id, el = null) {
+      lowEnt = id ? ents.get(id) || null : null;
+      if (wheelEl && wheelEl !== el) wheelEl.style.zIndex = '';
+      wheelEl = el;
+      layer.style.zIndex = el ? '20' : '';   // the wheel is above the page's floating cards (the icons come along)
+    },
+    enter(id) { const e = ents.get(id); if (e && !busy()) enterSpread(e); },   // icon mode on e's square (a crowded square's click)
     get layer() { return layer; },
     get active() { return !!(iconMode || pre || trace.e); },   // the pointer is in icon mode or tracing a stem
     get iconMode() { return !!iconMode; },

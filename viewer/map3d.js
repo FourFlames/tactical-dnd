@@ -809,6 +809,16 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const b = to(p.clone().addScaledVector(projV.set(1, 0, 0).transformDirection(camera.matrixWorld), half));
     return { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) };
   }
+  // A square's screen centre and half its diagonal, in client px (the square wheel's anchor).
+  function squareAnchor(ref) {
+    if (!lastState || !/^[A-Za-z]\d+$/.test(ref)) return null;
+    const q = cellOf(ref.toUpperCase()), y = cellElev(lastState, q.x, q.y) * FT;
+    camera.updateMatrixWorld();
+    const rc = renderer.domElement.getBoundingClientRect();
+    const to = (x, z) => { projV.set(x, y, z).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
+    const m = to(q.x + 0.5, q.y + 0.5), a = to(q.x, q.y), b = to(q.x + 1, q.y + 1);
+    return m.z > 1 ? null : { x: m.x, y: m.y, r: Math.hypot(a.x - b.x, a.y - b.y) / 2 };
+  }
   function followTurn(v) {
     // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
     // turn has started on screen (v.current may already be ahead of it while the queue plays out).
@@ -966,8 +976,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: GOLD })));
     selSq.visible = false; scene.add(selSq);
   }
-  function showSquare(cell) { // cell: {x, y} or null
-    pickedCell = cell;
+  let sqHold = false;   // a wheel is on the square: keep it lit even where the cursor marks it
+  function showSquare(cell, hold = false) { // cell: {x, y} or null
+    pickedCell = cell; sqHold = !!cell && hold;
     selSq.visible = !!cell;
     if (cell && lastState) selSq.position.set(cell.x + 0.5, cellElev(lastState, cell.x, cell.y) * FT + 0.012, cell.y + 0.5);
   }
@@ -1115,7 +1126,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = ptrHover = null; ease = null; framed = false; showSquare(null); }
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
-      if (pickedCell && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
+      if (pickedCell && !sqHold && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
@@ -1130,7 +1141,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
-    screenOf,
+    screenOf, squareAnchor,
     marks: () => marks,   // icon element/position per id, setLow, active (icon mode or tracing)
     setFollow(on) {
       follow = !!on;

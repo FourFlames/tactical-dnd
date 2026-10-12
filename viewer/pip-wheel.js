@@ -17,7 +17,8 @@
 // The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds without closing:
 // the icons fan in to one line and slide back under the target; coming back they rush out along that line and fan
 // out to the hexagon. The same unfold plays on open. Keys still work and clicks pass through while folded.
-// The host can stack the wheel under its target: `pw.el` is the wheel's element.
+// The host can stack the wheel under its target: `pw.el` is the wheel's element (the 3D viewer moves it into its icon layer
+// and sets its z-index there; it stays position: fixed, so the anchor is still in client px).
 // A click inside the ring goes to onInnerClick(ev) first; if that returns true (the host picked something else
 // there) the wheel leaves it, otherwise it backs out.
 
