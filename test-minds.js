@@ -391,6 +391,7 @@ try {
   // ---------- the npc agent is fenced in ----------
   const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
+  expect('...and open its talk menu, but nothing else', hook('node engine.js mind bram menu talk') === 0 && hook('node engine.js mind bram menu talk; cat state.json') === 2 && hook('node engine.js mind bram trace') === 2, '');
   expect('npc agent may not read the state or the map', hook('cat state.json') === 2 && hook('node engine.js show') === 2 && hook('node engine.js mind bram brief; cat state.json') === 2, '');
 
   // ---------- a calm barracks: orders, talk and doors among comrades don't stampede anyone ----------
@@ -447,6 +448,38 @@ try {
   decide('mags', { say: [{ to: ['dace'], channel: 'shout', kind: 'warning', text: 'Trust me on this, Kettle: an armed man crouches near that bucket crank!', about: { subject: 'x8', at: 'Q14' }, persuade: 40 }] });
   const pushed = (lastHeard('dace', 'mags') || {}).credence;
   expect('persuasion gets an honest word past a listener\'s distrust', plain !== undefined && pushed > plain, `${plain} → ${pushed}`);
+
+  // ---------- indistinguishability: an impostor the listener can't tell apart gives the same brief ----------
+  // Two worlds that deliver Pell the same evidence: the Commander gives two orders, or gives the first and
+  // Wren, passing for the Commander's voice from the same unseen square, gives the second. Pell's briefs must match exactly.
+  // The second order comes through the bunkroom wall from J3, where Pell can hear but not see.
+  const WREN = JSON.stringify({ id: 'wren', name: 'Wren', side: 'enemy', pos: 'U16', hp: 9, ac: 14, speed: 30, skills: { deception: 7 }, attacks: [{ name: 'Dagger', bonus: 5, damage: '1d4+3', type: 'piercing', reach: 5 }] });
+  const twoOrders = (impostor) => {
+    run('load', 'barracks');
+    run('spawn', WREN);
+    run('speak', 'cmdr', 'Pell! Hold the gate, let nobody through.', '--channel', 'shout', '--to', 'pell', '--kind', 'order');
+    run('mind', 'pell', 'decide', JSON.stringify({ orderResponses: [{ order: M('pell').orders[0].id, response: 'accept', reply: 'Yes, Commander!' }] }));
+    run('place', 'cmdr', impostor ? 'V16' : 'J3');
+    if (impostor) run('place', 'wren', 'J3');
+    run('speak', impostor ? 'wren' : 'cmdr', 'Pell! Open the gate, the riders are ours.', '--channel', 'shout', '--to', 'pell', '--kind', 'order', ...(impostor ? ['--as', 'cmdr', '--deception', '30'] : []));
+    return brief('pell').replace(/\b(ord|o|m|x|c|r|s)\d+\b/g, '#').replace(/brief v\d+/, 'brief v#');
+  };
+  const realB = twoOrders(false), fakeB = twoOrders(true);
+  const firstDiff = (a, b) => { const x = a.split('\n'), y = b.split('\n'); const i = x.findIndex((l, j) => l !== y[j]); return i < 0 ? 'lengths differ' : `line ${i}:\n  real: ${x[i]}\n  fake: ${y[i]}`; };
+  expect('indistinguishable: a fooled listener\'s brief is the same for the real Commander and an impostor', realB === fakeB, firstDiff(realB, fakeB));
+  expect('...and both orders stand, with the conflict stated, until Pell accepts one', /ORDERS[\s\S]*Hold the gate[\s\S]*Open the gate[\s\S]*gave you # earlier, and it still stands/.test(fakeB), fakeB.split('ORDERS')[1] ? fakeB.split('ORDERS')[1].slice(0, 700) : fakeB.slice(0, 600));
+  const [first, second] = M('pell').orders;
+  r = decide('pell', { beliefs: [{ proposition: 'The Commander gave me two different orders about the gate.', evidence: [first.id, second.id], confidence: 0.9, status: 'accepted' }] });
+  expect('a belief may cite orders as its evidence', r.ok && !/never had/.test(r.out) && M('pell').beliefs.some((b) => b.supporting.includes(second.id)), r.out);
+  run('mind', 'pell', 'decide', JSON.stringify({ orderResponses: [{ order: second.id, response: 'accept', reply: 'Opening it!' }] }));
+  expect('accepting the newer order retires the one it displaced', M('pell').orders[0].status === 'superseded' && M('pell').orders[1].status === 'accepted', JSON.stringify(M('pell').orders.map((o) => [o.id, o.status])));
+  // Slips seen in real play (goblin caves, 2026-10-10): the intent is plain, so they're read, not rejected.
+  r = decide('pell', { beliefs: [{ proposition: 'The gate matters tonight.', evidence: [M('pell').beliefs[0].id, 'cmdr'], confidence: 0.6, status: 'hypothesis' }] });
+  expect('a belief may cite earlier beliefs and tracked people', r.ok && !/never had/.test(r.out), r.out);
+  r = decide('pell', { say: [{ to: ['Ilse'], channel: 'speech', kind: 'question', text: 'Did you hear that?' }, { to: ['all'], channel: 'speech', kind: 'report', text: 'Something odd about the Commander.' }] });
+  expect('a comrade named instead of their id, and ["all"], are understood', r.ok && /"Ilse" read as ilse/.test(r.out) && /"all" in a list read as everyone/.test(r.out) && !/don't know anyone/.test(r.out), r.out);
+  r = decide('pell', { orderResponses: [{ order: 'hold-post', response: 'accept', reply: 'Aye!' }, { order: M('pell').orders[0].via, response: 'accept' }] });
+  expect('answers to a standing order, or to the message that carried an order, are read', r.ok && /is a standing order, not a task/.test(r.out) && new RegExp(`read as ${M('pell').orders[0].id}`).test(r.out) && !/no order/.test(r.out), r.out);
 
   // ---------- encounters without minds are untouched ----------
   r = run('load', 'rope-bridge');

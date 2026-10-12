@@ -1236,6 +1236,7 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
   const m = mindOf(s, id);
   if (!verb) { console.log(Minds.inspect(s, id)); return null; }
   if (verb === 'brief') { console.log(Minds.brief(s, id) + `\n\n(Route: npc agent, model ${Minds.modelFor(s, m)}.)`); return null; }
+  if (verb === 'menu') { console.log(Minds.menuText(s, id, rest[0] || 'talk')); return null; }
   if (verb === 'decide') {
     let raw = rest.join(' ');
     if (flags.file) raw = fs.readFileSync(flags.file === true || flags.file === '-' ? 0 : flags.file, 'utf8');
