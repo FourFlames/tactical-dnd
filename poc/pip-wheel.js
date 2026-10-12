@@ -1,42 +1,49 @@
-// Pip wheel: small labelled pips on a ring around the target, the middle left empty so the target stays visible.
-// Picking is by direction (Blender pie menus / Maya marking menus): anywhere in a slot's 60° wedge, past a dead
-// zone over the target, counts as that slot, so the targets are huge while the pips stay small.
+// Pip wheel: labelled buttons on a ring around the target, the middle left empty so the target stays visible.
+// Each slot is one button (icon + label + odds); only the button itself is a hit target, so the target and the floor
+// around it are never a slot by accident. Clicking the target backs out (closes at the root); clicking anywhere else
+// that isn't a button closes the wheel and lets the click through, so the host can pick what was clicked.
 //
-// Menus: { title, slots: { 1..6: { what, odds?, role?, sub?(), full?(), off?, self?, back? } } }. Slot 1 is at
-// 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes.
+// Menus: { title, slots: { 1..6: { what, odds?, role?, icon?, sub?(), full?(), off?, self?, back? } } }. Slot 1 is
+// at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes.
 //
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
 //   pw.open(menu, () => ({ x, y, r }));   // anchor in client px, polled every frame; r = target's screen radius
 //
-// While open the wheel owns clicks (not drags), keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
+// While open the wheel owns its clicks, keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
 // stops a pointerup (camera controls must see every button release); a click it used is marked `ev.pwHandled`.
 // Move the pointer well away and the wheel folds (fades into the target) without closing: keys still work, and clicks
-// pass through to the page, so the host can pick something else. Coming back unfolds it.
+// pass through to the page. Coming back unfolds it.
 
 const CSS = `
-.pw { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 20; pointer-events: none; font: 12px/1.2 system-ui, sans-serif; }
+.pw { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 20; pointer-events: none; font: 13px/1.15 system-ui, sans-serif; }
 .pw svg { position: absolute; overflow: visible; left: 0; top: 0; width: 1px; height: 1px; }
-.pw .tick { fill: none; stroke: var(--gold, #d8b45a); stroke-width: 3; stroke-linecap: round; opacity: 0; transition: opacity .08s; }
-.pw .halo { fill: none; stroke: #e9e3d322; stroke-width: 1; }
-.pw .pip { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: #1c1b16f2;
-  border: 1.5px solid #5a5446; color: var(--ink-dim, #9c9584); display: grid; place-items: center; font: 600 11px ui-monospace, monospace;
-  box-shadow: 0 1px 6px #0008; transition: transform .08s, border-color .08s, background .08s; }
-.pw .pip.sub::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1px dashed #5a5446; }
-.pw .pip.back { color: var(--ink, #e9e3d3); font-size: 14px; }
-.pw .pip.off { opacity: .45; }
-.pw .pip.hot { transform: scale(1.18); border-color: var(--gold, #d8b45a); color: var(--gold, #d8b45a); background: #2e2a1ef5; }
-.pw .chip { position: absolute; white-space: nowrap; padding: 3px 7px; border-radius: 5px; background: #1c1b16e6; border: 1px solid #34312a;
-  color: var(--ink, #e9e3d3); box-shadow: 0 1px 6px #0007; transition: border-color .08s; }
-.pw .chip .w { font-weight: 600; }
-.pw .chip .o { color: var(--gold, #d8b45a); font-size: 11px; }
-.pw .chip .r { color: var(--ink-faint, #6b6557); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; }
-.pw .chip .self { font-size: 9px; color: var(--party, #4fb3a4); border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 4px; }
-.pw .chip.off { color: var(--ink-faint, #6b6557); }
-.pw .chip.off .o { color: var(--ink-faint, #6b6557); }
-.pw .chip.hot { border-color: var(--gold, #d8b45a); }
+.pw .halo { fill: none; stroke: #e9e3d31f; stroke-width: 1; }
+.pw .b { position: absolute; display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 13px 5px 6px; border-radius: 21px;
+  background: #1c1b16f2; border: 1.5px solid #4a4538; color: var(--ink, #e9e3d3); white-space: nowrap; box-shadow: 0 2px 8px #0009;
+  transition: border-color .08s, background .08s, scale .08s; }
+.pw .b .i { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 15px;
+  background: #14130f; border: 1px solid #5a5446; color: var(--gold, #d8b45a); }
+.pw .b .k { position: absolute; left: -3px; top: -6px; min-width: 14px; height: 14px; padding: 0 2px; border-radius: 4px; background: #14130f;
+  border: 1px solid #4a4538; color: var(--ink-dim, #9c9584); font: 600 9px/12px ui-monospace, monospace; text-align: center; }
+.pw .b .w { font-weight: 600; }
+.pw .b .o { color: var(--gold, #d8b45a); font-size: 11.5px; }
+.pw .b .r { color: var(--ink-faint, #6b6557); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.pw .b .self { font-size: 9px; color: var(--party, #4fb3a4); border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 4px; }
+.pw .b.off { opacity: .5; }
+.pw .b.off .i, .pw .b.off .o { color: var(--ink-faint, #6b6557); }
+.pw .b.back .i { color: var(--ink, #e9e3d3); }
+.pw .b.hot { border-color: var(--gold, #d8b45a); background: #2e2a1ef7; scale: 1.06; }
+.pw .b.hot .i { border-color: var(--gold, #d8b45a); }
 .pw .crumb { position: absolute; white-space: nowrap; transform: translate(-50%, -100%); color: var(--ink-dim, #9c9584); font-size: 11px;
   background: #14130fcc; padding: 1px 6px; border-radius: 4px; }
 `;
+// Icons by role, then by words in the label; the slot's own `icon` wins. Unknown: the slot number.
+const ROLE_ICON = { Strike: '⚔', Signature: '★', Kit: '✦', Tactics: '♜', Inspect: '?', Move: '➜', Aid: '✚', Use: '◆', Talk: '❝',
+  'Try something': '✧', Other: '⋯', 'Move here': '➜', Dash: '»', 'Aim here': '◎', Tricks: '↯', Ping: '!', Self: '♥' };
+const WORD_ICON = [[/shove|push|trip|kick/i, '⇥'], [/sword|unarmed|strike|attack|precision|riposte/i, '⚔'], [/javelin|axe|throw|flask|fire|oil/i, '➶'], [/grapple|drag|disarm|hand|pick up/i, '✋'], [/help|aid|rally|stabili|heal|wind/i, '✚'],
+  [/approach|move|walk|flank|reach|engage|jump|vault|climb|sneak|swap|dash/i, '➜'], [/ready|dodge|menac|surge/i, '◷'],
+  [/speak|whisper|shout|signal|listen/i, '❝'], [/inspect|look/i, '?'], [/prone|stand/i, '⤓'], [/open|break|bar|lock|door/i, '◆']];
+const iconOf = (s, k) => s.back ? '↶' : s.icon || ROLE_ICON[s.role] || WORD_ICON.find(([re]) => re.test(s.what))?.[1] || k;
 
 const ease = (t) => 1 - Math.pow(1 - t, 3);
 const rad = (a) => a * Math.PI / 180;
@@ -71,23 +78,20 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function build() {
     const menu = cur();
-    let html = `<svg><circle class="halo"/><path class="tick"/></svg>`;
+    let html = '<svg><circle class="halo"/></svg>';
     if (S.stack.length > 1) html += `<div class="crumb">${S.stack.map((m) => m.title).join(' › ')}</div>`;
     for (let k = 1; k <= 6; k++) {
       const s = slotOf(k);
       if (!s) continue;
-      const cls = `${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.sub ? ' sub' : ''}`;
-      html += `<div class="pip${cls}" data-k="${k}">${s.back ? '↶' : k}</div>`;
-      if (s.back) continue;
       const role = S.stack.length === 1 && s.role && s.role !== s.what ? `<div class="r">${s.role}</div>` : '';
-      html += `<div class="chip${s.off ? ' off' : ''}" data-k="${k}">${role}<div class="w">${s.what}${s.sub ? ' ▸' : ''}${s.self ? '<span class="self">self</span>' : ''}</div>${s.odds ? `<div class="o">${s.odds}</div>` : ''}</div>`;
+      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}" data-k="${k}"><span class="k">${k}</span><span class="i">${iconOf(s, k)}</span>`
+        + `<span>${role}<div class="w">${s.what}${s.sub ? ' ▸' : ''}${s.self ? '<span class="self">self</span>' : ''}</div>${s.odds ? `<div class="o">${s.odds}</div>` : ''}</span></div>`;
     }
     el.innerHTML = html;
-    S.pips = [...el.querySelectorAll('.pip')];
-    S.chips = Object.fromEntries([...el.querySelectorAll('.chip')].map((c) => [c.dataset.k, c]));
+    S.btns = [...el.querySelectorAll('.b')];
     S.hot = 0;
     place();
-    if (last) { const a = aim(last.x, last.y); setHot(a.zone === 'ring' ? a.k : 0); } // stay aimed after a drill
+    if (last) setHot(hit(last.x, last.y)); // stay aimed after a drill
   }
   function spin(dir, frac = 1) { S.spin = { from: -dir * 60 * frac, t0: performance.now(), dur: spinMs() }; }
 
@@ -100,60 +104,48 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (t >= 1) S.spin = null;
     }
     const a = S.anchor();
-    S.R = Math.max(62, Math.min(130, (a.r || 30) + 30));
+    S.R = Math.max(46, Math.min(120, (a.r || 30) + 14));
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
     S.fold += ((S.folded ? 1 : 0) - S.fold) * .3;
     S.r = S.R * (.6 + .4 * ease(g)) * (1 - .55 * S.fold);
     el.style.opacity = 1 - S.fold;
-    el.style.visibility = S.fold > .97 ? 'hidden' : '';    // keep the pips (not every chip) on screen, so the ring stays centred on the target as long as possible
-    const padX = S.R + 18, padY = S.R + 18;
+    el.style.visibility = S.fold > .97 ? 'hidden' : '';
+    // keep the ring (not every label) on screen, so it stays centred on the target as long as possible
+    const padX = S.R + 40, padY = S.R + 46;
     S.x = Math.max(padX, Math.min(innerWidth - padX, a.x));
     S.y = Math.max(padY, Math.min(innerHeight - padY, a.y));
     el.style.transform = `translate(${S.x}px, ${S.y}px)`;
     place();
     S.raf = requestAnimationFrame(frame);
   }
+  // Each button's inner edge sits on the ring and it grows outward: right side reads rightward, left leftward, top
+  // above, bottom below. The anchor shifts smoothly with the angle, so a spinning ring doesn't snap its labels.
   function place() {
     const r = S.r || S.R;
-    for (const p of S.pips) {
-      const k = +p.dataset.k, t = rad(slotAngle(k) + S.offset);
-      const px = r * Math.cos(t), py = r * Math.sin(t);
-      p.style.left = px + 'px'; p.style.top = py + 'px';
-      const c = S.chips[k];
-      if (!c) continue;
-      // chips sit outward from their pip: right side reads rightward, left side leftward, top above, bottom below
-      const cx = Math.cos(t), cy = Math.sin(t);
-      let tx, ty;
-      if (Math.abs(cx) < .35) { tx = '-50%'; ty = cy < 0 ? 'calc(-100% - 20px)' : '20px'; c.style.textAlign = 'center'; }
-      else { tx = cx > 0 ? '21px' : 'calc(-100% - 21px)'; ty = '-50%'; c.style.textAlign = cx > 0 ? 'left' : 'right'; }
-      c.style.left = px + 'px'; c.style.top = py + 'px';
-      c.style.transform = `translate(${tx}, ${ty})`;
+    for (const b of S.btns) {
+      const t = rad(slotAngle(+b.dataset.k) + S.offset), cx = Math.cos(t), cy = Math.sin(t);
+      b.style.left = (r + 4) * cx + 'px'; b.style.top = (r + 4) * cy + 'px';
+      b.style.transform = `translate(${(cx - 1) * 50}%, ${(cy - 1) * 50}%)`;
     }
     const crumb = el.querySelector('.crumb');
-    if (crumb) { crumb.style.left = '0px'; crumb.style.top = -(r + 62) + 'px'; }
+    if (crumb) { crumb.style.left = '0px'; crumb.style.top = -(r + 56) + 'px'; }
     el.querySelector('.halo').setAttribute('r', r);
   }
 
-  // Which slot the pointer is aiming at: none in the dead zone over the target, none far outside the wheel.
-  function aim(mx, my) {
-    const dx = mx - S.x, dy = my - S.y, d = Math.hypot(dx, dy);
-    if (d < S.R * .5) return { zone: 'dead' };
-    if (d > S.R + (S.folded ? 110 : 150)) return { zone: 'out' };   // hysteresis, so the fold doesn't flicker
-    const ang = Math.atan2(dy, dx) * 180 / Math.PI - S.offset;
-    const k = ((Math.round((ang + 90) / 60) % 6) + 6) % 6 + 1;
-    return { zone: 'ring', k: slotOf(k) ? k : 0 };
+  // The button under the pointer (its own box plus a few px), else 0.
+  function hit(mx, my) {
+    for (const b of S.btns) {
+      const q = b.getBoundingClientRect();
+      if (mx > q.left - 4 && mx < q.right + 4 && my > q.top - 4 && my < q.bottom + 4) return +b.dataset.k;
+    }
+    return 0;
   }
+  const away = (mx, my) => Math.hypot(mx - S.x, my - S.y) - S.R;   // px beyond the ring
   function setHot(k) {
     if (S.hot === k) return;
     S.hot = k;
-    for (const p of S.pips) p.classList.toggle('hot', +p.dataset.k === k);
-    for (const [kk, c] of Object.entries(S.chips)) c.classList.toggle('hot', +kk === k);
-    const tick = el.querySelector('.tick');
-    if (!k) { tick.style.opacity = 0; return; }
-    const ri = S.R * .5, a0 = rad(slotAngle(k) - 22), a1 = rad(slotAngle(k) + 22);
-    tick.setAttribute('d', `M ${ri * Math.cos(a0)} ${ri * Math.sin(a0)} A ${ri} ${ri} 0 0 1 ${ri * Math.cos(a1)} ${ri * Math.sin(a1)}`);
-    tick.style.opacity = 1;
+    for (const b of S.btns) b.classList.toggle('hot', +b.dataset.k === k);
   }
 
   function choose(k, shift) {
@@ -177,19 +169,18 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointermove', (ev) => {
       last = { x: ev.clientX, y: ev.clientY };
       if (ev.buttons) return;   // dragging the camera: leave the wheel as it is
-      const a = aim(ev.clientX, ev.clientY);
-      S.folded = a.zone === 'out';
-      setHot(a.zone === 'ring' ? a.k : 0);
+      const k = hit(ev.clientX, ev.clientY);
+      S.folded = !k && away(ev.clientX, ev.clientY) > (S.folded ? 130 : 170);   // hysteresis, so the fold doesn't flicker
+      setHot(k);
     }],
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
     ['pointerup', (ev) => {
-      // a drag (e.g. orbiting the camera) passes through; a click is ours
+      // a drag (e.g. orbiting the camera) passes through; so does a click that isn't on a button or the target
       if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
-      const a = aim(ev.clientX, ev.clientY);
-      if (a.zone === 'out') return;
-      ev.pwHandled = true;
-      if (a.zone === 'dead') back();
-      else if (a.k) choose(a.k, ev.shiftKey);
+      const k = hit(ev.clientX, ev.clientY);
+      if (k) { ev.pwHandled = true; return choose(k, ev.shiftKey); }
+      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; return back(); }
+      close();
     }],
     ['contextmenu', (ev) => {
       ev.preventDefault(); ev.stopPropagation();

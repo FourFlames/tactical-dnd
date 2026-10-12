@@ -774,7 +774,7 @@ function runSlot(s) {
 let startMode = 'wheel';
 try { if (localStorage.getItem('wheel3d.mode') === 'bar') startMode = 'bar'; } catch (e) { /* storage blocked: default */ }
 const HINTS = {
-  wheel: 'Click a body or its pill, or the floor · aim anywhere toward a pip, click · drag pans, right-drag orbits · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
+  wheel: 'Click a body or its pill, or the floor · click a button (or the body to close) · drag pans, right-drag orbits · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
   bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
 };
 function setMode(m) {
@@ -793,14 +793,24 @@ const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : null);
 // inside. Where ellipses overlap, the body whose centre the cursor is relatively nearer wins: move toward the one you
 // mean. Line of sight (the costly part) is only checked for bodies the cursor is inside, best first.
 const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = .8;
+// A body's screen shape: the box around its top, its sides and its footprint on the floor (a 0.7-wide square under a
+// body alone in its square), so the centre sits low, between the model and its square, and hovering the ground under a body
+// counts a little. Flying things use their own underside, not the floor far below.
+const camFwd = new THREE.Vector3(), shapePts = [];
 function shapeOf(e) {
-  const p = e.obj.position, c = toScreen(tmp.copy(p).setY(p.y + e.top / 2));
-  const t = toScreen(tmp.copy(p).setY(p.y + e.top)), b = toScreen(p);
+  const p = e.obj.position, mid = p.y + e.top / 2, foot = e.alt ? p.y : floorTop(e.c, e.r);
   camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-  const sd = toScreen(tmp.copy(p).setY(p.y + e.top / 2).addScaledVector(camRight, e.half));
-  return { x: c.x, y: c.y, front: c.front,
-    rx: Math.max(Math.hypot(sd.x - c.x, sd.y - c.y), HOVER_MIN) + HOVER_PAD,
-    ry: Math.max(Math.hypot(t.x - b.x, t.y - b.y) / 2, HOVER_MIN) + HOVER_PAD };
+  camera.getWorldDirection(camFwd).setY(0).normalize();
+  shapePts.length = 0;
+  const at = (y, rs, fs) => shapePts.push(toScreen(tmp.set(p.x, y, p.z).addScaledVector(camRight, rs).addScaledVector(camFwd, fs)));
+  at(p.y + e.top, 0, 0); at(mid, e.half, 0); at(mid, -e.half, 0);
+  const shared = ents.some((o) => o !== e && !o.alt && o.c === e.c && o.r === e.r);   // a shared square: each keeps to its own spot
+  const f = e.alt || shared ? e.half + .06 : Math.max(e.half, .35);
+  at(foot, f, 0); at(foot, -f, 0); at(foot, 0, f); at(foot, 0, -f);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const q of shapePts) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, front: shapePts[1].front,
+    rx: Math.max((x1 - x0) / 2, HOVER_MIN) + HOVER_PAD, ry: Math.max((y1 - y0) / 2, HOVER_MIN) + HOVER_PAD };
 }
 function hoverScores(x, y) {
   for (const e of ents) {
