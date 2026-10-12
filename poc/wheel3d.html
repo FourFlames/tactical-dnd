@@ -360,8 +360,11 @@ function glow(e, on) {
 const overlay = document.getElementById('overlay');
 const stems = document.getElementById('stems');
 const SVGNS = 'http://www.w3.org/2000/svg';
-const lbLayer = document.createElement('div'), icLayer = document.createElement('div');   // labels sit under every icon, so none can cover one
-overlay.append(lbLayer, icLayer);
+// Icons and labels share one layer, stacked by distance to the cursor (nearest on top). Each label sits just above its own
+// icon: over whatever that icon covers, under whatever covers that icon.
+const icLayer = document.createElement('div');
+icLayer.style.cssText = 'position: absolute; inset: 0; z-index: 0;';   // its own stacking context, so the z-indexes stay inside it
+overlay.append(icLayer);
 const STEM_W = .9;   // a lone stem's world length above the top of the body
 // The stem is a real line in the world: solid where it is in front, dashed and dimmer where something hides it. It is two
 // pieces so the part up to the cursor can be gold while tracing: lo (gold, body up to the trace point) and hi (the rest).
@@ -392,7 +395,7 @@ function setPiece(p, A, B, col, op) {   // a piece of stem from A to B: the unit
 }
 function makeMarker(cls, glyph, label) {
   const lb = document.createElement('div');
-  lb.className = 'lb'; lb.innerHTML = label; lbLayer.appendChild(lb);
+  lb.className = 'lb'; lb.innerHTML = label; icLayer.appendChild(lb);
   const el = document.createElement('div');
   el.className = 'mk tipped ' + cls; el.textContent = glyph; icLayer.appendChild(el);
   return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, big: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
@@ -564,6 +567,12 @@ function updateMarkers() {
     else glow(e, 0);
   }
   if (!trace.e || iconMode) spark.visible = false;
+  // 4. stacking: nearest to the cursor on top, each label one step above its icon
+  const order = ents.filter((e) => e.mk.op > .02 || e.mk.lab > 0).sort((a, b) => Math.hypot(mouse.x - b.mk.x, mouse.y - b.mk.y) - Math.hypot(mouse.x - a.mk.x, mouse.y - a.mk.y));
+  order.forEach((e, i) => {
+    const z = String(2 * i + 1);
+    if (e.mk.el.style.zIndex !== z) { e.mk.el.style.zIndex = z; e.mk.lb.style.zIndex = String(2 * i + 2); }
+  });
 }
 
 // ---------- menus (same as the 2D mockup) ----------
