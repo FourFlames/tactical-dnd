@@ -98,7 +98,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let disposables = [];      // geometries made for the current terrain
   let flames = [], waters = [], lights = [];
   let framed = false, wallsLow = false;
-  let lastState = null, lastSelected = null, lastMoveT = null;
+  let lastState = null, lastSelected = null, hoveredId = null;
+  let previousLog = null, turnKey = null, follow = true, followYielded = false;
+  const moveQueue = [];
+  let activeMove = null;
+  const wallMeshes = [], wallMaterials = [];
   const tokenObjs = new Map();
   let trail = null;
   let cursorKey = null;
@@ -111,7 +115,22 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     return (c.h || 0) + (c.obj && c.obj.stand ? c.obj.height : 0);
   }
 
+  // Local clones keep occlusion from changing the shared floor/prop material cache.
+  function markWall(mesh) {
+    const clone = (source) => {
+      const material = source.clone();
+      material.userData.occlusionBase = { opacity: source.opacity, transparent: source.transparent, depthWrite: source.depthWrite };
+      wallMaterials.push(material); return material;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(clone) : clone(mesh.material);
+    wallMeshes.push(mesh); return mesh;
+  }
+  function clearWalls() {
+    for (const material of wallMaterials) { Object.assign(material, material.userData.occlusionBase); material.dispose(); }
+    wallMaterials.length = 0; wallMeshes.length = 0;
+  }
   function buildTerrain(v) {
+    clearWalls();
     for (const o of [...terrain.children]) {
       terrain.remove(o);
       if (o.userData.dispose) { o.userData.dispose.dispose(); o.material.dispose(); }
@@ -172,6 +191,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) { colTops[y][x] = top; continue; }
       const col = add(new THREE.Mesh(g, [side, side, topMat, side, side, side]), at);
       col.position.set(x + 0.5, bottom + h / 2, y + 0.5);
+      if (c.tags.includes('wall')) markWall(col);
       colTops[y][x] = colTop;
       if (surf === 'oil') {
         const o = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1.15, 1.15)), mat('oil', variant, { dim, rough: 0.1, metal: 0, opacity: 0.999 })), at);
@@ -360,7 +380,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const g = geo(box(vertical ? T : l, y1 - y0, vertical ? l : T));
       const mesh = add(new THREE.Mesh(g, m));
       mesh.position.set(midX + (vertical ? 0 : offset), (y0 + y1) / 2, midZ + (vertical ? offset : 0));
-      return mesh;
+      return markWall(mesh);
     };
     if (w.kind === 'door') {
       const doorFt = wallsLow ? 2 : 7;
@@ -373,7 +393,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       // hinge at one end of the opening; an open door swings 100 degrees
       hinge.position.set(vertical ? midX : midX - len / 2 + 0.08, rim + (doorFt / 2) * FT, vertical ? midZ - len / 2 + 0.08 : midZ);
       leaf.position.set(vertical ? 0 : (len - 0.16) / 2, 0, vertical ? (len - 0.16) / 2 : 0);
-      hinge.add(leaf);
+      markWall(leaf); hinge.add(leaf);
       hinge.rotation.y = w.open ? (vertical ? -1 : 1) * Math.PI * 0.55 : 0;
       terrain.add(hinge);
       return;
@@ -479,28 +499,84 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       g.userData.turnRing.visible = isTurn;
       g.userData.selRing.visible = selected === c.id;
     }
-    for (const [id, g] of tokenObjs) if (!seen.has(id)) { tokens.remove(g); tokenObjs.delete(id); }
+    for (const [id, g] of tokenObjs) if (!seen.has(id)) {
+      tokens.remove(g); tokenObjs.delete(id);
+      g.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+      });
+      if (hoveredId === id) hoveredId = null;
+    }
   }
 
-  // Animate the most recent move along its path, and draw a fading trail like the 2D map.
+  function clearTrail() {
+    if (!trail) return;
+    fx.remove(trail); trail.geometry.dispose(); trail.material.dispose(); trail = null;
+  }
+  function resetMoves() {
+    moveQueue.length = 0; activeMove = null; clearTrail();
+    for (const g of tokenObjs.values()) {
+      g.userData.path = [];
+      if (g.userData.target) g.position.copy(g.userData.target);
+      g.userData.applied = null;
+    }
+  }
+  const logKey = (entry) => JSON.stringify(entry);
+  // Ordered snapshot overlap handles batched moves and equal timestamps. Replaced
+  // or rewound history establishes a new baseline instead of replaying a load.
   function playMoves(v) {
-    const moves = (v.log || []).filter((e) => e.type === 'move' && e.data);
-    const last = moves[moves.length - 1];
-    if (!last) return;
-    if (lastMoveT === null) { lastMoveT = last.t; return; } // first load: no replay
-    if (last.t === lastMoveT) return;
-    lastMoveT = last.t;
-    const g = tokenObjs.get(last.data.id);
-    if (!g || !last.data.path) return;
-    const pts = last.data.path.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(v, p.x, p.y) * FT, p.y + 0.5); });
-    g.position.copy(pts[0]);
-    g.userData.path = pts.slice(1);
-    if (trail) { fx.remove(trail); trail.geometry.dispose(); }
-    const lg = new THREE.BufferGeometry().setFromPoints(pts.map((p) => p.clone().setY(p.y + 0.06)));
-    trail = new THREE.Line(lg, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
-    trail.computeLineDistances();
-    trail.userData.born = performance.now();
-    fx.add(trail);
+    const entries = v.log || [], keys = entries.map(logKey);
+    let fresh = [];
+    if (previousLog !== null) {
+      let overlap = Math.min(previousLog.length, keys.length);
+      while (overlap && !previousLog.slice(-overlap).every((key, i) => key === keys[i])) overlap--;
+      const oldTail = previousLog[previousLog.length - 1], oldTime = oldTail ? JSON.parse(oldTail).t : null;
+      if (overlap) fresh = entries.slice(overlap);
+      else if (!previousLog.length || (entries.length && entries[0].t > oldTime)) fresh = entries;
+      else { resetMoves(); turnKey = null; }
+    }
+    previousLog = keys;
+    if (fresh.some((entry) => entry.type === 'scene')) {
+      resetMoves(); turnKey = null; hoveredId = null; ease = null; return;
+    }
+    for (const entry of fresh) {
+      const data = entry.data;
+      if (entry.type !== 'move' || !data || !Array.isArray(data.path) || data.path.length < 2) continue;
+      const c = v.creatures[data.id];
+      if (!c || c.hidden) continue;
+      const pts = data.path.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(v, p.x, p.y) * FT, p.y + 0.5); });
+      const g = tokenObjs.get(data.id);
+      if (g && !(activeMove && activeMove.id === data.id) && !moveQueue.some((move) => move.id === data.id)) {
+        // Hold each waiting token at its first path square, rather than showing the
+        // polled destination and snapping back when its place in the queue arrives.
+        g.position.copy(pts[0]); g.userData.applied = null;
+      }
+      moveQueue.push({ id: data.id, pts });
+    }
+    for (let i = moveQueue.length - 1; i >= 0; i--)
+      if (!v.creatures[moveQueue[i].id] || v.creatures[moveQueue[i].id].hidden) moveQueue.splice(i, 1);
+    if (activeMove && (!v.creatures[activeMove.id] || v.creatures[activeMove.id].hidden)) {
+      const g = tokenObjs.get(activeMove.id);
+      if (g) { g.userData.path = []; g.position.copy(g.userData.target); g.userData.applied = null; }
+      activeMove = null; clearTrail();
+    }
+  }
+  function startNextMove(now) {
+    if (activeMove) {
+      const g = tokenObjs.get(activeMove.id);
+      if (g && g.userData.path.length) return;
+      activeMove = null;
+    }
+    while (moveQueue.length) {
+      const move = moveQueue.shift(), g = tokenObjs.get(move.id);
+      if (!g) continue;
+      activeMove = move;
+      g.position.copy(move.pts[0]); g.userData.applied = null; g.userData.path = move.pts.slice(1);
+      clearTrail();
+      const geometry = new THREE.BufferGeometry().setFromPoints(move.pts.map((p) => p.clone().setY(p.y + 0.06)));
+      trail = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
+      trail.computeLineDistances(); trail.userData.born = now; fx.add(trail); break;
+    }
   }
 
   // ---------- cursor & pings ----------
@@ -645,11 +721,42 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   // ---------- camera ----------
+  let defDist = 30, ease = null;
+  function focusOn(id) {
+    const c = lastState && lastState.creatures[id];
+    if (!c || !c.pos || c.hidden) return;
+    const p = cellOf(c.pos);
+    const to = new THREE.Vector3(p.x + 0.5, (c.elev || 0) * FT + 0.5, p.y + 0.5);
+    const off = camera.position.clone().sub(controls.target), d = off.length();
+    if (d > defDist * 2.5) off.setLength(defDist);
+    ease = { t0: performance.now(), fromT: controls.target.clone(), toT: to, fromO: camera.position.clone().sub(controls.target), toO: off };
+  }
+  function followTurn(v) {
+    const turns = (v.log || []).filter((e) => e.type === 'turn'), latest = turns[turns.length - 1];
+    const key = JSON.stringify([v.round, v.current, latest || null, latest ? turns.filter((e) => logKey(e) === logKey(latest)).length : 0]);
+    if (key === turnKey) return;
+    turnKey = key; followYielded = false;
+    if (follow) focusOn(v.current);
+  }
+  // Yield to the player's own camera moves (press, drag, zoom), not to a pointer just passing over the map.
+  const stopEase = () => { ease = null; followYielded = true; };
+  renderer.domElement.addEventListener('pointerdown', stopEase);
+  renderer.domElement.addEventListener('pointermove', (e) => { if (e.buttons) stopEase(); });
+  renderer.domElement.addEventListener('wheel', stopEase, { passive: true });
+  function stepEase(now) {
+    if (!ease) return;
+    const k = Math.min(1, (now - ease.t0) / 450), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    controls.target.lerpVectors(ease.fromT, ease.toT, e);
+    camera.position.lerpVectors(ease.fromO, ease.toO, e).add(controls.target);
+    if (k >= 1) ease = null;
+  }
+
   function frame(v) {
     const cx = v.width / 2, cz = v.height / 2, span = Math.max(v.width, v.height);
     controls.target.set(cx, 0, cz);
     camera.position.set(cx - span * 0.08, span * 0.78, cz + span * 0.78);
     controls.update();
+    defDist = camera.position.distanceTo(controls.target);
     const s = span * 0.8 + 4;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: span * 4 + 40 });
     sun.shadow.camera.updateProjectionMatrix();
@@ -678,13 +785,40 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     else if (p && p.cell && onCell) onCell(p.cell.x, p.cell.y);
   });
   renderer.domElement.addEventListener('pointermove', (e) => {
-    if (!onHover || e.buttons) return;
+    if (e.buttons) { hoveredId = null; return; }
     const p = pick(e);
+    hoveredId = p && p.id || null;
+    if (!onHover) return;
     if (p && p.id && lastState) { const q = cellOf(lastState.creatures[p.id].pos); onHover(q.x, q.y); }
     else if (p && p.cell) onHover(p.cell.x, p.cell.y);
     else onHover(-1, -1);
   });
-  renderer.domElement.addEventListener('pointerleave', () => onHover && onHover(-1, -1));
+  renderer.domElement.addEventListener('pointerleave', () => { hoveredId = null; if (onHover) onHover(-1, -1); });
+
+  const wallRay = new THREE.Raycaster();
+  function fadeOccludingWalls(dt) {
+    const blocked = new Set();
+    scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+    for (const id of new Set([lastState && lastState.current, lastSelected, hoveredId])) {
+      const c = lastState && lastState.creatures[id], g = tokenObjs.get(id);
+      if (!c || c.hidden || !g) continue;
+      for (const up of [0.55, 0.95]) {
+        const point = g.position.clone().add(new THREE.Vector3(0, up, 0));
+        const dir = point.sub(camera.position), distance = dir.length();
+        wallRay.set(camera.position, dir.normalize()); wallRay.far = Math.max(0, distance - 0.05);
+        for (const hit of wallRay.intersectObjects(wallMeshes, false)) blocked.add(hit.object);
+      }
+    }
+    for (const mesh of wallMeshes) for (const material of [].concat(mesh.material)) {
+      const base = material.userData.occlusionBase;
+      const target = blocked.has(mesh) ? Math.min(base.opacity, 0.18) : base.opacity;
+      material.opacity += (target - material.opacity) * (1 - Math.exp(-dt * 12));
+      if (Math.abs(material.opacity - target) < 0.002) material.opacity = target;
+      const fading = material.opacity < base.opacity, transparent = fading || base.transparent;
+      if (material.transparent !== transparent) { material.transparent = transparent; material.needsUpdate = true; }
+      material.depthWrite = fading ? false : base.depthWrite;
+    }
+  }
 
   // ---------- loop ----------
   const resize = () => {
@@ -708,6 +842,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
     for (const w of waters) { const m = w.material.map; m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; }
+    startNextMove(now);
     for (const g of tokens.children) {
       const u = g.userData;
       // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
@@ -718,7 +853,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         const step = 7 * dt;
         const d = g.position.distanceTo(next);
         if (d <= step) { g.position.copy(next); u.path.shift(); } else g.position.lerp(next, step / d);
-      } else if (u.target) g.position.lerp(u.target, 1 - Math.exp(-dt * 10));
+      } else if (u.target && !(activeMove && activeMove.id === u.id) && !moveQueue.some((move) => move.id === u.id)) g.position.lerp(u.target, 1 - Math.exp(-dt * 10));
       g.position.add(u.applied);
       u.turnRing.material.opacity = 0.55 + Math.sin(t * 4) * 0.35;
     }
@@ -736,9 +871,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (trail) {
       const age = (now - trail.userData.born) / 2400;
       trail.material.opacity = Math.max(0, 0.9 * (1 - age));
-      if (age >= 1) { fx.remove(trail); trail.geometry.dispose(); trail = null; }
+      if (age >= 1) clearTrail();
     }
+    stepEase(now);
     controls.update();
+    fadeOccludingWalls(dt);
     renderer.render(scene, camera);
   }
   raf = requestAnimationFrame(tick);
@@ -748,21 +885,32 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   return {
-    update(v, { selected, cursor } = {}) {
+    update(v, { selected, cursor, hovered } = {}) {
+      const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
+      if (encounterChanged) { previousLog = null; turnKey = null; resetMoves(); hoveredId = null; ease = null; framed = false; }
       lastState = v; lastSelected = selected;
+      if (hovered !== undefined) hoveredId = hovered;
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
       updateTokens(v, selected);
       playMoves(v);
+      followTurn(v);
       setCursor(v, cursor);
     },
     ping: addPing,
     setPath, shoot, bump, hit,
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
-    resetCamera() { if (lastState) frame(lastState); },
+    resetCamera() { ease = null; if (lastState) frame(lastState); },
+    focus: focusOn,
+    setFollow(on) {
+      follow = !!on;
+      if (!follow) ease = null;
+      else if (!followYielded && lastState) focusOn(lastState.current);
+    },
     dispose() {
       cancelAnimationFrame(raf); ro.disconnect(); controls.dispose();
+      clearWalls(); clearTrail();
       disposables.forEach((g) => g.dispose());
       renderer.dispose(); renderer.domElement.remove();
     },

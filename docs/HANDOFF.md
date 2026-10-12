@@ -5,6 +5,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 ## Rules (every session)
 - **A live game may be running** on port 5173 from `state.json` in the repo root. Never run engine commands there, and never edit `state.json` or `log.jsonl`.
 - Test in the sandbox: `node tools/sandbox.js <engine command>` (data in `.sandbox/`), and the viewer via `preview_start viewer-sandbox` (port 5174). `node test.js` and `node test-minds.js` use a temp folder on their own.
+- **3D in a cloud session:** the sandbox can't reach the CDN, so `?3d` says "couldn't load". Run `npm pack three@0.160.0` in a scratch folder and untar it. Then, in headless Playwright (Chromium at `/opt/pw-browsers/chromium`, launched with `--use-gl=swiftshader --enable-unsafe-swiftshader`), serve it in place of the CDN: `page.route('https://cdn.jsdelivr.net/npm/three@0.160.0/**', (r) => r.fulfill({ path: '<scratch>/package/' + r.request().url().split('three@0.160.0/')[1], contentType: 'text/javascript' }))`. Join links keep extras: `/j/<code>?3d`. A double-click needs two `mouse.click`s under 400 ms apart (`locator.click` waits too long).
 - The server reads `viewer.html` fresh on every page load, so work on the branch below and don't leave half-done viewer edits on `main`.
 - Design references, read only if your card names them: [plan-playable.md](plan-playable.md) (the why), [wheel-lexicon.md](wheel-lexicon.md) (wheel slot intuitions; a scratchpad, the code wins).
 - Match the surrounding code: no build step, no dependencies, plain JS, comments only where the why isn't obvious.
@@ -18,7 +19,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 ## State
 - Branch: `playable-1`. Pushed: hidden turns + initiative strip; minds talk menus; `TDND_DATA` sandbox.
 - Card 1 merged into `playable-1` (`08db108`).
-- Wheel mockups: `poc/wheel.html` (2D) and `poc/wheel3d.html` (3D; Wheel mode = pip wheel `poc/pip-wheel.js` around the body, Bar mode = action bar under the square), open with `preview_start poc` (port 5175). Waiting on the user's sign-off on the feel before Card 5.
+- Wheel mockups: `poc/wheel.html` (2D) and `poc/wheel3d.html` (3D; Wheel mode = pip wheel `poc/pip-wheel.js` around the body, Bar mode = action bar under the square), open with `preview_start poc` (port 5175). Feel signed off 2026-10-12 (good enough; will need tweaks when wired in Card 5).
 - 3D mockup map, for tweaking (`poc/wheel3d.html` unless noted):
   - Hover: `shapeOf`/`hoverScores`/`bodyAt` (screen ellipse incl. footprint, score <1 = inside, 20% stickiness); "hit areas" toggle draws them.
   - Highlight: `hlStep` (fresnel rim, floor halo, gold ring sized from `e.half`, capped at the square; ~100 ms snap); "Highlight" panel, saved in localStorage `wheel3d.hl`.
@@ -27,38 +28,34 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
   - Rook (`me`) is selectable: self wheel, status strip `.rk`, full sheet in `#card`, movement spent by moves.
   - Controls: LMB drags the ground, RMB orbits, wheel zooms; pills grey out while dragging.
   - Work style: small edits directly; bigger ones go to a Sonnet with a precise spec, one agent per file at a time.
-- Next card: **3**.
+- Side projects (atomic history, council, recognition, sword icons, codex) are parked on their own branches and in `git stash`; keep them off `playable-1`.
+- HUD (Card 3): one `.float.hud` bottom-left (`drawAct`/`drawTurn` fill it; turn strip is `#turnSec` inside it); Character tab = `#sheet` in the sidebar, localStorage `sideView`. Party view now carries `resources` and `char`.
+- Card 4: `#look` is one `.ecard` (`cardHtml()`); hover preview + `#hovchip` via `hoverCell`/`hoverCache` (cleared in `refresh()`). No hit % (would leak AC). Click selects, double-click focuses: `selectRef(ref, src)` / `focusRef(ref)` for creature ids and cells, from portraits, 2D tokens, 3D models (`onSelect`) and any `[data-ref]` (log name/cell chips via `linkRefs`, ids from entry data, unique names only, never ids the viewer lacks). Timed clicks (400 ms), not dblclick. 3D cell focus is a no-op until `map3d.focus` takes cells.
+- Turn feel (now Card 7) landed from another session and works in the sandbox: Follow turn (`setFollow`/`focusOn` in map3d; yields on press, drag or zoom, not hover), 3D glide (`moveQueue`/`startNextMove`), ticker (`#actionTicker`), "DM is resolving…" (`#dmResolving`), Story/Details log with chips. Wall fade (`fadeOccludingWalls`) checked on `tollhouse`. Its new-event tracking (`logArrival`, map3d `playMoves`) is what Card 6 replaces.
+- Next card: **6**, then **7** (finish), then **5**/**8**.
 
 ## Cards (in order; each fits one session)
 1. [x] **Kill native dialogs + builder focus.** Replace `confirm()` at viewer.html ~1075 (end turn with the action unused) and ~1167 (move provokes) with an in-card second click ("Provokes gob1. Click again to move."). Builder: `save()` → `render()` redraws the form 500 ms after typing stops and steals focus (builder.html ~284); don't redraw `renderMain` while focus is inside it, or restore focus and caret.
 2. [x] **Wheel mockup**, standalone `poc/wheel.html`, no game wiring. A 6-slot ring around a token with keys 1-6, submenu rotation (clockwise in, counter-clockwise back, ~150 ms, Back at bottom slot 4), a fan-out of 3 entities in one square with leader lines. For the user to try the feel before Card 5. Ref: wheel-lexicon.
-3. [ ] **Player HUD**: a docked bottom-left character card (HP ring, movement as 5-ft squares, action/bonus/reaction pips, resources) that replaces the turn panel and swallows the compose box, plus a **Character** tab next to Narration/Combat with the full sheet. Clean and minimal. Ref: plan Phase 1.1.
-4. [ ] **Fixed entity card** top-right of the map, plus a hover chip over tokens ("65% · 30 ft · ½ cover"). Remove the stacked inspect panel. Odds come from `/api/look`, only for ids the client already has.
+3. [x] **Player HUD**: a docked bottom-left character card (HP ring, movement as 5-ft squares, action/bonus/reaction pips, resources) that replaces the turn panel and swallows the compose box, plus a **Character** tab next to Narration/Combat with the full sheet. Clean and minimal. Ref: plan Phase 1.1.
+4. [x] **Fixed entity card** top-right of the map, plus a hover chip over tokens ("65% · 30 ft · ½ cover"). Remove the stacked inspect panel. Odds come from `/api/look`, only for ids the client already has.
 5. [ ] **Action wheel, wired**: entity and square wheels, the multi-entity fan-out from the client's own view (count 0/1/2+, no "hidden" special case), smart Strike, player-set slots 2-3 with class defaults (stored on the character, with a "Wheel" section in the builder). Ref: wheel-lexicon. Needs Card 2's feel signed off.
-6. [ ] **Turn feel**: camera eases to the active creature and yields on any pointer or wheel input; walls between the camera and focused tokens fade; monster moves glide along `data.path`; one-line ticker; a "DM is resolving…" strip; the log defaults to Story, with Details and chips.
-7. [ ] **DM speed (engine)**: `auto <id>` monster turn, `next --auto`, monster opportunity attacks rolled on the move, templated flavor lines; update CLAUDE.md's turn loop. Ref: plan Phase 2.
-8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
+6. [ ] **Event stream + playback.** Bug that prompted it: the player view sends only the last 80 public log entries (`readLog(80)`), and `logArrival` (viewer.html) finds new ones by prefix, so once the window slides it sees none and dice/hit fx and the ticker go silent; `publicLog` rewording hidden turns also breaks it. Decided with the user:
+   - **Sequence numbers.** `appendLog` (lib/core.js) stamps each entry with `n`, increasing per game; `load` starts a new game id so viewers reset. The viewer remembers the last `n` it played; no more JSON-snapshot matching.
+   - **One ordered queue** drives everything that animates, in log order, 2D and 3D: move glide (replaces map3d's `moveQueue`), move trail, dice/hit fx, ticker. The goblin arrives, then its d20 lands, then the line shows.
+   - **Catch-up.** A burst (tab in the background, reconnect, the DM resolving a whole monster turn) plays only the current turn's events; older ones go straight into the log. A **Skip to now** button sits next to an **animation speed** control. Every duration reads one speed multiplier: build the queue around it from the start.
+   - **Log history.** Keep sending the recent window; scrolling the sidebar to the top fetches older entries by `n` (e.g. `/api/log?before=<n>`), filtered like the window.
+   - Tests: window slide past 80, equal timestamps, reloading an encounter, a hidden turn reworded.
+7. [ ] **Turn feel**: camera eases to the active creature and yields on any pointer or wheel input; walls between the camera and focused tokens fade; monster moves glide along `data.path`; one-line ticker; a "DM is resolving…" strip; the log defaults to Story, with Details and chips.
+8. [ ] **DM speed (engine)**: `auto <id>` monster turn, `next --auto`, monster opportunity attacks rolled on the move, templated flavor lines; update CLAUDE.md's turn loop. Ref: plan Phase 2.
+9. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-12: Wall fade seen working (tollhouse, DM view, Morrow behind the south wall). `/j/<code>` keeps extra params (`?3d`). How to run 3D headless in a cloud session added to Rules.
+- 2026-10-12: Review of PR #11: Card 6 is now the event stream (sliding 80-entry window silences fx/ticker); old 6-8 renumbered 7-9. Follow turn no longer yields to plain hover or leaving the canvas.
+- 2026-10-12: Double-click focus generalized (Sonnet): portraits, map tokens/models, log name and cell chips all go through `selectRef`; checked in 2D and on a 3D model.
+- 2026-10-12: Card 4 (Sonnet): entity card with side stripe, health chip/HP bar, odds cells, attack chips; hover preview and pointer chip; portrait double-click focuses the camera (2D and 3D). Fixed a look request racing the cursor (`cell=null`). Card 6 partial work from the other session committed alongside.
+- 2026-10-12: Card 3 (Sonnet): docked HUD (HP ring, A/B/R pips, 5-ft movement squares, resources, attacks, "Tell the DM…" input) replaces the turn panel and compose box; Character tab with the full sheet. 99 tests pass; sandbox checked incl. 3D, 375 px and the End-turn second click.
 - 2026-10-11: The wheel unfolds out of the entity's icon (smaller, .8); icon, stem and label stay, other icons drop lower and behind; clicking the icon deselects; fold = pips slide under the icon, unfold = rush out in a line toward the pointer then fan to the hexagon.
 - 2026-10-11: Icons and labels share one layer, stacked by distance to the cursor (nearest on top); each label is one z-step above its own icon.
 - 2026-10-11: Icon mode hits icons by distance (`iconHit`): 25% wider than drawn, nearest centre wins; DOM pointer events off there, clicks go through the canvas handler.
-- 2026-10-11: Trace back down from the last hovered icon in icon mode (blend in reverse; an icon in the way takes over); hovered icon in icon mode grows 1.3×; calmer spark. Spread displacement off (`SPREAD = false`, crowd labels apply in icon mode); a 36-rat swarm square (H8) for trying it.
-- 2026-10-11: Tracing a stem: its last 15% blends into icon mode (square-mates grow and spread around the pinned traced icon, others fade), committing at the top; other stems' growth uses the point where the trace began.
-- 2026-10-11: Spark ¼ size; marker labels always above their icon (no flip in icon mode) and styled like the wheel captions; wheel captions tuck 4 px under their icon.
-- 2026-10-11: Markers (Sonnet): icons ride equal world stems, no screen kinks; tracing a stem holds the hover with a gold, wider section and a spark; reaching the top spreads that square's icons (fixed-pass force layout, stems lean in world space).
-- 2026-10-11: Pip wheel anchors to the gold selection ring (its centre, raised a quarter of the model's height) and scales .85-1.15 with the ring's screen size.
-- 2026-10-11: Pip wheel fold is spatial: size .85→1, opacity and colour follow the unsigned distance to the nearest grey line (ring or icon edge), gone by 96 px.
-- 2026-10-11: Pip wheel folds instantly (grey, 0.6×, fades) and fades back in small on approach; pops to full on the full-size ring or any full-size icon/caption (+10 px). Inside an open wheel you can hover and click a square-mate to switch.
-- 2026-10-11: Pip wheel: icon + short title caption underneath, details in one tooltip; the grey ring is the fold cutoff (icons/captions hold it open, 140 ms grace).
-- 2026-10-11: Pip wheel icons on a true hexagon with attached, balanced label chips (Sonnet); selection ring/halo sized from the model, capped at its square.
-- 2026-10-11: Pip wheel: one button per slot (icon + label), hit only on the button; clicking the body closes. Hover shapes and the wheel's centre include the footprint, so they sit low on the body.
-- 2026-10-11: 3D mockup (Sonnet): proximity highlight (fresnel/halo/ring, stem grows), ~100 ms snap to picked, Highlight settings panel; lower-row pill badges mirrored below; far pills fully off (flicker).
-- 2026-10-11: 3D mockup (Sonnets): staggered two-row pills with icon badges; Rook selectable with a self wheel, status strip, full sheet in the card, movement spent by moves.
-- 2026-10-11: 3D mockup: LMB drags the ground, RMB orbits; pills grey out and pass the mouse during drags; the wheel no longer swallows pointerup (stuck drag); far from the wheel it folds and keeps the selection.
-- 2026-10-11: 3D mockup: snug pill rows with hover-scroll arrows (Sonnet); hover/click by screen-space ellipses scored on the fly ("hit areas" toggle shows them).
-- 2026-10-11: 3D mockup: pip wheel replaces the pie (direction-aimed, body stays visible); world-space stems dashed when hidden, order-keeping pills; Bar mode toggle (Sonnet).
-- 2026-10-11: 3D wheel try-out `poc/wheel3d.html`: pills show near the cursor and only in line of sight; pills in a shared square push apart (replaces the 2D fan-out), >6 → "+N more".
-- 2026-10-11: Card 2 done: `poc/wheel.html` (6-slot ring, keys 1-6, spin in/out, Back at 4, Shift for full attack list, 3-entity fan-out, 9-rat "+N more"). Added `poc` to launch.json.
-- 2026-10-11: Card 1: in-card second clicks for unused-action End turn and provoking moves; autosave preserves the focused builder editor. 227 tests passed; sandbox UI verified (including continued typing after save). Screenshot: `screenshots/card-1-confirmation.png`.
-- 2026-10-11: Grill session; plan + wheel lexicon written; branch `playable-1` pushed with the work so far and the sandbox.

@@ -258,7 +258,8 @@ const server = http.createServer((req, res) => {
   const join = /^\/j\/([^/]+)$/.exec(url.pathname);
   if (join) {
     let code = ''; try { code = C.normCode(decodeURIComponent(join[1])); } catch { /* bad escape */ }
-    res.writeHead(302, { Location: '/play?seat=' + encodeURIComponent(code) });
+    const q = new URLSearchParams(url.search); q.set('seat', code); // keep extras like ?3d
+    res.writeHead(302, { Location: '/play?' + q.toString().replace(/=(?=&|$)/g, '') });
     return res.end();
   }
   if (url.pathname === '/api/state') {
