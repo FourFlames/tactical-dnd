@@ -32,15 +32,17 @@
   .mk.enemy .ic { border-color: var(--enemy); color: var(--enemy); }
   .mk.object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
   .mk.square .ic { border-color: var(--gold); color: var(--gold); border-radius: 3px; }
-  .mk.more { border-style: dashed; color: var(--ink-dim); }
   .mk small { color: var(--ink-faint); }
   .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1ef0; }
+  /* row scroll arrows: the count of hidden pills sits above */
+  .arr { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; width: 20px; height: 22px; display: grid; place-items: center; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); color: var(--ink); font-size: 15px; line-height: 1; cursor: pointer; will-change: transform, opacity; }
+  .arr b { font-weight: 400; margin-top: -2px; }
+  .arr i { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 1px; font: normal 600 10px/12px system-ui, sans-serif; color: var(--gold); }
+  .arr.off { cursor: default; color: var(--ink-faint); }
+  .arr:not(.off):hover, .arr.hot { border-color: var(--gold); background: #2e2a1ef0; color: var(--gold); }
 
   /* the wheel (same as poc/wheel.html) */
 
-  .morelist { position: absolute; pointer-events: all; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; max-height: 180px; overflow: auto; z-index: 11; min-width: 120px; }
-  .morelist div { padding: 3px 8px; cursor: pointer; border-radius: 4px; }
-  .morelist div:hover { background: var(--panel-2); color: var(--gold); }
 
   .hud { position: fixed; background: #1c1b16e6; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
   #top { top: 6px; left: 6px; right: 6px; padding: 3px 8px; font-size: 11px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; color: var(--ink-faint); }
@@ -61,8 +63,8 @@
   .seg button.on { background: var(--gold); color: #14130f; font-weight: 600; }
 
   /* Bar mode: icon-only markers, and the action bar under the selected square */
-  body.barmode .mk:not(.more):not(.square) { padding: 0 2px; }
-  body.barmode .mk:not(.more):not(.square) > span:last-child { display: none; }
+  body.barmode .mk:not(.square) { padding: 0 2px; }
+  body.barmode .mk:not(.square) > span:last-child { display: none; }
   #bar { position: absolute; left: 0; top: 0; z-index: 20; display: flex; align-items: center; gap: 7px; padding: 6px; height: 66px; background: #1c1b16f2; border: 1px solid var(--gold); border-radius: 12px; pointer-events: auto; box-shadow: 0 6px 18px #0009; will-change: transform; }
   .bside { overflow: hidden; display: flex; height: 100%; align-items: center; flex: none; }
   .bside.L { justify-content: flex-end; }
@@ -294,9 +296,8 @@ for (const e of ents) {
   e.mk.el.classList.add('tipped');
   e.mk.el._tip = `<b>${e.name}</b>${e.alt ? ' · ' + e.alt + ' ft up' : e.hp === 0 ? ' · down' : ''}<br>Click to select`;
 }
-const moreMk = {}; // per crowded square, a "+N more" marker
 const sqMk = makeMarker('square', '▢', '');
-let hoverEnt = null, mkHover = null, listEl = null;
+let hoverEnt = null, mkHover = null;
 let mode = 'wheel';   // 'wheel' | 'bar'
 let B = null;         // the action bar: { square, ent, L: menu stack, R: menu stack, scroll }
 
@@ -321,32 +322,75 @@ function inView(e) {
   return false;
 }
 
-// 1-D ordered layout: pills keep the order of their stems' x. Each starts centred on its stem; whenever two neighbouring
-// clusters overlap they merge into one packed row centred (least squares) on the stems it holds.
-function spreadLane(list) {
-  const GAP = 5;
-  list.sort((a, b) => a.tx - b.tx);
-  const cl = [];
-  const place = (c) => { c.s = c.items.reduce((t, m, i) => t + m.tx - m.w / 2 - c.offs[i], 0) / c.items.length; };
-  for (const m of list) {
-    let c = { items: [m], offs: [0], w: m.w };
-    place(c);
-    while (cl.length && cl[cl.length - 1].s + cl[cl.length - 1].w + GAP > c.s) {
-      const p = cl.pop();
-      c = { items: [...p.items, ...c.items], offs: [...p.offs, ...c.offs.map((o) => o + p.w + GAP)], w: p.w + GAP + c.w };
-      place(c);
-    }
-    cl.push(c);
+// Pills whose stem tops are close on screen share one row: one baseline, packed, in the order of their stems' x, the
+// whole row centred (least squares) over its stems. A row wider than ~60% of the window shows a window of its pills,
+// with an arrow at each end; hovering an arrow slides the window along (one pill per ROW_STEP ms).
+const ROW_GAP = 4, ARR_W = 20, ROW_STEP = 220, MAX_PILLS = 5;
+const rows = [];
+function makeRow() {
+  const r = { t: 0, off: 0, hot: 0, stepAt: 0, a: 0, amax: 0, n: 0, cap: 0, used: false, lx: 0, rx: 0, y: 0 };
+  for (const d of [-1, 1]) {
+    const el = document.createElement('div');
+    el.className = 'arr tipped';
+    el.innerHTML = `<i></i><b>${d < 0 ? '‹' : '›'}</b>`;
+    el.onpointerenter = () => { if (!el.classList.contains('off')) { r.hot = d; r.stepAt = 0; } };
+    el.onpointerleave = () => { if (r.hot === d) r.hot = 0; };
+    overlay.appendChild(el);
+    r[d < 0 ? 'aL' : 'aR'] = el;
   }
-  for (const c of cl) c.items.forEach((m, i) => { m.tx = c.s + c.offs[i] + m.w / 2; });
+  rows.push(r);
+  return r;
+}
+// Group the active pills by stem-top proximity on screen (a pair already in the same row links a bit further: no flicker).
+function groupPills(act) {
+  const par = act.map((_, i) => i), find = (i) => (par[i] === i ? i : (par[i] = find(par[i])));
+  for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
+    const a = act[i], b = act[j], k = a.row && a.row === b.row ? 1.5 : 1;
+    if (Math.abs(a.ta.x - b.ta.x) <= 110 * k && Math.abs(a.ta.y - b.ta.y) <= 30 * k) par[find(i)] = find(j);
+  }
+  const g = new Map();
+  act.forEach((m, i) => { const r = find(i); if (!g.has(r)) g.set(r, []); g.get(r).push(m); });
+  return [...g.values()];
+}
+function layoutRow(r, mem, now) {
+  const n = mem.length;
+  // order by the stems' screen x; near-ties keep last frame's order so it never flickers
+  mem.sort((a, b) => (Math.abs(a.ta.x - b.ta.x) < 2 ? (a.ord|0) - (b.ord|0) : a.ta.x - b.ta.x));
+  mem.forEach((m, i) => { m.ord = i; m.row = r; });
+  const avg = mem.reduce((t, m) => t + m.w, 0) / n;
+  let cap = Math.min(MAX_PILLS, Math.max(2, Math.floor((innerWidth * .6 - 2 * (ARR_W + ROW_GAP) + ROW_GAP) / (avg + ROW_GAP))));
+  if (n <= cap) cap = n;
+  const arrows = n > cap, last = n - cap;
+  r.n = n; r.cap = cap; r.t = Math.max(0, Math.min(last, r.t));
+  if (r.hot && !(r.hot < 0 ? r.t > 0 : r.t < last)) r.hot = 0;
+  if (r.hot && now - r.stepAt >= ROW_STEP) { r.t += r.hot; r.stepAt = now; }
+  r.off += (r.t - r.off) * .25;
+  if (Math.abs(r.t - r.off) < .003) r.off = r.t;
+  const cum = [0];
+  for (const m of mem) cum.push(cum[cum.length - 1] + m.w + ROW_GAP);
+  const at = (x) => { if (x >= n) return cum[n]; if (x <= 0) return 0; const f = Math.floor(x); return cum[f] + (x - f) * (cum[f + 1] - cum[f]); };
+  const S = at(r.off), Wd = at(r.off + cap) - S - ROW_GAP;
+  let sw = 0, sx = 0;
+  const rel = mem.map((m, i) => {
+    m.v = Math.max(0, Math.min(1, 1 - Math.max(0, r.off - i, i - (r.off + cap - 1))));
+    const x = cum[i] - S + m.w / 2;
+    sw += m.v; sx += m.v * (m.ta.x - x);
+    return x;
+  });
+  let L0 = sx / sw;
+  const pad = 4 + (arrows ? ARR_W + ROW_GAP : 0);
+  if (innerWidth - pad >= pad + Wd) L0 = Math.max(pad, Math.min(innerWidth - pad - Wd, L0));
+  const ty = Math.min(...mem.map((m) => m.ta.y)) - 13;
+  mem.forEach((m, i) => { m.tx = L0 + rel[i]; m.ty = ty; r.amax = Math.max(r.amax, m.wantA); m.wantA *= m.v; });
+  r.tlx = L0 - ROW_GAP - ARR_W; r.trx = L0 + Wd + ROW_GAP; r.ty = ty;
+  r.arrows = arrows;
 }
 
 function updateMarkers() {
-  const shown = [];
   const bar = mode === 'bar';
   const busy = !!W;
+  const now = performance.now();
   // 1. which bodies are on screen, in view, and near the cursor
-  const live = [];
   for (const e of ents) {
     if (!e.mk) continue;
     const s = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top));
@@ -362,51 +406,40 @@ function updateMarkers() {
       const ramp = Math.max(0, Math.min(1, (NEAR_BAR_PX - near) / 40));
       if (B?.ent === e) want = 0;   // its icon is in the bar
       else if (B && !B.ent && B.square.c === e.c && B.square.r === e.r) want = 1;
-      else if (!listEl && s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
+      else if (s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
+      e.gate = B?.ent !== e && s.front && !(B && !B.ent);
     } else {
       const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
-      if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+      if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+      e.gate = !busy && s.front;
     }
     e.want = want;
-    if (want > 0 || e.mk.alpha > .02) live.push(e);
   }
-  // 2. a crowded square shows 5 and a "+N more"
-  const bySq = {};
-  for (const e of live) if (e.want > 0) (bySq[e.c + ',' + e.r] ||= []).push(e);
-  const crowded = new Set();
-  for (const [k, list] of Object.entries(bySq)) {
-    if (list.length <= 6) continue;
-    list.sort((a, b) => (b.kind === 'enemy') - (a.kind === 'enemy') || a.id.localeCompare(b.id, undefined, { numeric: true }));
-    const rest = list.slice(5);
-    for (const e of rest) e.want = 0;
-    const m = moreMk[k] ||= Object.assign(makeMarker('more', '+', ''), { key: k });
-    m.rest = rest; m.el.lastChild.textContent = `${rest.length} more`;
-    const [c, r] = k.split(',').map(Number);
-    m.base.set(c + .5, floorTop(c, r) + .3, r + .5); m.ta = toScreen(tmp.copy(m.base).setY(m.base.y + STEM_W));
-    m.want = Math.max(...list.slice(0, 5).map((e) => e.want));
-    m.el.onclick = (ev) => { ev.stopPropagation(); showMore(m); };
-    crowded.add(m);
-  }
-  for (const m of Object.values(moreMk)) if (!crowded.has(m)) m.want = 0;
+  // 1b. a row stays whole: its pills scrolled out of view (or far from the cursor) follow the row's strongest one
+  const keep = new Map();
+  for (const e of ents) if (e.mk?.row?.used) keep.set(e.mk.row, Math.max(keep.get(e.mk.row) || 0, e.want, e.mk.row.hot ? 1 : 0));
+  for (const e of ents) if (e.mk?.row?.used && e.gate && e.want < keep.get(e.mk.row)) e.want = keep.get(e.mk.row);
   // the square marker exists only while its wheel is open
   sqMk.want = 0;
 
-  // 3. each pill starts straight above its stem's top; pills on similar screen-y then relax sideways in
-  //    left-to-right order of their stems, moving only as far as they must (clusters pack and centre on their stems)
-  const items = [...live.map((e) => e.mk && Object.assign(e.mk, { wantA: e.want })), ...Object.values(moreMk).map((m) => Object.assign(m, { wantA: m.want })), Object.assign(sqMk, { wantA: sqMk.want })]
-    .filter((m) => m && (m.wantA > 0 || m.alpha > .02) && (m !== sqMk || sqMk.hasBase));
+  // 2. each pill starts straight above its stem's top; pills with nearby stem tops share a row
+  const items = [...ents.filter((e) => e.mk).map((e) => Object.assign(e.mk, { ent: e, wantA: e.want })), Object.assign(sqMk, { wantA: sqMk.want })]
+    .filter((m) => m.wantA > 0 || m.alpha > .02);
   for (const m of items) {
     if (!m.w) m.w = m.el.offsetWidth || 80;
-    m.tx = m.ta.x; m.ty = m.ta.y - 13;
+    if (m.tx === undefined || m.wantA > 0 || m === sqMk) { m.tx = m.ta.x; m.ty = m.ta.y - 13; }   // fading ones stay where they were
   }
-  const act = items.filter((m) => m.wantA > 0).sort((a, b) => a.ty - b.ty);
-  let lane = [];
-  for (let i = 0; i <= act.length; i++) {
-    if (i < act.length && (!lane.length || act[i].ty - lane[lane.length - 1].ty <= 26)) { lane.push(act[i]); continue; }
-    if (lane.length > 1) spreadLane(lane);
-    lane = i < act.length ? [act[i]] : [];
+  for (const r of rows) { r.used = false; r.amax = 0; }
+  for (const mem of groupPills(items.filter((m) => m.ent && m.wantA > 0))) {
+    const votes = new Map();
+    for (const m of mem) if (m.row && !m.row.used) votes.set(m.row, (votes.get(m.row) || 0) + 1);
+    let r = [...votes].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!r) { r = rows.find((x) => !x.used && x.a < .02) || makeRow(); r.t = r.off = r.hot = 0; r.fresh = true; }
+    r.used = true;
+    layoutRow(r, mem, now);
   }
-  // 4. draw
+  for (const m of items) if (m.ent) m.ent.want = m.wantA;   // pills scrolled out of the window stop glowing their bodies
+  // 3. draw
   for (const m of items) {
     m.alpha += (m.wantA - m.alpha) * .25;
     if (m.x === null || m.alpha < .05) { m.x = m.tx; m.y = m.ty; }
@@ -428,6 +461,26 @@ function updateMarkers() {
     m.kink.setAttribute('x2', m.x); m.kink.setAttribute('y2', m.y + 11);
     m.kink.classList.toggle('hot', hot);
   }
+  // the arrows at a row's ends, each with the count of pills hidden on that side
+  for (const r of rows) {
+    if (r.used) {
+      if (r.fresh || r.a < .05) { r.lx = r.tlx; r.rx = r.trx; r.y = r.ty; }
+      r.fresh = false;
+      r.lx += (r.tlx - r.lx) * .35; r.rx += (r.trx - r.rx) * .35; r.y += (r.ty - r.y) * .35;
+    } else r.hot = 0;
+    r.a += ((r.used && r.arrows ? r.amax : 0) - r.a) * .25;
+    const a = r.a < .02 ? 0 : r.a;
+    for (const [el, d, x] of [[r.aL, -1, r.lx], [r.aR, 1, r.rx]]) {
+      const cnt = d < 0 ? r.t : r.n - r.cap - r.t, en = cnt > 0;
+      el.style.opacity = a * (en ? 1 : .4);
+      el.style.pointerEvents = en && a > .4 && !W ? 'auto' : 'none';
+      el.style.transform = `translate(${x}px, ${r.y - 11}px)`;
+      el.classList.toggle('off', !en);
+      el.classList.toggle('hot', r.hot === d);
+      el.firstChild.textContent = en ? cnt : '';
+      el._tip = en ? `<b>${cnt} more</b> to the ${d < 0 ? 'left' : 'right'}<br>Hover to scroll` : '';
+    }
+  }
   for (const e of ents) if (e.mk) {
     if (bar) {
       const mate = B && !B.ent && B.square.c === e.c && B.square.r === e.r;
@@ -436,17 +489,6 @@ function updateMarkers() {
     e.mk.el.classList.toggle('hot', hoverEnt === e);
   }
 }
-
-function showMore(m) {
-  closeMore();
-  listEl = document.createElement('div');
-  listEl.className = 'morelist';
-  listEl.style.left = m.x + m.w / 2 + 6 + 'px'; listEl.style.top = m.y - 11 + 'px';
-  listEl.innerHTML = m.rest.map((e) => `<div data-id="${e.id}">${e.name}</div>`).join('');
-  listEl.onclick = (ev) => { const e = ents.find((x) => x.id === ev.target.dataset.id); if (e) { closeMore(); pickEntity(e); } };
-  overlay.appendChild(listEl);
-}
-function closeMore() { listEl?.remove(); listEl = null; }
 
 // ---------- menus (same as the 2D mockup) ----------
 function strikeFor(t) {
@@ -580,7 +622,7 @@ function openWheelOnSquare(c, r) {
   pw.open(squareRoot({ c, r }), () => squareAnchor(c, r));
 }
 function closeWheel() { if (!W) return; W = null; pw.close(); selSq.visible = false; }
-function closeAll() { closeWheel(); closeMore(); closeBar(); }
+function closeAll() { closeWheel(); closeBar(); }
 // what running an action does in the mockup (shared by both modes)
 function runSlot(s) {
   if (s.inspect) inspect(s.inspect);
@@ -601,11 +643,11 @@ function setMode(m) {
   document.body.classList.toggle('barmode', m === 'bar');
   document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   document.getElementById('hint').innerHTML = HINTS[m];
-  for (const k of [...ents.map((e) => e.mk), sqMk, ...Object.values(moreMk)]) if (k) k.w = 0;   // pills change width
+  for (const k of [...ents.map((e) => e.mk), sqMk]) if (k) k.w = 0;   // pills change width
   try { localStorage.setItem('wheel3d.mode', m); } catch (e) { /* ignore */ }
 }
 const pickEntity = (e) => (mode === 'bar' ? barSelectEnt(e) : openWheelOn(e));
-const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : closeMore());
+const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : null);
 
 // Screen-space picking: the body under the cursor (nearest hit, so walls hide things), else the floor cell.
 function pickAt(x, y) {
@@ -631,7 +673,6 @@ function updateHover() {
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
 }
 function barClick(x, y) {
-  if (listEl) return closeMore();
   const p = pickAt(x, y);
   const e = p.ent || nearBody(x, y);
   if (e) return barSelectEnt(e);
@@ -715,7 +756,6 @@ function barSelectSquare(c, r) {
   buildBar();
 }
 function barSelectEnt(e) {
-  closeMore();
   const sameSq = B && B.square.c === e.c && B.square.r === e.r;
   const from = e.mk.alpha > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.mk.ta.x, y: e.mk.ta.y - 13 };
   if (!sameSq) B = { square: { c: e.c, r: e.r }, L: [squareRoot({ c: e.c, r: e.r })], scroll: 0, nL: 0, nR: 0 };
@@ -731,7 +771,7 @@ function barPick(s, side) {
   buildBar(side);
 }
 function barBack() {   // one step out: submenu, then entity, then the square
-  if (!B) return closeMore();
+  if (!B) return;
   if (B.R && B.R.length > 1) { B.R.pop(); buildBar('R'); }
   else if (B.L.length > 1) { B.L.pop(); buildBar('L'); }
   else if (B.ent) { B.ent = null; B.R = null; buildBar('R'); }
@@ -811,7 +851,7 @@ function placeTip() {
 }
 function tickTip() {
   if (!tipOwner) return;
-  if (!tipOwner.isConnected || (tipOwner.classList.contains('mk') && +tipOwner.style.opacity < .3)) setTip(null);
+  if (!tipOwner.isConnected || ((tipOwner.classList.contains('mk') || tipOwner.classList.contains('arr')) && +tipOwner.style.opacity < .3) || tipOwner.classList.contains('off')) setTip(null);
   else placeTip();
 }
 document.addEventListener('pointerover', (ev) => setTip(ev.target.closest?.('.tipped') || null));
@@ -825,7 +865,6 @@ renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.cli
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
-  if (listEl) return closeMore();
   const p = pickAt(ev.clientX, ev.clientY);
   const e = p.ent || nearBody(ev.clientX, ev.clientY);
   if (e) return openWheelOn(e);
