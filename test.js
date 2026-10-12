@@ -336,6 +336,16 @@ try {
   C.saveSeats({});
   r = run('seat', 'test-player-x', ch.id);
   expect('seating reuses the player\'s sign-in code', C.loadSeats()['test-player-x'].token === tester.code, r.out);
+
+  // Turns of creatures the party can't see: the player view says something is acting, not who.
+  run('load', 'rope-bridge');
+  run('initiative');
+  for (let i = 0; i < 12 && C.loadState().turnOrder[C.loadState().turnIdx] !== 'grall'; i++) run('next');
+  const hs = C.loadState(), hp = C.view(hs, 'player'), hd = C.view(hs, 'dm');
+  const said = JSON.stringify(hp.log);
+  expect('a hidden creature\'s turn is anonymous to players', hp.current === null && hp.currentUnseen && /something moves out of sight/.test(said) && !/Grall/.test(said), said.slice(-400));
+  expect('players see unseen turns as a ? in the order', hp.turnOrder.includes('?') && !hp.turnOrder.includes('grall'), JSON.stringify(hp.turnOrder));
+  expect('the DM still sees whose turn it is', hd.current === 'grall' && /Grall the Bugbear's turn/.test(JSON.stringify(hd.log)), hd.current);
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
