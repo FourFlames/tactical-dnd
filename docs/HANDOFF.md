@@ -17,12 +17,13 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 
 ## State
 - Branch: `playable-1`. Pushed: hidden turns + initiative strip; minds talk menus; `TDND_DATA` sandbox.
-- Card 1 merged into `playable-1` (`08db108`). Card 2 is being worked on separately.
-- Next card: **2**.
+- Card 1 merged into `playable-1` (`08db108`).
+- Wheel mockup: `poc/wheel.html`, open with `preview_start poc` (port 5175). Waiting on the user's sign-off on the feel before Card 5.
+- Next card: **3**.
 
 ## Cards (in order; each fits one session)
 1. [x] **Kill native dialogs + builder focus.** Replace `confirm()` at viewer.html ~1075 (end turn with the action unused) and ~1167 (move provokes) with an in-card second click ("Provokes gob1. Click again to move."). Builder: `save()` → `render()` redraws the form 500 ms after typing stops and steals focus (builder.html ~284); don't redraw `renderMain` while focus is inside it, or restore focus and caret.
-2. [ ] **Wheel mockup**, standalone `poc/wheel.html`, no game wiring. A 6-slot ring around a token with keys 1-6, submenu rotation (clockwise in, counter-clockwise back, ~150 ms, Back at bottom slot 4), a fan-out of 3 entities in one square with leader lines. For the user to try the feel before Card 5. Ref: wheel-lexicon.
+2. [x] **Wheel mockup**, standalone `poc/wheel.html`, no game wiring. A 6-slot ring around a token with keys 1-6, submenu rotation (clockwise in, counter-clockwise back, ~150 ms, Back at bottom slot 4), a fan-out of 3 entities in one square with leader lines. For the user to try the feel before Card 5. Ref: wheel-lexicon.
 3. [ ] **Player HUD**: a docked bottom-left character card (HP ring, movement as 5-ft squares, action/bonus/reaction pips, resources) that replaces the turn panel and swallows the compose box, plus a **Character** tab next to Narration/Combat with the full sheet. Clean and minimal. Ref: plan Phase 1.1.
 4. [ ] **Fixed entity card** top-right of the map, plus a hover chip over tokens ("65% · 30 ft · ½ cover"). Remove the stacked inspect panel. Odds come from `/api/look`, only for ids the client already has.
 5. [ ] **Action wheel, wired**: entity and square wheels, the multi-entity fan-out from the client's own view (count 0/1/2+, no "hidden" special case), smart Strike, player-set slots 2-3 with class defaults (stored on the character, with a "Wheel" section in the builder). Ref: wheel-lexicon. Needs Card 2's feel signed off.
@@ -31,5 +32,6 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-11: Card 2 done: `poc/wheel.html` (6-slot ring, keys 1-6, spin in/out, Back at 4, Shift for full attack list, 3-entity fan-out, 9-rat "+N more"). Added `poc` to launch.json.
 - 2026-10-11: Card 1: in-card second clicks for unused-action End turn and provoking moves; autosave preserves the focused builder editor. 227 tests passed; sandbox UI verified (including continued typing after save). Screenshot: `screenshots/card-1-confirmation.png`.
 - 2026-10-11: Grill session; plan + wheel lexicon written; branch `playable-1` pushed with the work so far and the sandbox.
