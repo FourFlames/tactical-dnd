@@ -710,6 +710,23 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (d > defDist * 2.5) off.setLength(defDist);
     ease = { t0: performance.now(), fromT: controls.target.clone(), toT: to, fromO: camera.position.clone().sub(controls.target), toO: off };
   }
+  // Where a creature (by id, at its current glide position) or a cell (by name) is on screen, in client px:
+  // { x, y, r } with r the on-screen radius of its base. null when it's behind the camera or unknown.
+  const projV = new THREE.Vector3();
+  function screenOf(ref) {
+    const g = tokenObjs.get(ref);
+    let p, half = 0.4;
+    if (g) p = g.position.clone().setY(g.position.y + 0.45);
+    else if (lastState && /^[A-Za-z]\d+$/.test(ref)) { const q = cellOf(ref.toUpperCase()); p = new THREE.Vector3(q.x + 0.5, cellElev(lastState, q.x, q.y) * FT, q.y + 0.5); half = 0.5; }
+    else return null;
+    camera.updateMatrixWorld();
+    const rc = renderer.domElement.getBoundingClientRect();
+    const to = (v) => { projV.copy(v).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
+    const a = to(p);
+    if (a.z > 1) return null;
+    const b = to(p.clone().addScaledVector(projV.set(1, 0, 0).transformDirection(camera.matrixWorld), half));
+    return { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) };
+  }
   function followTurn(v) {
     // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
     // turn has started on screen (v.current may already be ahead of it while the queue plays out).
@@ -760,6 +777,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let downAt = null;
   renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
   renderer.domElement.addEventListener('pointerup', (e) => {
+    if (e.pwHandled) return;   // the action wheel used this click
     if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
     const p = pick(e);
     if (p && p.id && onSelect) onSelect(p.id);
@@ -884,6 +902,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
+    screenOf,
     setFollow(on) {
       follow = !!on;
       if (!follow) ease = null;

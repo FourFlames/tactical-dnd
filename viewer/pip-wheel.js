@@ -2,8 +2,11 @@
 // short caption right under it; the details (role, odds, why it's greyed) go in one tooltip for the slot under the
 // pointer. Only icons and captions are hit targets. Clicking the target backs out (closes at the root).
 //
-// Menus: { title, slots: { 1..6: { what, short?, odds?, role?, icon?, sub?(), full?(), off?, self?, back? } } }. Slot 1
-// is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes.
+// Menus: { title, slots: { 1..6: { what, short?, odds?, role?, icon?, sub?(), full?(), off?, self?, warn?, sug?, back? } } }.
+// Slot 1 is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes,
+// unless onLeaf returns 'keep': then it stays open and redraws that slot (the host may have changed the leaf's `what`,
+// `short`, `odds` or `warn` fields: a red ring, for "this will hurt, choose again to confirm"). `sug` is a gold ring
+// (the suggested move). The host may also open another wheel from inside onLeaf.
 //
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
 //   pw.open(menu, () => ({ x, y, r, s }));   // anchor in client px, polled every frame; r = target's screen radius,
@@ -32,14 +35,18 @@ const CSS = `
 .pw .b.off { opacity: .5; }
 .pw .b.off .i { color: var(--ink-faint, #6b6557); }
 .pw .b.back .i { color: var(--ink, #e9e3d3); }
+.pw .b.sug .i { border-color: #d8b45a99; }
+.pw .b.warn .i { border-color: #d25b4a; background: #2e1a16; color: #e8826f; box-shadow: 0 0 0 2px #d25b4a55, 0 1px 5px #000a; }
 .pw .b.hot { scale: 1.08; }
 .pw .b.hot .i { border-color: var(--gold, #d8b45a); background: #2e2a1e; }
+.pw .b.warn.hot .i { border-color: #ef7a66; background: #3a1f1a; }
 .pw .b.hot .c { color: var(--gold, #d8b45a); }
 .pw .tip { position: absolute; left: 0; top: 0; z-index: 2; display: none; width: max-content; max-width: 190px; padding: 6px 9px; border-radius: 7px; background: #1c1b16f5;
   border: 1px solid #4a4538; color: var(--ink, #e9e3d3); box-shadow: 0 3px 10px #000b; font-size: 12px; line-height: 1.3; white-space: normal; }
 .pw .tip .r { color: var(--ink-faint, #6b6557); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; }
 .pw .tip .w { font-weight: 600; }
 .pw .tip .o { color: var(--gold, #d8b45a); }
+.pw .tip .o.w2 { color: #e8826f; }
 .pw .tip .n { color: var(--ink-dim, #9c9584); font-size: 11px; }
 .pw .tip .self { font-size: 9px; color: var(--party, #4fb3a4); border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 4px; }
 .pw .crumb { position: absolute; white-space: nowrap; transform: translate(-50%, -100%); color: var(--ink-dim, #9c9584); font-size: 11px;
@@ -70,7 +77,7 @@ function tipHtml(s, root) {
   if (s.back) return '<div class="w">Back</div><div class="n">Esc, right-click or the target also go back</div>';
   const role = root && s.role && s.role !== s.what ? `<div class="r">${esc(s.role)}</div>` : '';
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
-    + (s.odds ? `<div class="${s.off ? 'n' : 'o'}">${esc(s.odds)}</div>` : '')
+    + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
     + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '');
 }
 
@@ -107,7 +114,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     for (let k = 1; k <= 6; k++) {
       const s = slotOf(k);
       if (!s) continue;
-      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}" data-k="${k}"><span class="i">${iconOf(s, k)}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
+      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"><span class="i">${iconOf(s, k)}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
     }
     el.innerHTML = html;
     S.btns = [...el.querySelectorAll('.b')];
@@ -211,8 +218,9 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     if (s.back) return back();
     if (shift && s.full && S.stack.length === 1) return drill(s.full());
     if (s.sub) return drill(s.sub());
-    close(true);
-    onLeaf(s);
+    const was = S, r = onLeaf(s);
+    if (S !== was) return;   // the host closed or replaced the wheel itself
+    if (r === 'keep') build(); else close(true);
   }
   function drill(menu) { S.folded = false; S.stack.push(menu); build(); spin(+1); }
   function back() {
