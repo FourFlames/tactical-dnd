@@ -24,15 +24,16 @@
   #overlay { position: fixed; inset: 0; pointer-events: none; user-select: none; }
   #stems { position: absolute; inset: 0; width: 100%; height: 100%; }
   body.dragging .mk, body.dragging .lb, body.dragging #bar { pointer-events: none !important; filter: grayscale(.8) brightness(.7); }
-  /* the icon is the marker: centred on the top of its stem and the click target. The label hangs off it (overlapping 4px), never clickable. */
+  /* the icon is the marker: centred on the top of its stem and the click target. The label sits above it (tucked 4px behind it), never clickable. */
   .mk { opacity: 0; pointer-events: none; position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; border: 2px solid; background: #14130f; cursor: pointer; will-change: transform, opacity; }
   .mk.party { border-color: var(--party); color: var(--party); }
   .mk.enemy { border-color: var(--enemy); color: var(--enemy); }
   .mk.object { border-color: var(--neutral); color: var(--neutral); border-radius: 5px; }
   .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1e; }
-  .lb { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 18px; padding: 0 8px; border-radius: 9px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11px; will-change: transform, opacity, clip-path; }
-  .lb small { color: var(--ink-faint); margin-left: 4px; }
-  .lb.hot { border-color: var(--gold); background: #2e2a1ef0; }
+  /* same look as the pip wheel's captions */
+  .lb { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 6px; background: #14130fd9; color: var(--ink); white-space: nowrap; font-size: 11px; font-weight: 600; will-change: transform, opacity, clip-path; }
+  .lb small { color: var(--ink-faint); font-weight: 400; margin-left: 4px; }
+  .lb.hot { color: var(--gold); }
   body.barmode .lb { display: none; }
 
   /* the wheel (same as poc/wheel.html) */
@@ -387,7 +388,7 @@ function makeMarker(cls, glyph, label) {
   lb.className = 'lb'; lb.innerHTML = label; lbLayer.appendChild(lb);
   const el = document.createElement('div');
   el.className = 'mk tipped ' + cls; el.textContent = glyph; icLayer.appendChild(el);
-  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, side: 'up', ox: 0, oy: 0, w: 0, x: 0, y: 0,
+  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
     shown: false, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
 }
 ents.forEach((e, i) => {
@@ -499,7 +500,6 @@ function updateMarkers() {
     if (busy || mouse.x < x0 || mouse.x > x1 || mouse.y < y0 || mouse.y > y1) iconMode = null;
   }
   const offs = iconMode ? spreadLayout(iconMode.list) : null;
-  const cy = iconMode ? iconMode.list.reduce((t, e, i) => t + e.mk.ta.y + offs[i].y, 0) / iconMode.list.length : 0;
   // 3. draw: the stem grows with the approach, the icon rides its top from 40% growth, the label grows out of the icon near the end
   for (const e of ents) {
     const m = e.mk, sel = W?.ent === e || B?.ent === e, mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
@@ -517,16 +517,14 @@ function updateMarkers() {
     m.el.style.pointerEvents = ik > .6 && !busy && m.front ? 'auto' : 'none';
     m.el.style.transform = `translate(${m.x}px, ${m.y}px) scale(${.6 + .4 * ik})`;
     m.el.classList.toggle('hot', hoverEnt === e); m.lb.classList.toggle('hot', hoverEnt === e);
-    // the label: above its icon; in icon mode on the outside, away from the cluster's middle. It flips side only while hidden
-    const side = k >= 0 && m.ta.y + o.y > cy + 2 ? 'down' : 'up';
-    if (side !== m.side && m.lab < .05) m.side = side;
+    // the label: always above its icon
     // in a crowd of icons (graphic mode) only the hovered one is named
     const crowd = !iconMode && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
-    m.lab += (((!bar && !crowd && side === m.side) ? sstep(.65, 1, r) : 0) - m.lab) * .3; if (m.lab < .01) m.lab = 0;
+    m.lab += (((!bar && !crowd) ? sstep(.65, 1, r) : 0) - m.lab) * .3; if (m.lab < .01) m.lab = 0;
     if (!m.w) m.w = m.lb.offsetWidth;
     m.lb.style.opacity = m.lab * m.dim;
-    m.lb.style.clipPath = `inset(0 ${50 * (1 - m.lab)}% round 9px)`;
-    m.lb.style.transform = `translate(${m.x - m.w / 2}px, ${m.y + (m.side === 'up' ? -25 : 7)}px)`;
+    m.lb.style.clipPath = `inset(0 ${50 * (1 - m.lab)}% round 6px)`;
+    m.lb.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 22}px)`;
     m.el._lab = m.lab;
     // the stem: gold and wider from the body up to the trace point (all of it for the icon and the selection)
     const tracing = trace.e === e && !iconMode;
@@ -538,7 +536,7 @@ function updateMarkers() {
     m.shown = sop > .05 && r > .3 && !busy && m.front && !(bar && B?.ent === e);
     if (tracing && m.shown) {   // the spark rides the gold's tip
       spark.visible = true; spark.position.copy(pD);
-      spark.scale.setScalar(.05 * (1 + .25 * Math.sin(now / 45) + .15 * Math.sin(now / 17)));
+      spark.scale.setScalar(.0125 * (1 + .25 * Math.sin(now / 45) + .15 * Math.sin(now / 17)));
       spark.material.opacity = .85 + .15 * Math.sin(now / 31);
     }
     e.want = m.gp;
@@ -1134,7 +1132,7 @@ function updateDoc() {
   const a = m.op < .02 ? 0 : m.op;
   rk.style.opacity = a;
   rk.style.pointerEvents = a > .4 && !wheelUp() ? 'auto' : 'none';
-  rk.style.transform = `translate(${m.x - rk._w / 2}px, ${m.y + (m.side === 'down' && m.lab > .05 ? 31 : 15)}px)`;
+  rk.style.transform = `translate(${m.x - rk._w / 2}px, ${m.y + 15}px)`;
   // the card: the doc while hovered, selected or inspected, otherwise what a click last put there
   const card = (cardDoc || hoverEnt?.me || W?.ent?.me || B?.ent?.me) ? docHtml() : cardBase;
   if (card !== cardShown) { cardShown = card; document.getElementById('card').innerHTML = card; }

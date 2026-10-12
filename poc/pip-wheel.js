@@ -23,10 +23,10 @@ const CSS = `
 .pw .halo { fill: none; stroke: #e9e3d33a; stroke-width: 1.2; }
 .pw .b { position: absolute; width: 0; height: 0; transition: scale .08s; }
 .pw .b .i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; box-sizing: border-box; border-radius: 50%; display: grid; place-items: center;
-  font-size: 17px; background: #14130f; border: 1.5px solid #5a5446; color: var(--gold, #d8b45a); box-shadow: 0 1px 5px #000a; transition: border-color .08s, background .08s; }
+  z-index: 1; font-size: 17px; background: #14130f; border: 1.5px solid #5a5446; color: var(--gold, #d8b45a); box-shadow: 0 1px 5px #000a; transition: border-color .08s, background .08s; }
 .pw .b .k { position: absolute; right: -4px; top: -6px; min-width: 13px; height: 13px; padding: 0 2px; border-radius: 4px; background: #14130f;
   border: 1px solid #4a4538; color: var(--ink-dim, #9c9584); font: 600 9px/11px ui-monospace, monospace; text-align: center; }
-.pw .b .c { position: absolute; left: 0; top: 19px; transform: translateX(-50%); max-width: 86px; overflow: hidden; text-overflow: ellipsis;
+.pw .b .c { position: absolute; left: 0; top: 13px; transform: translateX(-50%); max-width: 86px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: #14130fd9; color: var(--ink, #e9e3d3); font-size: 11px; font-weight: 600; }
 .pw .b.off { opacity: .5; }
 .pw .b.off .i { color: var(--ink-faint, #6b6557); }
@@ -55,7 +55,7 @@ const iconOf = (s, k) => s.back ? '↶' : s.icon || ROLE_ICON[s.role] || WORD_IC
 const ease = (t) => 1 - Math.pow(1 - t, 3);
 const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
-// Icons (D px) sit on a hexagon; their captions hang just under them.
+// Icons (D px) sit on a hexagon; their captions hang under them, tucked 4 px behind the circle's bottom.
 const D = 34, GAP = 6, NEAR = 96, GRACE = 10;   // NEAR: px past the ring or an icon where the wheel has faded out; GRACE: see pointermove
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -181,7 +181,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
   function hit(mx, my, slack = 4) {
     for (const b of S.btns) {
       const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t), k = S.k;
-      const c = b.querySelector('.c'), cw = c.offsetWidth / 2 * k, cy = iy + (D / 2 + 2) * k;
+      const c = b.querySelector('.c'), cw = c.offsetWidth / 2 * k, cy = iy + (D / 2 - 4) * k;
       if (Math.hypot(mx - ix, my - iy) < D / 2 * k + slack
         || (Math.abs(mx - ix) < cw + slack && my > cy - slack && my < cy + c.offsetHeight * k + slack)) return +b.dataset.k;
     }
