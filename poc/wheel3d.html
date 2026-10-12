@@ -30,6 +30,7 @@
   .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 22px; min-width: 22px; padding: 0 8px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
   /* the icon is a badge sitting on the pill's top edge (4px overlap); the layout reserves its height (BADGE) */
   .mk .ic { position: absolute; left: 50%; top: -14px; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
+  .mk.bb .ic { top: auto; bottom: -14px; }   /* lower row of two: the badge hangs off the bottom edge */
   .mk.party .ic { border-color: var(--party); color: var(--party); }
   .mk.enemy .ic { border-color: var(--enemy); color: var(--enemy); }
   .mk.object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
@@ -490,10 +491,13 @@ function layoutRow(r, mem, now) {
   let lo = Math.min(...vis.map((m, i) => x[i] - m.w / 2)), hi = Math.max(...vis.map((m, i) => x[i] + m.w / 2));
   const sh = innerWidth - pad >= pad + hi - lo ? Math.max(pad - lo, Math.min(innerWidth - pad - hi, 0)) : 0;
   lo += sh; hi += sh;
-  const step = 24 + lift, base = Math.min(...mem.map((m) => m.ta.y)) - 13;
-  vis.forEach((m, i) => { m.tx = x[i] + sh; m.ty = base - (r.two && m.ord & 1 ? step : 0); });
+  // two rows: the lower row's badges hang below their pills (mirrored), so the lower row rises by a badge to keep them off the stems
+  // and the rows sit just a pill apart
+  const base = Math.min(...mem.map((m) => m.ta.y)) - 13;
+  mem.forEach((m) => { m.bb = r.two && lift > 0 && !(m.ord & 1); });
+  vis.forEach((m, i) => { m.tx = x[i] + sh; m.ty = base - (r.two ? (m.ord & 1 ? 24 + lift : lift) : 0); });
   for (const m of mem) { r.amax = Math.max(r.amax, m.wantA); m.wantA *= m.v; }
-  r.tlx = lo - ROW_GAP - ARR_W; r.trx = hi + ROW_GAP; r.ty = base - (r.two ? step / 2 : 0);
+  r.tlx = lo - ROW_GAP - ARR_W; r.trx = hi + ROW_GAP; r.ty = base - (r.two ? 12 + lift : 0);
   r.arrows = arrows;
 }
 
@@ -573,10 +577,12 @@ function updateMarkers() {
       l.material.opacity = a * k; l.material.color.set(hot ? '#d8b45a' : '#e9e3d3');
     }
     // the kink: from the stem's top to the pill, only when the pill was pushed off it
-    const off = Math.hypot(m.x - m.ta.x, m.y + 13 - m.ta.y);
+    const bt = m.bb ? 11 + BADGE : 11;   // where the kink meets the pill (or its hanging badge)
+    m.el.classList.toggle('bb', !!m.bb);
+    const off = Math.hypot(m.x - m.ta.x, m.y + bt + 2 - m.ta.y);
     m.kink.style.opacity = a > 0 && off > 4 ? a : 0;
     m.kink.setAttribute('x1', m.ta.x); m.kink.setAttribute('y1', m.ta.y);
-    m.kink.setAttribute('x2', m.x); m.kink.setAttribute('y2', m.y + 11);
+    m.kink.setAttribute('x2', m.x); m.kink.setAttribute('y2', m.y + bt);
     m.kink.classList.toggle('hot', hot);
   }
   // the arrows at a row's ends, each with the count of pills hidden on that side
