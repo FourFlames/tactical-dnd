@@ -17,7 +17,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 
 ## State
 - Branch: `playable-1`. Pushed: hidden turns + initiative strip; minds talk menus; `TDND_DATA` sandbox.
-- Card 1 complete on `codex/card-1-dialogs-focus` (worktree); ready to merge into `playable-1`.
+- Card 1 merged into `playable-1` (`08db108`). Card 2 is being worked on separately.
 - Next card: **2**.
 
 ## Cards (in order; each fits one session)
