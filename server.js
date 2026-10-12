@@ -273,6 +273,20 @@ const server = http.createServer((req, res) => {
       return json(res, 500, { error: e.message });
     }
   }
+  // Older log entries for scroll-back: n < before, filtered exactly like the view's window.
+  if (url.pathname === '/api/log') {
+    const wantDm = url.searchParams.get('view') === 'dm';
+    if (wantDm && !isLocal(req)) return json(res, 403, { error: 'The DM view is only available on the DM\'s machine.' });
+    try {
+      const s = C.loadState();
+      if (!s) return json(res, 200, { game: null, log: [] });
+      const before = Number(url.searchParams.get('before')) || Infinity;
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 80));
+      return json(res, 200, { game: s.game || null, log: C.logFor(s, wantDm ? 'dm' : 'player', { before, limit }) });
+    } catch (e) {
+      return json(res, 500, { error: e.message });
+    }
+  }
   if (url.pathname === '/api/seat') {
     const seat = seatOf(req, url.searchParams.get('token'));
     if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes, then check the code with the DM.' });

@@ -236,6 +236,33 @@ try {
   for (const f of [C.SEATS, C.INTENTS]) if (fs.existsSync(f)) fs.unlinkSync(f);
   run('seat', 'sam', 'wren');
   run('load', 'rope-bridge');
+  // event stream: n = log line number, game id, older-log paging
+  {
+    const g1 = C.loadState().game;
+    expect('load sets a game id', !!g1 && C.view(C.loadState(), 'player').game === g1, String(g1));
+    let s = C.loadState();
+    for (let i = 0; i < 90; i++) C.appendLog(s, 'narration', 'line ' + i);
+    C.appendLog(s, 'secret', 'hush');
+    C.appendLog(s, 'narration', 'last');
+    const total = C.readLog(1e6).length;
+    const w = C.view(s, 'player').log;
+    expect('player window ends at the last line with increasing n', w.length === 79 || w.length === 80 ? w[w.length - 1].n === total && w.every((e, i) => !i || e.n > w[i - 1].n) : false, JSON.stringify(w.slice(-2)));
+    const same = C.readLog(1e6).filter((e) => e.t === C.readLog(1).pop().t);
+    expect('entries in one ms keep distinct ns', new Set(same.map((e) => e.n)).size === same.length, '');
+    const old = C.logFor(s, 'player', { before: w[0].n, limit: 10 });
+    expect('before= returns older entries', old.length === 10 && old.every((e) => e.n < w[0].n), JSON.stringify(old.map((e) => e.n)));
+    const sec = C.readLog(1e6).find((e) => e.type === 'secret');
+    expect('older pages hold no secrets', !C.logFor(s, 'player', { before: total + 1, limit: 1000 }).some((e) => e.type === 'secret') && C.logFor(s, 'dm', { before: total + 1, limit: 1000 }).some((e) => e.n === sec.n), '');
+    expect('nothing before n 1', C.logFor(s, 'player', { before: 1 }).length === 0, '');
+    // a hidden turn is reworded but keeps its source n
+    C.appendLog(s, 'turn', 'Round 2: Zork the Unseen\'s turn.', { id: 'zork', unseen: true });
+    const hn = C.readLog(1).pop().n;
+    const hid = C.view(s, 'player').log.find((e) => e.n === hn);
+    expect('reworded hidden turn keeps n', hid && /something moves out of sight/.test(hid.text), JSON.stringify(hid));
+    run('load', 'rope-bridge');
+    const lg = C.view(C.loadState(), 'player');
+    expect('load gives a new game and n restarts at 1', lg.game !== g1 && lg.log[0].n === 1, `${g1} ${lg.game}`);
+  }
   expect('seats survive a reload', C.loadState().creatures.wren.player === 'sam', '');
   r = run('unseat', 'sam');
   expect('unseat revokes the link', r.ok && !C.loadSeats().sam && !C.loadState().creatures.wren.player, r.out);

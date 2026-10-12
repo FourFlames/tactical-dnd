@@ -111,7 +111,7 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
   if (!fs.existsSync(file)) fail(`No encounter file ${file}`);
   const enc = JSON.parse(fs.readFileSync(file, 'utf8'));
   enc.height = enc.rows.length; enc.width = enc.rows[0].length;
-  enc.round = 0; enc.turnOrder = []; enc.turnIdx = 0; enc.turn = {}; enc.explored = []; enc.tagOverrides = {};
+  enc.round = 0; enc.turnOrder = []; enc.turnIdx = 0; enc.turn = {}; enc.explored = []; enc.tagOverrides = {}; enc.game = Date.now().toString(36);
   for (const [id, c] of Object.entries(enc.creatures)) { c.maxHp = c.maxHp || c.hp; c.conditions = c.conditions || []; c.id = id; }
   C.wallSegments(enc); // throws on a malformed wall
   for (const [player, seat] of Object.entries(C.loadSeats())) {
