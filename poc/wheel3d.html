@@ -52,6 +52,21 @@
   #top label { display: flex; gap: 5px; align-items: center; color: var(--ink-dim); }
   #card { top: 36px; right: 8px; width: 210px; color: var(--ink-dim); }
   #card b { color: var(--ink); }
+  /* the player's doc: full on #card, a strip under Rook's pill */
+  .doc .dr { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
+  .doc .dr > span:first-child { width: 52px; flex: none; color: var(--ink-faint); font-size: 10.5px; }
+  .doc .sub { color: var(--ink-faint); font-size: 10.5px; margin-left: 58px; line-height: 1.25; }
+  .hpbar { display: inline-block; width: 44px; height: 5px; border-radius: 3px; background: #14130f; border: 1px solid var(--line); overflow: hidden; vertical-align: middle; }
+  .hpbar i { display: block; height: 100%; background: var(--party); }
+  .hpbar.low i { background: var(--enemy); }
+  .pip3 { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--c); background: var(--c); }
+  .pip3.used { background: transparent; opacity: .5; }
+  .tick { display: inline-block; width: 5px; height: 8px; margin-right: 1px; border-radius: 1px; background: var(--gold); }
+  .tick.gone { background: #14130f; border: 1px solid var(--line); }
+  .chip3 { font-size: 9px; line-height: 12px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--gold); color: var(--gold); }
+  .chip3.bad { border-color: var(--enemy); color: var(--enemy); }
+  .rk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; height: 17px; padding: 0 6px; border-radius: 9px; background: #1c1b16d8; border: 1px solid var(--line); white-space: nowrap; font-size: 10px; color: var(--ink-dim); cursor: pointer; will-change: transform, opacity; }
+  .rk:hover { border-color: var(--gold); }
   #log { bottom: 8px; left: 8px; max-width: 420px; }
   #log div { color: var(--ink-dim); }
   #log div:first-child { color: var(--ink); }
@@ -127,7 +142,8 @@ const chasm = new Set(['G4','G5','G6','H5']);
 
 // Same fake world as the 2D mockup. `alt` is height in feet; hp 0 means down.
 const ents = [
-  { id: 'rook', name: 'Rook', kind: 'party', me: true, c: 2, r: 6, ac: 18, hp: 28 },
+  { id: 'rook', name: 'Rook', kind: 'party', me: true, c: 2, r: 6, ac: 18, hp: 22, maxHp: 28, speed: 30, move: 25, cond: [], used: { a: false, b: false, r: false }, swLeft: 1, surgeLeft: 1,
+    buffs: [{ n: 'Bless', r: 2, d: '+1d4 to attacks and saves' }] },
   { id: 'gob1', name: 'Goblin', kind: 'enemy', c: 3, r: 7, ac: 15, hp: 7 },
   { id: 'gob2', name: 'Goblin archer', kind: 'enemy', c: 9, r: 3, ac: 13, hp: 7 },
   { id: 'gob3', name: 'Goblin (behind wall)', kind: 'enemy', c: 8, r: 1, ac: 15, hp: 7 },
@@ -284,9 +300,8 @@ function makeStem() {
   return { solid, dash };
 }
 for (const e of ents) {
-  if (e.me) continue;
   const icon = e.item ? '⚔' : e.kind === 'object' ? '▯' : e.name[0];
-  const sub = e.alt ? `<small>${e.alt} ft up</small>` : e.hp === 0 ? '<small>down</small>' : '';
+  const sub = e.me ? '<small>you</small>' : e.alt ? `<small>${e.alt} ft up</small>` : e.hp === 0 ? '<small>down</small>' : '';
   e.mk = makeMarker(e.kind, icon, e.name + ' ' + sub);
   e.mk.el.onclick = (ev) => { ev.stopPropagation(); pickEntity(e); };
   e.mk.el.onmouseenter = () => { mkHover = e; };
@@ -410,6 +425,7 @@ function updateMarkers() {
       else if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = !busy && s.front;
     }
+    if (e.me && s.front && !busy && B?.ent !== e) want = Math.max(want, .55);   // you are always on the map, dimmer from afar
     e.want = want;
   }
   // 1b. a row stays whole: its pills scrolled out of view (or far from the cursor) follow the row's strongest one
@@ -503,6 +519,7 @@ function weaponList(t) {
   return { title: 'All attacks', slots: { 1: w('Longsword', 5, 5, 0), 2: w('Javelin', 5, 30, 120), 3: w('Handaxe', 5, 20, 60), 5: w('Unarmed', 5, 5, 0), 6: { what: 'Shove', act: `shove rook ${t.id}` } } };
 }
 function rootFor(t) {
+  if (t.me) return selfRoot(t);
   if (t.kind === 'enemy') return {
     title: t.name,
     slots: {
@@ -569,19 +586,20 @@ function squareRoot(s) {
   const n = cellName(s.c, s.r);
   const d = dist(me(), s);
   const crossesChasm = [...chasm].some((x) => { const c = x.charCodeAt(0) - 65, r = +x.slice(1) - 1; return Math.min(me().c, s.c) < c && c < Math.max(me().c, s.c) && Math.abs(r - s.r) <= 1; });
-  const blocked = chasm.has(n);
+  const blocked = chasm.has(n), P = me(), need = mvNeed(d), short = need > P.move;
+  const mvOdds = short ? 'not enough movement' : d + ' ft' + (P.prone ? ' · crawling' : '');
   return {
     title: n,
     slots: {
       1: blocked ? { role: 'Move here', what: 'Chasm', off: true }
-        : { role: 'Move here', what: crossesChasm ? 'Jump here' : 'Walk here', odds: d + ' ft' + (d > 30 ? ' · too far' : ''), off: d > 30, act: `move rook ${n}${crossesChasm ? ' --jump' : ''}`, moveTo: s },
-      2: { role: 'Dash', what: 'Dash here', odds: d + ' ft', off: blocked || d > 60, act: `dash rook; move rook ${n}`, moveTo: s },
+        : { role: 'Move here', what: crossesChasm ? 'Jump here' : 'Walk here', odds: mvOdds, off: short, act: `move rook ${n}${crossesChasm ? ' --jump' : ''}`, moveTo: s, cost: need },
+      2: { role: 'Dash', what: 'Dash here', odds: P.used.a ? 'action used' : need > P.move + P.speed ? 'not enough movement' : d + ' ft', off: blocked || P.used.a || need > P.move + P.speed, act: `dash rook; move rook ${n}`, moveTo: s, dash: true, cost: need },
       3: { role: 'Aim here', what: 'Aim here', sub: () => ({ title: 'Aim at ' + n, slots: { 1: { what: 'Oil flask', odds: '5-ft splash', act: `ruling: oil at ${n}` } } }) },
       4: { role: 'Tricks', what: 'Movement tricks', sub: () => ({ title: 'Tricks', slots: {
-        1: { what: 'Jump', act: `move rook ${n} --jump`, moveTo: s, off: blocked },
-        3: { what: 'Vault', act: `move rook ${n} --vault`, moveTo: s, off: blocked },
-        5: { what: 'Drop prone', act: 'condition rook add prone' },
-        6: { what: 'Sneak there', odds: 'Stealth', act: `sneak rook; move rook ${n}`, moveTo: s, off: blocked } } }) },
+        1: { what: 'Jump', odds: short ? 'not enough movement' : '', act: `move rook ${n} --jump`, moveTo: s, cost: need, off: blocked || short },
+        3: { what: 'Vault', odds: short ? 'not enough movement' : '', act: `move rook ${n} --vault`, moveTo: s, cost: need, off: blocked || short },
+        5: { what: 'Drop prone', odds: P.prone ? 'already prone' : '', off: P.prone, act: 'condition rook add prone', fx: () => setProne(true) },
+        6: { what: 'Sneak there', odds: short ? 'not enough movement' : 'Stealth', act: `sneak rook; move rook ${n}`, moveTo: s, cost: need, off: blocked || short } } }) },
       5: { role: 'Inspect', what: 'Inspect square', inspectSq: n },
       6: { role: 'Ping', what: 'Ping', act: `ping ${n}` },
     },
@@ -620,7 +638,12 @@ function runSlot(s) {
   if (s.inspect) inspect(s.inspect);
   if (s.inspectSq) inspectSquare(s.inspectSq);
   if (s.act) log(s.what, s.act);
-  if (s.moveTo) { Object.assign(me(), { c: s.moveTo.c, r: s.moveTo.r }); layout(); }
+  const P = me();
+  if (s.dash) { P.used.a = true; P.move += P.speed; }
+  if (s.act === 'heal rook 1d10+3') secondWind();
+  else if (/^attack rook/.test(s.act || '')) P.used.a = true;
+  s.fx?.();
+  if (s.moveTo) { P.move = Math.max(0, P.move - (s.cost || 0)); Object.assign(P, { c: s.moveTo.c, r: s.moveTo.r }); layout(); }
 }
 
 // ---------- Bar mode: hover, pick, and the action bar under the selected square ----------
@@ -658,7 +681,6 @@ function shapeOf(e) {
 }
 function hoverScores(x, y) {
   for (const e of ents) {
-    if (e.me) continue;
     const h = e.hv = shapeOf(e);
     h.s = h.front ? Math.hypot((x - h.x) / h.rx, (y - h.y) / h.ry) : Infinity;
   }
@@ -719,7 +741,7 @@ overlay.appendChild(barEl);
 const [vL, icSq, icEn, vR] = barEl.children;
 const tracks = { L: vL.firstChild, R: vR.firstChild };
 
-const GLYPH = { Strike: '⚔', Signature: '➤', Kit: '✦', Tactics: '♟', Inspect: '?', Move: '➜', Aid: '✚', Use: '◆', Talk: '“', 'Try something': '✧', Other: '…', 'Move here': '➜', Dash: '≫', 'Aim here': '◎', Tricks: '✧', Ping: '!' };
+const GLYPH = { Self: '♥', Strike: '⚔', Signature: '➤', Kit: '✦', Tactics: '♟', Inspect: '?', Move: '➜', Aid: '✚', Use: '◆', Talk: '“', 'Try something': '✧', Other: '…', 'Move here': '➜', Dash: '≫', 'Aim here': '◎', Tricks: '✧', Ping: '!' };
 function itemsOf(stack) {
   const menu = stack[stack.length - 1];
   const items = [];
@@ -871,7 +893,7 @@ function placeTip() {
 }
 function tickTip() {
   if (!tipOwner) return;
-  if (!tipOwner.isConnected || ((tipOwner.classList.contains('mk') || tipOwner.classList.contains('arr')) && +tipOwner.style.opacity < .3) || tipOwner.classList.contains('off')) setTip(null);
+  if (!tipOwner.isConnected || ((tipOwner.classList.contains('mk') || tipOwner.classList.contains('arr') || tipOwner.classList.contains('rk')) && +tipOwner.style.opacity < .3) || tipOwner.classList.contains('off')) setTip(null);
   else placeTip();
 }
 document.addEventListener('pointerover', (ev) => setTip(ev.target.closest?.('.tipped') || null));
@@ -925,12 +947,125 @@ function log(what, act) {
   el.insertAdjacentHTML('afterbegin', `<div>${what} → <code>${act}</code></div>`);
   while (el.children.length > 3) el.lastChild.remove();
 }
+let cardBase = '', cardDoc = false, cardShown = null;   // what a click put on the card, and whether that is the player doc
 function inspect(t) {
+  cardDoc = !!t.me;
+  if (t.me) return;
   const d = t.kind === 'object' ? '' : ` · ${dist(me(), t)} ft`;
-  document.getElementById('card').innerHTML = `<b>${t.name}</b>${d}<br>${t.ac ? 'AC ' + t.ac : ''}${t.hp != null ? ` · ${t.hp === 0 ? 'down' : 'looks ' + (t.hp > 10 ? 'healthy' : 'fragile')}` : ''}${t.alt ? ` · flying ${t.alt} ft` : ''}${t.prone ? ' · prone' : ''}`;
+  cardBase = `<b>${t.name}</b>${d}<br>${t.ac ? 'AC ' + t.ac : ''}${t.hp != null ? ` · ${t.hp === 0 ? 'down' : 'looks ' + (t.hp > 10 ? 'healthy' : 'fragile')}` : ''}${t.alt ? ` · flying ${t.alt} ft` : ''}${t.prone ? ' · prone' : ''}`;
 }
 function inspectSquare(n) {
-  document.getElementById('card').innerHTML = `<b>${n}</b><br>${chasm.has(n) ? 'A chasm. Jump or fall.' : 'Packed earth. Nothing lying here.'}`;
+  cardDoc = false;
+  cardBase = `<b>${n}</b><br>${chasm.has(n) ? 'A chasm. Jump or fall.' : 'Packed earth. Nothing lying here.'}`;
+}
+
+// ---------- the player's doc: state kept on Rook, a strip under his pill, the full card, and the reach tint ----------
+const mvNeed = (d) => d * (me().prone ? 2 : 1);   // crawling costs double
+function setProne(on) {
+  const P = me();
+  if (!!P.prone === on) return;
+  P.prone = on;
+  P.cond = on ? [...P.cond, 'prone'] : P.cond.filter((c) => c !== 'prone');
+  const [torso, head] = P.obj.children;
+  torso.rotation.z = on ? Math.PI / 2 : 0; torso.position.set(0, on ? .22 : .5, 0); head.position.set(on ? .5 : 0, on ? .2 : 1.05, 0);
+  P.top = on ? .45 : 1.25; P.half = on ? .45 : .26;
+}
+function secondWind() {
+  const P = me();
+  if (P.swLeft < 1 || P.used.b) return;
+  P.swLeft--; P.used.b = true; P.hp = Math.min(P.maxHp, P.hp + Math.ceil(Math.random() * 10) + 3);
+}
+function endTurn() {
+  const P = me();
+  P.used = { a: false, b: false, r: false }; P.move = P.speed;
+  P.buffs = P.buffs.map((b) => ({ ...b, r: b.r - 1 })).filter((b) => b.r > 0);
+}
+function selfRoot(t) {
+  const U = t.used, foes = ents.filter((e) => e.kind === 'enemy' && e.hp > 0).sort((a, b) => dist(t, a) - dist(t, b)), near = foes[0];
+  const swOk = t.swLeft > 0 && !U.b, tac = (what, odds, act, fx) => ({ what, odds: U.a ? 'action used' : odds, off: U.a, act, fx: () => { U.a = true; fx?.(); } });
+  const dodge = () => { t.buffs = [...t.buffs.filter((b) => b.n !== 'Dodging'), { n: 'Dodging', r: 1, d: 'attacks against you have disadvantage' }]; };
+  const surge = { what: 'Action Surge', odds: t.surgeLeft ? 'extra action' : 'spent', off: !t.surgeLeft, act: 'regain rook action', fx: () => { U.a = false; t.surgeLeft--; } };
+  const wind = { what: 'Second Wind', odds: t.swLeft ? (U.b ? 'bonus used' : '1d10+3 · bonus') : 'spent', off: !swOk, act: 'heal rook 1d10+3', fx: secondWind };
+  return {
+    title: t.name + ' (you)',
+    slots: {
+      1: t.hp < t.maxHp && swOk ? { role: 'Self', ...wind } : { role: 'Self', ...tac('Dodge', 'until your next turn', 'dodge rook', dodge) },
+      2: near ? { role: 'Signature', what: 'Strike nearest', odds: `${near.name} · ${dist(t, near)} ft`, off: U.a || dist(t, near) > 30, act: `attack rook ${near.id} ${dist(t, near) <= 5 ? 'longsword' : 'javelin'}` }
+              : { role: 'Signature', what: 'Strike nearest', odds: 'no enemies', off: true },
+      3: { role: 'Kit', what: 'Fighter', sub: () => ({ title: 'Fighter', slots: { 1: wind, 2: surge } }) },
+      4: { role: 'Tactics', what: 'Tactics', sub: () => ({ title: 'Tactics', slots: {
+        1: tac('Dash', '+' + t.speed + ' ft', 'dash rook', () => { t.move += t.speed; }),
+        2: tac('Disengage', 'no opportunity attacks', 'disengage rook'),
+        3: tac('Dodge', 'until your next turn', 'dodge rook', dodge),
+        5: tac('Hide', 'Stealth', 'check rook stealth 12; hide rook'),
+        6: tac('Ready', 'on trigger', 'ready rook attack') } }) },
+      5: { role: 'Inspect', what: 'Inspect self', inspect: t },
+      6: { role: 'Other', what: 'Other', sub: () => ({ title: 'Other', slots: {
+        1: t.prone ? { what: 'Stand up', odds: t.move < t.speed / 2 ? 'not enough movement' : 'costs ' + t.speed / 2 + ' ft', off: t.move < t.speed / 2, act: 'condition rook remove prone', fx: () => { t.move -= t.speed / 2; setProne(false); } }
+                   : { what: 'Drop prone', odds: 'free', act: 'condition rook add prone', fx: () => setProne(true) },
+        2: { what: 'Swap weapon', odds: 'free interaction', act: 'equip rook javelin' },
+        3: { what: 'Drop weapon', odds: 'free', act: 'drop rook longsword' },
+        6: { what: 'End turn', odds: 'resets movement', act: 'next', fx: endTurn } } }) },
+    },
+  };
+}
+const docRows = (P) => ({
+  hp: P.hp / P.maxHp,
+  pip: (k, c, n) => `<span class="pip3${P.used[k] ? ' used' : ''}" style="--c:${c}"></span>${n ? ' ' + n : ''}`,
+  ticks: Array.from({ length: Math.max(P.speed, P.move) / 5 }, (_, i) => `<i class="tick${i * 5 >= P.move ? ' gone' : ''}"></i>`).join(''),
+});
+function docHtml() {
+  const P = me(), { hp, pip, ticks } = docRows(P);
+  const row = (k, v, sub) => `<div class="dr"><span>${k}</span><span>${v}</span></div>${sub ? `<div class="sub">${sub}</div>` : ''}`;
+  return `<div class="doc"><b>${P.name}</b> · you · Fighter 3 · AC ${P.ac}
+    ${row('HP', `<span class="hpbar${hp < .4 ? ' low' : ''}"><i style="width:${hp * 100}%"></i></span> <b>${P.hp}</b>/${P.maxHp}`)}
+    ${row('Conditions', P.cond.length ? P.cond.map((c) => `<b>${c}</b>`).join(', ') : 'none', P.prone ? 'attacks within 5 ft have advantage; moving costs double' : '')}
+    ${row('Buffs', P.buffs.length ? P.buffs.map((b) => `<b>${b.n}</b> · ${b.r} rd${b.r > 1 ? 's' : ''}`).join(', ') : 'none', P.buffs.map((b) => b.d).join('; '))}
+    ${row('This turn', `${pip('a', 'var(--party)', 'Act')} ${pip('b', 'var(--gold)', 'Bonus')} ${pip('r', '#8aa4d8', 'React')}`)}
+    ${row('Movement', `<b>${P.move}</b> / ${P.speed} ft`, ticks)}
+    ${row('Resources', `Second Wind ${P.swLeft}/1 · Surge ${P.surgeLeft}/1`)}</div>`;
+}
+// the strip: its own element, parked under Rook's pill and fading with it
+const rk = document.createElement('div');
+rk.className = 'rk tipped'; overlay.appendChild(rk);
+rk.onclick = () => pickEntity(me());
+rk.onpointerenter = () => { mkHover = me(); };
+rk.onpointerleave = () => { if (mkHover === me()) mkHover = null; };
+function updateDoc() {
+  const P = me(), m = P.mk, { hp, pip } = docRows(P);
+  const chips = [...P.cond.map((c) => [c, 1]), ...P.buffs.map((b) => [b.n + ' ' + b.r, 0])];
+  const h = `<span class="hpbar${hp < .4 ? ' low' : ''}"><i style="width:${hp * 100}%"></i></span><b style="color:var(--ink)">${P.hp}</b>${pip('a', 'var(--party)')}${pip('b', 'var(--gold)')}${pip('r', '#8aa4d8')}<span style="color:var(--ink)">${P.move} ft</span>`
+    + chips.slice(0, 3).map(([n, bad]) => `<span class="chip3${bad ? ' bad' : ''}">${n}</span>`).join('');
+  if (rk._h !== h) { rk._h = h; rk.innerHTML = h; rk._w = 0; }
+  rk._tip = `<b>${P.name}</b> · HP ${P.hp}/${P.maxHp} · ${P.move} ft left<br>${P.cond.concat(P.buffs.map((b) => b.n + ' ' + b.r)).join(', ') || 'no conditions or buffs'}<br>Dots: action, bonus, reaction (hollow = used)`;
+  m.el._tip = `<b>${P.name}</b> · you<br>Click to select`;
+  if (!rk._w) rk._w = rk.offsetWidth || 120;
+  const a = m.alpha < .02 ? 0 : m.alpha;
+  rk.style.opacity = a;
+  rk.style.pointerEvents = a > .4 && !wheelUp() ? 'auto' : 'none';
+  rk.style.transform = `translate(${m.x - rk._w / 2}px, ${m.y + 14}px)`;
+  // the card: the doc while hovered, selected or inspected, otherwise what a click last put there
+  const card = (cardDoc || hoverEnt?.me || W?.ent?.me || B?.ent?.me) ? docHtml() : cardBase;
+  if (card !== cardShown) { cardShown = card; document.getElementById('card').innerHTML = card; }
+  updateTint();
+}
+// floor cells Rook can still reach (straight-line, walls and chasm excluded) while his or the square wheel is open
+const tint = new THREE.Group(); tint.visible = false; scene.add(tint);
+{
+  const geo = new THREE.PlaneGeometry(.92, .92).rotateX(-Math.PI / 2), mat = new THREE.MeshBasicMaterial({ color: '#4fb3a4', transparent: true, opacity: .17, depthWrite: false });
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const n = cellName(c, r);
+    if (walls.has(n) || chasm.has(n)) continue;
+    const m = new THREE.Mesh(geo, mat); m.position.set(c + .5, .008, r + .5); m.userData = { c, r }; tint.add(m);
+  }
+}
+function updateTint() {
+  const P = me(), on = (W && (W.square || W.ent.me)) || (B && (!B.ent || B.ent.me));
+  tint.visible = !!on;
+  const k = [P.c, P.r, P.move, P.prone].join();
+  if (!on || tint._k === k) return;
+  tint._k = k;
+  for (const m of tint.children) m.visible = mvNeed(5 * Math.max(Math.abs(m.userData.c - P.c), Math.abs(m.userData.r - P.r))) <= P.move;
 }
 
 // ---------- loop ----------
@@ -943,6 +1078,7 @@ renderer.setAnimationLoop((now) => {
   renderer.render(scene, camera);
   updateMarkers();
   updateBar(now);
+  updateDoc();
   tickTip();
 });
 document.querySelectorAll('#seg button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
