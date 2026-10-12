@@ -73,13 +73,56 @@
   #log div:first-child { color: var(--ink); }
   #log code { color: var(--gold); font: 11px ui-monospace, monospace; }
   #log:empty, #card:empty { display: none; }
+  [hidden] { display: none !important; }
+  #overlay { z-index: 5; } .hud { z-index: 2; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { all: unset; cursor: pointer; padding: 1px 9px; color: var(--ink-dim); font-size: 11px; }
+  .seg button.on { background: var(--gold); color: #14130f; font-weight: 600; }
+
+  /* Bar mode: icon-only markers, and the action bar under the selected square */
+  body.barmode .mk:not(.more):not(.square) { padding: 0 2px; }
+  body.barmode .mk:not(.more):not(.square) > span:last-child { display: none; }
+  #bar { position: absolute; left: 0; top: 0; z-index: 20; display: flex; align-items: center; gap: 7px; padding: 6px; height: 66px; background: #1c1b16f2; border: 1px solid var(--gold); border-radius: 12px; pointer-events: auto; box-shadow: 0 6px 18px #0009; will-change: transform; }
+  .bside { overflow: hidden; display: flex; height: 100%; align-items: center; flex: none; }
+  .bside.L { justify-content: flex-end; }
+  .btrack { display: flex; gap: 4px; flex: none; will-change: transform; }
+  .bside.L .btrack { flex-direction: row-reverse; }
+  .tile { width: 80px; height: 52px; flex: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; padding: 0 3px; animation: tinR .24s both; animation-delay: calc(var(--i) * 30ms); }
+  .bside.L .tile { animation-name: tinL; }
+  .tile i { font-style: normal; color: var(--gold); font-size: 13px; line-height: 14px; }
+  .tile b, .tile small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile b { font-size: 10.5px; font-weight: 600; line-height: 1.15; }
+  .tile small { font-size: 9.5px; color: var(--ink-dim); line-height: 1.1; min-height: 10px; }
+  .tile:hover { border-color: var(--gold); background: #2e2a1ef0; }
+  .tile.off { opacity: .4; cursor: not-allowed; }
+  .tile.off:hover { border-color: var(--line); background: var(--panel); }
+  .tile.back { border-color: var(--gold); background: #3a321c; }
+  .tile.back i { font-size: 17px; }
+  @keyframes tinL { from { opacity: 0; transform: translateX(40px); } }
+  @keyframes tinR { from { opacity: 0; transform: translateX(-40px); } }
+  .bic { width: 50px; height: 52px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--gold); border-radius: 8px; background: #2a2518; cursor: pointer; }
+  .bic:hover { background: #3a321c; }
+  .bic small { font-size: 9px; color: var(--ink-dim); max-width: 46px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.1; }
+  .bic .ic, .fly .ic { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; border: 2px solid; background: #14130f; }
+  .bic.sq .ic { border-radius: 4px; border-color: var(--gold); color: var(--gold); }
+  .party .ic { border-color: var(--party); color: var(--party); }
+  .enemy .ic { border-color: var(--enemy); color: var(--enemy); }
+  .object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
+  .fly { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; will-change: transform; }
+  /* the one shared tooltip */
+  #tip { position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; max-width: 250px; padding: 5px 9px; background: #14130ff5; border: 1px solid var(--gold); border-radius: 6px; font-size: 11.5px; color: var(--ink-dim); line-height: 1.35; box-shadow: 0 4px 14px #000a; }
+  #tip b { color: var(--ink); }
+  #tip .g { color: var(--gold); }
+  #tip .tag { color: var(--party); border: 1px solid var(--party); border-radius: 3px; padding: 0 3px; font-size: 9px; }
+  #tip code { color: var(--gold); font: 11px ui-monospace, monospace; word-break: break-all; }
 </style>
 </head>
 <body>
 <div id="overlay"><svg id="stems"></svg></div>
 <div class="hud" id="top">
   <b>Action wheel · 3D</b>
-  <span>Hover near a body, click its pill · floor click = square wheel · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike</span>
+  <span class="seg" id="seg"><button data-m="wheel">Wheel</button><button data-m="bar">Bar</button></span>
+  <span id="hint"></span>
   <label><input type="checkbox" id="slow"> slow-mo spin</label>
 </div>
 <div class="hud" id="card"></div>
@@ -92,6 +135,8 @@ const COLS = 12, ROWS = 9, FT = 1 / 5;
 const SPIN = () => (document.getElementById('slow').checked ? 600 : 150);
 const NEAR_PX = 170;     // how close the cursor must be for a marker to show
 const STEM_PX = 46;      // stem length from the top of the body to the pill
+const NEAR_BAR_PX = 100; // Bar mode: how close to the body itself before its icon shows
+const stemPx = () => (mode === 'bar' ? 30 : STEM_PX);
 const colName = (c) => String.fromCharCode(65 + c);
 const cellName = (c, r) => colName(c) + (r + 1);
 
@@ -170,6 +215,8 @@ for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
   scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: .25 })));
 }
 
+const pickables = [...occluders];   // what a click or hover ray can hit: floors, walls and (once built) entity bodies
+
 // ---------- entity bodies ----------
 const SIDE = { party: '#4fb3a4', enemy: '#cf6a4c', object: '#a59f8e' };
 function body(e) {
@@ -218,13 +265,19 @@ function layout() {
     });
     for (const e of list.filter((x) => x.alt)) e.target = new THREE.Vector3(e.c + .5, floorTop(e.c, e.r) + e.alt * FT, e.r + .5);
   }
-  for (const e of ents) if (!e.obj) { e.obj = body(e); e.obj.position.copy(e.target); }
+  for (const e of ents) if (!e.obj) {
+    e.obj = body(e); e.obj.position.copy(e.target);
+    if (!e.me) e.obj.traverse((o) => { if (o.isMesh) { o.userData.ent = e; pickables.push(o); } });
+  }
 }
 layout();
+// `on` is true (full glow) or a strength 0..1
 function glow(e, on) {
-  if (!e?.obj || e.glowing === on) return;
-  e.glowing = on;
-  e.obj.traverse((o) => { if (o.isMesh) { o.material.emissive = new THREE.Color(on ? '#d8b45a' : '#000000'); o.material.emissiveIntensity = on ? .45 : 0; } });
+  if (!e?.obj) return;
+  const k = on === true ? .45 : Math.round((+on || 0) * 50) / 50;
+  if (e.glowing === k) return;
+  e.glowing = k;
+  e.obj.traverse((o) => { if (o.isMesh) { o.material.emissive.set(k ? '#d8b45a' : '#000000'); o.material.emissiveIntensity = k; } });
 }
 
 // ---------- markers: stem + icon + name ----------
@@ -246,16 +299,20 @@ for (const e of ents) {
   const icon = e.item ? '⚔' : e.kind === 'object' ? '▯' : e.name[0];
   const sub = e.alt ? `<small>${e.alt} ft up</small>` : e.hp === 0 ? '<small>down</small>' : '';
   e.mk = makeMarker(e.kind, icon, e.name + ' ' + sub);
-  e.mk.el.onclick = (ev) => { ev.stopPropagation(); openWheelOn(e); };
-  e.mk.el.onmouseenter = () => { hoverEnt = e; };
-  e.mk.el.onmouseleave = () => { if (hoverEnt === e) hoverEnt = null; };
+  e.mk.el.onclick = (ev) => { ev.stopPropagation(); pickEntity(e); };
+  e.mk.el.onmouseenter = () => { mkHover = e; };
+  e.mk.el.onmouseleave = () => { if (mkHover === e) mkHover = null; };
+  e.mk.el.classList.add('tipped');
+  e.mk.el._tip = `<b>${e.name}</b>${e.alt ? ' · ' + e.alt + ' ft up' : e.hp === 0 ? ' · down' : ''}<br>Click to select`;
 }
 const moreMk = {}; // per crowded square, a "+N more" marker
 const sqMk = makeMarker('square', '▢', '');
-let hoverEnt = null, listEl = null;
+let hoverEnt = null, mkHover = null, listEl = null;
+let mode = 'wheel';   // 'wheel' | 'bar'
+let B = null;         // the action bar: { square, ent, L: menu stack, R: menu stack, scroll }
 
 const mouse = { x: -1e4, y: -1e4 };
-addEventListener('pointermove', (ev) => { mouse.x = ev.clientX; mouse.y = ev.clientY; });
+addEventListener('pointermove', (ev) => { mouse.x = ev.clientX; mouse.y = ev.clientY; mouse.ui = ev.target !== renderer.domElement; mouse.btn = ev.buttons; });
 document.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; });
 
 const ray = new THREE.Raycaster();
@@ -277,20 +334,30 @@ function inView(e) {
 
 function updateMarkers() {
   const shown = [];
+  const bar = mode === 'bar';
   const busy = !!W;
   // 1. which bodies are on screen, in view, and near the cursor
   const live = [];
   for (const e of ents) {
     if (!e.mk) continue;
-    const top = e.obj.position.clone().setY(e.obj.position.y + e.top);
-    const s = toScreen(top);
+    const s = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top));
     e.anchor = s;
+    e.cs = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top / 2));
     const sel = W && W.ent === e;
     const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
-    const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
     let want = 0;
-    if (sel) want = 1;
-    else if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+    if (bar) {
+      // direct hover shows the icon at full; "near" fades it in (only while nothing is selected)
+      const near = Math.min(Math.hypot(mouse.x - e.cs.x, mouse.y - e.cs.y), pillD);
+      const ramp = Math.max(0, Math.min(1, (NEAR_BAR_PX - near) / 40));
+      if (B?.ent === e) want = 0;   // its icon is in the bar
+      else if (B && !B.ent && B.square.c === e.c && B.square.r === e.r) want = 1;
+      else if (!listEl && s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
+    } else {
+      const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
+      if (sel) want = 1;
+      else if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+    }
     e.want = want;
     if (want > 0 || e.mk.alpha > .02) live.push(e);
   }
@@ -321,7 +388,7 @@ function updateMarkers() {
     .filter((m) => m && m.anchor && (m.wantA > 0 || m.alpha > .02));
   for (const m of items) {
     if (!m.w) m.w = m.el.offsetWidth || 80;
-    m.tx = m.anchor.x; m.ty = m.anchor.y - STEM_PX;
+    m.tx = m.anchor.x; m.ty = m.anchor.y - stemPx();
   }
   const act = items.filter((m) => m.wantA > 0);
   act.sort((a, b) => a.tx - b.tx);
@@ -347,7 +414,13 @@ function updateMarkers() {
     m.line.setAttribute('x2', tx); m.line.setAttribute('y2', ty);
     m.g.lastChild.setAttribute('cx', m.anchor.x); m.g.lastChild.setAttribute('cy', m.anchor.y);
   }
-  for (const e of ents) if (e.mk) { glow(e, (W && W.ent === e) || hoverEnt === e); e.mk.el.classList.toggle('hot', hoverEnt === e); }
+  for (const e of ents) if (e.mk) {
+    if (bar) {
+      const mate = B && !B.ent && B.square.c === e.c && B.square.r === e.r;
+      glow(e, hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want);
+    } else glow(e, (W && W.ent === e) || hoverEnt === e);
+    e.mk.el.classList.toggle('hot', hoverEnt === e);
+  }
 }
 
 function showMore(m) {
@@ -356,7 +429,7 @@ function showMore(m) {
   listEl.className = 'morelist';
   listEl.style.left = m.x + m.w / 2 + 6 + 'px'; listEl.style.top = m.y - 11 + 'px';
   listEl.innerHTML = m.rest.map((e) => `<div data-id="${e.id}">${e.name}</div>`).join('');
-  listEl.onclick = (ev) => { const e = ents.find((x) => x.id === ev.target.dataset.id); if (e) { closeMore(); openWheelOn(e); } };
+  listEl.onclick = (ev) => { const e = ents.find((x) => x.id === ev.target.dataset.id); if (e) { closeMore(); pickEntity(e); } };
   overlay.appendChild(listEl);
 }
 function closeMore() { listEl?.remove(); listEl = null; }
@@ -492,7 +565,7 @@ function startWheel() {
   spin(+1, .5);
 }
 function closeWheel() { W = null; wheelEl.hidden = true; wheelEl.innerHTML = ''; }
-function closeAll() { closeWheel(); closeMore(); }
+function closeAll() { closeWheel(); closeMore(); closeBar(); }
 const curMenu = () => W.stack[W.stack.length - 1];
 const slotOf = (menu, k) => (W.stack.length > 1 && k === 4 ? { what: 'Back', back: true } : menu.slots[k] || null);
 
@@ -564,11 +637,15 @@ function choose(k, shift) {
   if (s.back) return back();
   if (shift && s.full && W.stack.length === 1) return drill(s.full());
   if (s.sub) return drill(s.sub());
+  runSlot(s);
+  closeWheel();
+}
+// what running an action does in the mockup (shared by both modes)
+function runSlot(s) {
   if (s.inspect) inspect(s.inspect);
   if (s.inspectSq) inspectSquare(s.inspectSq);
   if (s.act) log(s.what, s.act);
   if (s.moveTo) { Object.assign(me(), { c: s.moveTo.c, r: s.moveTo.r }); layout(); }
-  closeWheel();
 }
 function drill(menu) { W.stack.push(menu); W.hot = 0; buildWheel(); spin(+1); }
 function back() {
@@ -577,6 +654,234 @@ function back() {
   W.stack.pop(); W.hot = 0; buildWheel(); spin(-1);
 }
 
+// ---------- Bar mode: hover, pick, and the action bar under the selected square ----------
+let startMode = 'wheel';
+try { if (localStorage.getItem('wheel3d.mode') === 'bar') startMode = 'bar'; } catch (e) { /* storage blocked: default */ }
+const HINTS = {
+  wheel: 'Hover near a body, click its pill · floor click = square wheel · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
+  bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
+};
+function setMode(m) {
+  closeAll(); mode = m; mkHover = null; hoverEnt = null;
+  document.body.classList.toggle('barmode', m === 'bar');
+  document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  document.getElementById('hint').innerHTML = HINTS[m];
+  for (const k of [...ents.map((e) => e.mk), sqMk, ...Object.values(moreMk)]) if (k) k.w = 0;   // pills change width
+  try { localStorage.setItem('wheel3d.mode', m); } catch (e) { /* ignore */ }
+}
+const pickEntity = (e) => (mode === 'bar' ? barSelectEnt(e) : openWheelOn(e));
+const goBack = () => (mode === 'bar' ? barBack() : back());
+
+// Screen-space picking: the body under the cursor (nearest hit, so walls hide things), else the floor cell.
+function pickAt(x, y) {
+  ray.setFromCamera(new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), camera); ray.far = Infinity;
+  const o = ray.intersectObjects(pickables, false)[0]?.object;
+  return { ent: o?.userData.ent || null, cell: o?.userData.ent ? null : o?.userData.cell };
+}
+// Thin things (a sword on the floor) are hard to hit: a body centre within a few px counts.
+function nearBody(x, y) {
+  let best = null, bd = 18;
+  for (const e of ents) {
+    if (e.me || !e.cs) continue;
+    const d = Math.hypot(x - e.cs.x, y - e.cs.y);
+    if (d < bd && inView(e)) { best = e; bd = d; }
+  }
+  return best;
+}
+const pickEnt = (x, y) => pickAt(x, y).ent || nearBody(x, y);
+function updateHover() {
+  hoverEnt = mkHover;
+  if (mode !== 'bar') return;
+  if (!hoverEnt && !mouse.ui && !mouse.btn && mouse.x > -1e3) hoverEnt = pickEnt(mouse.x, mouse.y);
+  renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
+}
+function barClick(x, y) {
+  if (listEl) return closeMore();
+  const p = pickAt(x, y);
+  const e = p.ent || nearBody(x, y);
+  if (e) return barSelectEnt(e);
+  if (p.cell && !walls.has(cellName(p.cell.c, p.cell.r))) return barSelectSquare(p.cell.c, p.cell.r);
+  closeBar();
+}
+
+// The selected square, drawn on the floor.
+const selSq = new THREE.Group();
+{
+  const g = new THREE.PlaneGeometry(.94, .94).rotateX(-Math.PI / 2);
+  selSq.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#d8b45a', transparent: true, opacity: .22, depthWrite: false })),
+    new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: '#d8b45a' })));
+  selSq.visible = false; scene.add(selSq);
+}
+
+// layout: [square actions … ←] [square icon] [entity icon] [→ … entity actions]; each side is a clipped, scrollable track
+const TW = 80, TG = 4, IC = 50, SEP = 7, PAD = 6, BAR_H = 66;
+const NEUTRAL = .5, MAX_SPEED = 700;   // fraction of the half-width that doesn't scroll; px/s at the very edge
+const barEl = document.createElement('div');
+barEl.id = 'bar'; barEl.hidden = true;
+barEl.innerHTML = '<div class="bside L"><div class="btrack"></div></div><div class="bic sq tipped"></div><div class="bic en tipped"></div><div class="bside R"><div class="btrack"></div></div>';
+overlay.appendChild(barEl);
+const [vL, icSq, icEn, vR] = barEl.children;
+const tracks = { L: vL.firstChild, R: vR.firstChild };
+
+const GLYPH = { Strike: '⚔', Signature: '➤', Kit: '✦', Tactics: '♟', Inspect: '?', Move: '➜', Aid: '✚', Use: '◆', Talk: '“', 'Try something': '✧', Other: '…', 'Move here': '➜', Dash: '≫', 'Aim here': '◎', Tricks: '✧', Ping: '!' };
+function itemsOf(stack) {
+  const menu = stack[stack.length - 1];
+  const items = [];
+  for (const [, s] of Object.entries(menu.slots).sort((a, b) => a[0] - b[0])) {
+    items.push({ ...s });
+    if (s.full && stack.length === 1) items.push({ what: 'All attacks', role: 'Strike', sub: s.full });
+  }
+  if (stack.length > 1) items.unshift({ back: true, what: 'Back' });
+  return items;
+}
+function tipOf(s, stack) {
+  if (s.back) return `<b>Back</b><br>Return to ${stack[stack.length - 2].title}`;
+  const t = `<b>${s.what}</b>${s.odds ? ` <span class="g">${s.odds}</span>` : ''}${s.self ? ' <span class="tag">self</span>' : ''}`;
+  if (s.off) return t + '<br>Not available right now';
+  if (s.sub) return t + '<br>Opens more options';
+  if (s.inspect) return t + `<br>Look closely at ${s.inspect.name}`;
+  if (s.inspectSq) return t + `<br>Look closely at ${s.inspectSq}`;
+  return t + (s.act ? `<br><code>${s.act}</code>` : '');
+}
+function tileEl(s, stack, side, i) {
+  const el = document.createElement('div');
+  el.className = 'tile tipped' + (s.off ? ' off' : '') + (s.back ? ' back' : '');
+  el.style.setProperty('--i', i);
+  const small = s.back ? stack[stack.length - 1].title : s.self ? 'self' + (s.odds ? ' · ' + s.odds : '') : s.odds || '';
+  el.innerHTML = `<i>${s.back ? '↶' : GLYPH[s.role] || s.what[0]}</i><b>${s.what}${s.sub ? ' ▸' : ''}</b><small>${small}</small>`;
+  el._tip = tipOf(s, stack);
+  el.onclick = () => barPick(s, side);
+  return el;
+}
+function buildBar(sides = 'LR') {
+  for (const side of sides) {
+    const track = tracks[side], stack = B[side];
+    track.innerHTML = '';
+    if (stack) itemsOf(stack).forEach((s, i) => track.appendChild(tileEl(s, stack, side, i)));
+    B['n' + side] = track.children.length;
+    if (side === 'L' ? B.scroll > 0 : B.scroll < 0) B.scroll = 0;
+  }
+  const n = cellName(B.square.c, B.square.r), e = B.ent;
+  vR.hidden = icEn.hidden = !e;
+  icSq.innerHTML = `<span class="ic">▢</span><small>${n}</small>`;
+  icSq._tip = `<b>${n}</b><br>Click to deselect the square`;
+  icSq.onclick = closeBar;
+  if (e) {
+    icEn.className = `bic en tipped ${e.kind}`;
+    icEn.innerHTML = `<span class="ic">${e.mk.el.firstChild.textContent}</span><small>${e.name}</small>`;
+    icEn._tip = `<b>${e.name}</b><br>Click to deselect (back to ${n})`;
+    icEn.onclick = () => { B.ent = null; B.R = null; buildBar('R'); };
+  }
+  barEl.hidden = false;
+}
+function barSelectSquare(c, r) {
+  closeAll();
+  B = { square: { c, r }, ent: null, L: [squareRoot({ c, r })], R: null, scroll: 0, nL: 0, nR: 0 };
+  buildBar();
+}
+function barSelectEnt(e) {
+  closeMore();
+  const sameSq = B && B.square.c === e.c && B.square.r === e.r;
+  const from = e.mk.alpha > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.anchor.x, y: e.anchor.y - stemPx() };
+  if (!sameSq) B = { square: { c: e.c, r: e.r }, L: [squareRoot({ c: e.c, r: e.r })], scroll: 0, nL: 0, nR: 0 };
+  B.ent = e; B.R = [rootFor(e)]; B.fly = from;
+  buildBar(sameSq ? 'R' : 'LR');
+}
+function barPick(s, side) {
+  if (s.off) return;
+  const stack = B[side];
+  if (s.back) stack.pop();
+  else if (s.sub) stack.push(s.sub());
+  else { runSlot(s); return closeBar(); }
+  buildBar(side);
+}
+function barBack() {   // one step out: submenu, then entity, then the square
+  if (!B) return closeMore();
+  if (B.R && B.R.length > 1) { B.R.pop(); buildBar('R'); }
+  else if (B.L.length > 1) { B.L.pop(); buildBar('L'); }
+  else if (B.ent) { B.ent = null; B.R = null; buildBar('R'); }
+  else closeBar();
+}
+function closeBar() {
+  B = null; barEl.hidden = true; selSq.visible = false; setTip(null);
+  document.querySelectorAll('.fly').forEach((f) => f.remove());
+  icEn.style.visibility = '';
+}
+// The entity's icon leaves its marker and slides into the bar.
+function startFly(from, e) {
+  const t = icEn.firstChild.getBoundingClientRect();
+  const to = { x: t.left + t.width / 2, y: t.top + t.height / 2 };
+  const f = document.createElement('div');
+  f.className = 'fly ' + e.kind;
+  f.innerHTML = `<span class="ic">${e.mk.el.firstChild.textContent}</span>`;
+  document.body.appendChild(f);
+  icEn.style.visibility = 'hidden';
+  const a = f.animate([{ transform: `translate(${from.x - 13}px, ${from.y - 13}px) scale(.7)` }, { transform: `translate(${to.x - 13}px, ${to.y - 13}px) scale(1)` }], { duration: 300, easing: 'cubic-bezier(.2,.9,.25,1)' });
+  a.onfinish = a.oncancel = () => { f.remove(); icEn.style.visibility = ''; };
+}
+const fade = (el, l, r) => {
+  const m = `linear-gradient(90deg, ${l ? 'transparent' : '#000'} 0, #000 24px, #000 calc(100% - 24px), ${r ? 'transparent' : '#000'} 100%)`;
+  if (el._m !== m) { el._m = m; el.style.maskImage = el.style.webkitMaskImage = m; }
+};
+// The bar hangs below the selected square and follows it; it is clamped into the window.
+function updateBar(now) {
+  if (!B) return;
+  const { c, r } = B.square, y0 = floorTop(c, r);
+  selSq.visible = true; selSq.position.set(c + .5, y0 + .012, r + .5);
+  const cs = [[c, r], [c + 1, r], [c, r + 1], [c + 1, r + 1]].map(([x, z]) => toScreen(new THREE.Vector3(x, y0, z)));
+  const sx = cs.reduce((a, p) => a + p.x, 0) / 4, bottom = Math.max(...cs.map((p) => p.y));
+  const hasR = !!B.ent;
+  const Lt = B.nL ? B.nL * (TW + TG) - TG : 0, Rt = hasR && B.nR ? B.nR * (TW + TG) - TG : 0;
+  const fixed = 2 * (PAD + 1) + IC * (hasR ? 2 : 1) + SEP * (hasR ? 3 : 1);
+  const full = Math.max(0, innerWidth - 16 - fixed);
+  const Lw = Math.min(Lt, hasR ? full - Math.min(Rt, full / 2) : full), Rw = hasR ? Math.min(Rt, full - Lw) : 0;
+  const barW = fixed + Lw + Rw;
+  const left = Math.max(8, Math.min(innerWidth - 8 - barW, sx - (PAD + 1) - Lw - SEP - IC / 2));
+  const top = Math.max(4, Math.min(innerHeight - BAR_H - 6, bottom + 10));
+  barEl.style.transform = `translate(${left}px, ${top}px)`;
+  vL.style.width = Lw + 'px'; vR.style.width = Rw + 'px';
+  // edge scrolling: nothing in the middle half, then quadratically faster toward either end
+  const maxL = Math.max(0, Lt - Lw), maxR = Math.max(0, Rt - Rw);
+  const dt = Math.min(.05, (now - (B.t || now)) / 1000); B.t = now;
+  if ((maxL || maxR) && Math.abs(mouse.y - (top + BAR_H / 2)) < BAR_H / 2 + 30 && mouse.x > left - 60 && mouse.x < left + barW + 60) {
+    const u = Math.max(-1, Math.min(1, (mouse.x - (left + barW / 2)) / (barW / 2)));
+    const t = Math.max(0, (Math.abs(u) - NEUTRAL) / (1 - NEUTRAL));
+    B.scroll -= Math.sign(u) * MAX_SPEED * t * t * dt;
+  }
+  B.scroll = Math.max(-maxR, Math.min(maxL, B.scroll));
+  const sl = Math.max(0, B.scroll), sr = Math.max(0, -B.scroll);
+  tracks.L.style.transform = `translateX(${sl}px)`; tracks.R.style.transform = `translateX(${-sr}px)`;
+  fade(vL, maxL - sl > 1, sl > 1); fade(vR, sr > 1, maxR - sr > 1);
+  if (B.fly) { startFly(B.fly, B.ent); B.fly = null; }
+}
+
+// ---------- one shared tooltip: one node, one owner, always on top ----------
+const tipEl = document.createElement('div');
+tipEl.id = 'tip'; tipEl.hidden = true;
+document.body.appendChild(tipEl);
+let tipOwner = null;
+function setTip(el) {
+  if (el && el.closest('.mk') && mode !== 'bar') el = null;
+  if (el === tipOwner) return;
+  tipOwner = el; tipEl.hidden = !el;
+  if (el) { tipEl.innerHTML = el._tip || ''; placeTip(); }
+}
+// Under the bar if there is room, else above it, so it never covers the bar or the icon; markers get it above.
+function placeTip() {
+  const r = tipOwner.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const inBar = barEl.contains(tipOwner);
+  const ref = inBar ? barEl.getBoundingClientRect() : r;
+  const y = inBar ? (ref.bottom + 8 + h < innerHeight ? ref.bottom + 8 : ref.top - h - 8) : (ref.top - h - 6 < 4 ? ref.bottom + 6 : ref.top - h - 6);
+  tipEl.style.transform = `translate(${Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2))}px, ${Math.max(4, y)}px)`;
+}
+function tickTip() {
+  if (!tipOwner) return;
+  if (!tipOwner.isConnected || (tipOwner.classList.contains('mk') && +tipOwner.style.opacity < .3)) setTip(null);
+  else placeTip();
+}
+document.addEventListener('pointerover', (ev) => setTip(ev.target.closest?.('.tipped') || null));
+document.documentElement.addEventListener('pointerleave', () => setTip(null));
+
 // ---------- input ----------
 // A click (not a drag) on the scene: close what's open, or open the square wheel on the floor that was hit.
 // Bodies are never click targets; their pills are.
@@ -584,6 +889,7 @@ let down = null;
 renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; });
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+  if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
   if (W || listEl) return closeAll();
   const ndc = new THREE.Vector2(ev.clientX / innerWidth * 2 - 1, -(ev.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera); ray.far = Infinity;
@@ -594,11 +900,11 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
   const dragged = down && down.b === 2 && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5;
-  if (!dragged) back();
+  if (!dragged) goBack();
 });
 addEventListener('keydown', (ev) => {
   if (/^Digit[1-6]$/.test(ev.code) && W) { const k = +ev.code.slice(5); setHot(k); choose(k, ev.shiftKey); return; }
-  if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); back(); }
+  if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); goBack(); }
 });
 
 // ---------- side panels ----------
@@ -618,13 +924,18 @@ function inspectSquare(n) {
 // ---------- loop ----------
 renderer.setAnimationLoop((now) => {
   controls.update();
+  updateHover();
   for (const e of ents) e.obj.position.lerp(e.target, .15);
   const bat = ents.find((e) => e.id === 'bat');
   bat.obj.position.y = bat.target.y + Math.sin(now / 400) * .08;
   renderer.render(scene, camera);
   updateMarkers();
   updateWheel(now);
+  updateBar(now);
+  tickTip();
 });
+document.querySelectorAll('#seg button').forEach((b) => { b.onclick = () => setMode(b.dataset.m); });
+setMode(startMode);
 </script>
 </body>
 </html>
