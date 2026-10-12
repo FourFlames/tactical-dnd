@@ -23,10 +23,8 @@
   canvas { display: block; position: fixed; inset: 0; }
   #overlay { position: fixed; inset: 0; pointer-events: none; user-select: none; }
   #stems { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #stems line { stroke: #e9e3d3; stroke-width: 1.2; }
-  #stems circle { fill: #e9e3d3; }
-  #stems g { opacity: 0; }
-  #stems .hot line, #stems line.hot { stroke: var(--gold); }
+  #stems line { stroke: #e9e3d3; stroke-width: 1.2; opacity: 0; }
+  #stems line.hot { stroke: var(--gold); }
 
   .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 2px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
   .mk .ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
@@ -134,9 +132,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const COLS = 12, ROWS = 9, FT = 1 / 5;
 const SPIN = () => (document.getElementById('slow').checked ? 600 : 150);
 const NEAR_PX = 170;     // how close the cursor must be for a marker to show
-const STEM_PX = 46;      // stem length from the top of the body to the pill
 const NEAR_BAR_PX = 100; // Bar mode: how close to the body itself before its icon shows
-const stemPx = () => (mode === 'bar' ? 30 : STEM_PX);
 const colName = (c) => String.fromCharCode(65 + c);
 const cellName = (c, r) => colName(c) + (r + 1);
 
@@ -289,10 +285,19 @@ function makeMarker(cls, icon, label) {
   el.className = 'mk ' + cls;
   el.innerHTML = `<span class="ic">${icon}</span><span>${label}</span>`;
   overlay.appendChild(el);
-  const g = document.createElementNS(SVGNS, 'g');
-  g.innerHTML = '<line/><circle r="2"/>';
-  stems.appendChild(g);
-  return { el, g, line: g.firstChild, w: 0, alpha: 0, x: null, y: null };
+  const kink = document.createElementNS(SVGNS, 'line');   // screen-space bit from the stem's top to a pill that was pushed aside
+  stems.appendChild(kink);
+  return { el, kink, stem: makeStem(), w: 0, alpha: 0, x: null, y: null, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
+}
+// The stem is a real line in the world: solid where it is in front, dashed and dimmer where something hides it.
+const STEM_W = .9;   // world length above the top of the body
+function makeStem() {
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, STEM_W, 0)]);
+  const solid = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#e9e3d3', transparent: true, opacity: 0 }));
+  const dash = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: '#e9e3d3', dashSize: .05, gapSize: .05, transparent: true, opacity: 0, depthFunc: THREE.GreaterDepth, depthWrite: false }));
+  dash.computeLineDistances();
+  for (const l of [solid, dash]) { l.visible = false; l.frustumCulled = false; scene.add(l); }
+  return { solid, dash };
 }
 for (const e of ents) {
   if (e.me) continue;
@@ -321,15 +326,35 @@ function toScreen(v) {
   tmp.copy(v).project(camera);
   return { x: (tmp.x + 1) / 2 * innerWidth, y: (1 - tmp.y) / 2 * innerHeight, front: tmp.z < 1 && Math.abs(tmp.x) < 1.15 && Math.abs(tmp.y) < 1.15 };
 }
-// In view = some part of the body (its top or its middle) has a clear line from the camera.
+// In view = some part of the body or of its stem (middle, top, or along the stem) has a clear line from the camera.
 function inView(e) {
-  for (const h of [e.top, e.top / 2]) {
+  for (const h of [e.top, e.top / 2, e.top + STEM_W * .5, e.top + STEM_W]) {
     const p = e.obj.position.clone().setY(e.obj.position.y + h + .02);
     const d = p.distanceTo(camera.position);
     ray.set(camera.position, p.sub(camera.position).normalize()); ray.far = d - .05;
     if (!ray.intersectObjects(occluders, false).length) return true;
   }
   return false;
+}
+
+// 1-D ordered layout: pills keep the order of their stems' x. Each starts centred on its stem; whenever two neighbouring
+// clusters overlap they merge into one packed row centred (least squares) on the stems it holds.
+function spreadLane(list) {
+  const GAP = 5;
+  list.sort((a, b) => a.tx - b.tx);
+  const cl = [];
+  const place = (c) => { c.s = c.items.reduce((t, m, i) => t + m.tx - m.w / 2 - c.offs[i], 0) / c.items.length; };
+  for (const m of list) {
+    let c = { items: [m], offs: [0], w: m.w };
+    place(c);
+    while (cl.length && cl[cl.length - 1].s + cl[cl.length - 1].w + GAP > c.s) {
+      const p = cl.pop();
+      c = { items: [...p.items, ...c.items], offs: [...p.offs, ...c.offs.map((o) => o + p.w + GAP)], w: p.w + GAP + c.w };
+      place(c);
+    }
+    cl.push(c);
+  }
+  for (const c of cl) c.items.forEach((m, i) => { m.tx = c.s + c.offs[i] + m.w / 2; });
 }
 
 function updateMarkers() {
@@ -342,6 +367,8 @@ function updateMarkers() {
     if (!e.mk) continue;
     const s = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top));
     e.anchor = s;
+    e.mk.base.copy(e.obj.position).y += e.top;
+    e.mk.ta = toScreen(tmp.copy(e.mk.base).setY(e.mk.base.y + STEM_W));
     e.cs = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top / 2));
     const sel = W && W.ent === e;
     const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
@@ -373,30 +400,30 @@ function updateMarkers() {
     const m = moreMk[k] ||= Object.assign(makeMarker('more', '+', ''), { key: k });
     m.rest = rest; m.el.lastChild.textContent = `${rest.length} more`;
     const [c, r] = k.split(',').map(Number);
-    m.anchor = toScreen(new THREE.Vector3(c + .5, floorTop(c, r) + .3, r + .5));
+    m.base.set(c + .5, floorTop(c, r) + .3, r + .5); m.ta = toScreen(tmp.copy(m.base).setY(m.base.y + STEM_W));
     m.want = Math.max(...list.slice(0, 5).map((e) => e.want));
     m.el.onclick = (ev) => { ev.stopPropagation(); showMore(m); };
     crowded.add(m);
   }
   for (const m of Object.values(moreMk)) if (!crowded.has(m)) m.want = 0;
   // the square marker exists only while its wheel is open
-  if (W && W.square) { sqMk.anchor = toScreen(W.square.point); sqMk.want = 1; sqMk.el.lastChild.textContent = cellName(W.square.c, W.square.r); }
+  if (W && W.square) { sqMk.base.copy(W.square.point); sqMk.ta = toScreen(tmp.copy(sqMk.base).setY(sqMk.base.y + STEM_W)); sqMk.hasBase = true; sqMk.want = 1; sqMk.el.lastChild.textContent = cellName(W.square.c, W.square.r); }
   else sqMk.want = 0;
 
-  // 3. lay the pills out above their bodies, then push overlapping pills apart sideways
-  const items = [...live.map((e) => e.mk && Object.assign(e.mk, { anchor: e.anchor, wantA: e.want })), ...Object.values(moreMk).map((m) => Object.assign(m, { wantA: m.want })), Object.assign(sqMk, { wantA: sqMk.want })]
-    .filter((m) => m && m.anchor && (m.wantA > 0 || m.alpha > .02));
+  // 3. each pill starts straight above its stem's top; pills on similar screen-y then relax sideways in
+  //    left-to-right order of their stems, moving only as far as they must (clusters pack and centre on their stems)
+  const items = [...live.map((e) => e.mk && Object.assign(e.mk, { wantA: e.want })), ...Object.values(moreMk).map((m) => Object.assign(m, { wantA: m.want })), Object.assign(sqMk, { wantA: sqMk.want })]
+    .filter((m) => m && (m.wantA > 0 || m.alpha > .02) && (m !== sqMk || sqMk.hasBase));
   for (const m of items) {
     if (!m.w) m.w = m.el.offsetWidth || 80;
-    m.tx = m.anchor.x; m.ty = m.anchor.y - stemPx();
+    m.tx = m.ta.x; m.ty = m.ta.y - 13;
   }
-  const act = items.filter((m) => m.wantA > 0);
-  act.sort((a, b) => a.tx - b.tx);
-  for (let it = 0; it < 8; it++) for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
-    const a = act[i], b = act[j];
-    if (Math.abs(a.ty - b.ty) > 26) continue;
-    const over = (a.w + b.w) / 2 + 6 - Math.abs(a.tx - b.tx);
-    if (over > 0) { const s = a.tx <= b.tx ? 1 : -1; a.tx -= s * over / 2; b.tx += s * over / 2; }
+  const act = items.filter((m) => m.wantA > 0).sort((a, b) => a.ty - b.ty);
+  let lane = [];
+  for (let i = 0; i <= act.length; i++) {
+    if (i < act.length && (!lane.length || act[i].ty - lane[lane.length - 1].ty <= 26)) { lane.push(act[i]); continue; }
+    if (lane.length > 1) spreadLane(lane);
+    lane = i < act.length ? [act[i]] : [];
   }
   // 4. draw
   for (const m of items) {
@@ -404,15 +431,22 @@ function updateMarkers() {
     if (m.x === null || m.alpha < .05) { m.x = m.tx; m.y = m.ty; }
     m.x += (m.tx - m.x) * .35; m.y += (m.ty - m.y) * .35;
     const a = m.alpha < .02 ? 0 : m.alpha;
-    m.el.style.opacity = a; m.g.style.opacity = a;
+    m.el.style.opacity = a;
     m.el.style.pointerEvents = a > .4 && !(W && m !== W.mk) ? 'auto' : 'none';
     m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
     m.el.style.visibility = W && m === W.mk ? 'hidden' : '';   // the wheel's hub takes the pill's place
-    const ty = W && m === W.mk ? W.y : m.y + 11;
-    const tx = W && m === W.mk ? W.x : m.x;
-    m.line.setAttribute('x1', m.anchor.x); m.line.setAttribute('y1', m.anchor.y);
-    m.line.setAttribute('x2', tx); m.line.setAttribute('y2', ty);
-    m.g.lastChild.setAttribute('cx', m.anchor.x); m.g.lastChild.setAttribute('cy', m.anchor.y);
+    // the world stem: placed at the base, faded with the pill
+    const hot = m.el.classList.contains('hot');
+    for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
+      l.visible = a > 0; l.position.copy(m.base);
+      l.material.opacity = a * k; l.material.color.set(hot ? '#d8b45a' : '#e9e3d3');
+    }
+    // the kink: from the stem's top to the pill, only when the pill was pushed off it
+    const off = Math.hypot(m.x - m.ta.x, m.y + 13 - m.ta.y);
+    m.kink.style.opacity = a > 0 && off > 4 ? a : 0;
+    m.kink.setAttribute('x1', m.ta.x); m.kink.setAttribute('y1', m.ta.y);
+    m.kink.setAttribute('x2', m.x); m.kink.setAttribute('y2', m.y + 11);
+    m.kink.classList.toggle('hot', hot);
   }
   for (const e of ents) if (e.mk) {
     if (bar) {
@@ -782,7 +816,7 @@ function barSelectSquare(c, r) {
 function barSelectEnt(e) {
   closeMore();
   const sameSq = B && B.square.c === e.c && B.square.r === e.r;
-  const from = e.mk.alpha > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.anchor.x, y: e.anchor.y - stemPx() };
+  const from = e.mk.alpha > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.mk.ta.x, y: e.mk.ta.y - 13 };
   if (!sameSq) B = { square: { c: e.c, r: e.r }, L: [squareRoot({ c: e.c, r: e.r })], scroll: 0, nL: 0, nR: 0 };
   B.ent = e; B.R = [rootFor(e)]; B.fly = from;
   buildBar(sameSq ? 'R' : 'LR');
