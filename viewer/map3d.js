@@ -738,10 +738,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     turnKey = key; followYielded = false;
     if (follow) focusOn(v.current);
   }
+  // Yield to the player's own camera moves (press, drag, zoom), not to a pointer just passing over the map.
   const stopEase = () => { ease = null; followYielded = true; };
   renderer.domElement.addEventListener('pointerdown', stopEase);
-  renderer.domElement.addEventListener('pointermove', stopEase);
-  renderer.domElement.addEventListener('pointerup', stopEase);
+  renderer.domElement.addEventListener('pointermove', (e) => { if (e.buttons) stopEase(); });
   renderer.domElement.addEventListener('wheel', stopEase, { passive: true });
   function stepEase(now) {
     if (!ease) return;
@@ -793,7 +793,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     else if (p && p.cell) onHover(p.cell.x, p.cell.y);
     else onHover(-1, -1);
   });
-  renderer.domElement.addEventListener('pointerleave', () => { hoveredId = null; stopEase(); if (onHover) onHover(-1, -1); });
+  renderer.domElement.addEventListener('pointerleave', () => { hoveredId = null; if (onHover) onHover(-1, -1); });
 
   const wallRay = new THREE.Raycaster();
   function fadeOccludingWalls(dt) {
