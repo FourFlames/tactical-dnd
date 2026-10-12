@@ -14,6 +14,7 @@
 </script>
 <style>
   :root {
+    --sp: 1;
     --bg: #14130f;
     --panel: #1c1b16;
     --panel-2: #232118;
@@ -69,12 +70,12 @@
   .hover { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); height: 18px; margin-top: 6px; }
   .hover b { color: var(--ink); font-weight: 500; }
 
-  .tok { transition: transform .45s cubic-bezier(.3,.7,.3,1); cursor: pointer; }
+  .tok { transition: transform calc(.45s / var(--sp)) cubic-bezier(.3,.7,.3,1); cursor: pointer; }
   .tok .ring-turn { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: .9 } 50% { opacity: .25 } }
   .burning { animation: flicker 0.9s steps(3) infinite; }
   @keyframes flicker { 0% { opacity: .55 } 50% { opacity: .85 } 100% { opacity: .65 } }
-  .trail { stroke-dasharray: 2 5; animation: fade 2.4s forwards; }
+  .trail { stroke-dasharray: 2 5; animation: fade calc(2.4s / var(--sp)) forwards; }
   @keyframes fade { 0% { opacity: .9 } 100% { opacity: 0 } }
 
   /* sidebar */
@@ -124,6 +125,10 @@
   .actionstatus { min-width: 0; margin-bottom: 6px; font: 12px/1.5 var(--sans); }
   .actionticker { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-dim); }
   .resolving { color: var(--gold); }
+  .pbctl { display: flex; gap: 4px; align-items: center; margin-bottom: 6px; font: 11px var(--sans); color: var(--ink-faint); }
+  .pbctl button { background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-dim); padding: 1px 6px; font: inherit; cursor: pointer; }
+  .pbctl button.on { color: var(--gold); border-color: var(--gold); }
+  .pbctl .skip { margin-left: auto; color: var(--gold); }
   .empty { padding: 60px; text-align: center; color: var(--ink-dim); font-family: var(--display); font-size: 22px; }
   .entry.declare { color: var(--party); font-size: 13px; }
   .act textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 14px/1.4 var(--sans); }
@@ -298,14 +303,14 @@
   /* dice + hits */
   .dicetray { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
   .roll { display: flex; align-items: center; gap: 10px; background: rgba(20, 19, 15, .92); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px 8px 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
-    animation: rollin .25s cubic-bezier(.2, 1.4, .4, 1); }
-  .roll.out { animation: rollout .35s forwards; }
+    animation: rollin calc(.25s / var(--sp)) cubic-bezier(.2, 1.4, .4, 1); }
+  .roll.out { animation: rollout calc(.35s / var(--sp)) forwards; }
   @keyframes rollin { from { transform: translateY(-14px) scale(.9); opacity: 0 } }
   @keyframes rollout { to { transform: translateY(-10px); opacity: 0 } }
   .die { width: 46px; height: 46px; position: relative; display: grid; place-items: center; font: 700 19px var(--mono); color: #1b1a15; }
   .die svg { position: absolute; inset: 0; }
   .die span { position: relative; }
-  .die.spin { animation: spin .55s cubic-bezier(.3, .6, .4, 1); }
+  .die.spin { animation: spin calc(.55s / var(--sp)) cubic-bezier(.3, .6, .4, 1); }
   @keyframes spin { 0% { transform: rotate(-200deg) scale(.6) } 70% { transform: rotate(15deg) scale(1.12) } 100% { transform: rotate(0) scale(1) } }
   .die.nat20 { filter: drop-shadow(0 0 8px #ffd56b); }
   .die.nat1 svg polygon { fill: #8a3b2e; }
@@ -314,13 +319,13 @@
   .roll .res { font-weight: 700; letter-spacing: .06em; }
   .roll .res.hit { color: #f07b5f; } .roll .res.ok { color: #6fbf73; } .roll .res.miss { color: var(--ink-faint); } .roll .res.crit { color: #ffd56b; }
   .tok .inner { transform-box: fill-box; }
-  .tok.flash .inner { animation: shake .38s; }
+  .tok.flash .inner { animation: shake calc(.38s / var(--sp)); }
   .tok.flash circle:first-of-type + circle { stroke: #ff6b4f; }
   @keyframes shake { 0%, 100% { transform: translate(0, 0) } 20% { transform: translate(-4px, 1px) } 40% { transform: translate(4px, -1px) } 60% { transform: translate(-3px, 0) } 80% { transform: translate(2px, 1px) } }
-  .dmgnum { font: 800 20px Inter, sans-serif; paint-order: stroke; stroke: #14130f; stroke-width: 4px; animation: rise 1.3s forwards; }
+  .dmgnum { font: 800 20px Inter, sans-serif; paint-order: stroke; stroke: #14130f; stroke-width: 4px; animation: rise calc(1.3s / var(--sp)) forwards; }
   .dmgnum.big { font-size: 28px; }
   @keyframes rise { 0% { transform: translateY(6px) scale(.6); opacity: 0 } 15% { transform: translateY(0) scale(1.15); opacity: 1 } 70% { opacity: 1 } 100% { transform: translateY(-26px); opacity: 0 } }
-  .hitflash { animation: hf .35s forwards; }
+  .hitflash { animation: hf calc(.35s / var(--sp)) forwards; }
   @keyframes hf { from { opacity: .7 } to { opacity: 0 } }
 
   /* offer dialog */
@@ -420,6 +425,7 @@
       <div id="actionTicker" class="actionticker" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div id="dmResolving" class="resolving" role="status" hidden>DM is resolving…</div>
     </div>
+    <div class="pbctl" id="pbctl">Speed <span id="pbSpeeds"></span><button class="skip" id="pbSkip" hidden title="Finish the queued action and show where things are now">Skip to now</button></div>
     <div class="mapzone">
       <div class="mapwrap" id="mapwrap"></div>
       <div class="zoombox" id="zoombox" hidden>
@@ -501,7 +507,7 @@ let me = null;
 const CELL = 48;
 const TOUCH = matchMedia('(hover: none)').matches;
 const NS = 'http://www.w3.org/2000/svg';
-let state = null, selected = null, lastLogLen = 0, svg = null, tokLayer = null, fxLayer = null;
+let state = null, disp = null, selected = null, svg = null, tokLayer = null, fxLayer = null;
 let map3d = null, map3dLoading = null, map3dError = null;
 let hoveredCreature = null;
 let followTurn = (() => { try { return localStorage.getItem('followTurn') !== 'off'; } catch { return true; } })();
@@ -827,8 +833,6 @@ function drawSide(v) {
   drawInit(v);
   drawCard();
   drawLog(v);
-  if (v.log.length !== lastLogLen && !THREE_D) drawTrail([...v.log].reverse().find((e) => e.type === 'move'));
-  lastLogLen = v.log.length;
 }
 
 // Both categories can be shown independently. Rulings belong to both, but render once.
@@ -951,12 +955,13 @@ function drawLog(v) {
     b.classList.toggle('new', !active && latest(filter) > seenT[filter]);
     b.setAttribute('aria-pressed', String(active));
   });
+  moreOlder();
 }
 document.querySelectorAll('#logtabs button[data-filter]').forEach((b) => b.addEventListener('click', () => {
   logFilters[b.dataset.filter] = !logFilters[b.dataset.filter];
   saveLogFilters();
   setSideView('log');
-  if (state && state.log) drawLog(state);
+  if (state && state.log) drawLog(disp || state);
 }));
 document.getElementById('log').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-reveal]');
@@ -965,7 +970,7 @@ document.getElementById('log').addEventListener('click', (event) => {
   logFilters[button.dataset.reveal] = true;
   saveLogFilters();
   if (state && state.log) {
-    drawLog(state);
+    drawLog(disp || state);
     document.querySelector(`#log [data-group="${group}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 });
@@ -1560,58 +1565,171 @@ function drawOffer() {
 }
 
 // ---------- dice and hits ----------
-// Track the append-only public tail rather than timestamps: multiple events can share
-// a timestamp, and loading another encounter can replace or truncate the log.
-function logArrival(log, tracker) {
-  const keys = log.map((e) => JSON.stringify(e));
-  const append = tracker.keys && tracker.keys.length > 0 && tracker.keys.length <= keys.length && tracker.keys.every((k, i) => k === keys[i]);
-  const fresh = append ? log.slice(tracker.keys.length) : [];
-  const reset = !!tracker.keys && !append;
-  tracker.keys = keys;
-  return { fresh, reset };
-}
-const tickerTracker = {}, tickerQueue = [];
-let tickerTimer = null;
+// Every log entry has a number (n). The playback queue is the one consumer: it plays new entries in order
+// (glide, then the dice and hits, then the ticker line) and only then lets the log print them.
+const SPEEDS = [0.5, 1, 2, 4];
+const pb = { played: null, queue: [], cur: null, held: {}, shownN: Infinity, floor: 0, gen: 0, running: false, catchUp: false,
+  older: [], more: true, fetching: false,
+  speed: (() => { try { const k = +localStorage.getItem('animSpeed'); return SPEEDS.includes(k) ? k : 1; } catch { return 1; } })() };
+const ms = (x) => x / pb.speed; // every duration in the fx path goes through this
 const TICKER_ACTIONS = new Set(['turn', 'move', 'attack', 'damage', 'heal', 'roll', 'ruling', 'action', 'condition', 'terrain', 'spawn']);
-function advanceTicker() {
-  const line = document.getElementById('actionTicker'), e = tickerQueue.shift();
-  tickerTimer = null;
-  line.hidden = !e;
-  line.textContent = e ? e.text : '';
-  line.title = e ? e.text : '';
-  if (e) tickerTimer = setTimeout(advanceTicker, 4000);
+const FX_TYPES = ['attack', 'damage', 'heal', 'roll', 'ruling'];
+const sleepers = new Set();
+const sleep = (x) => new Promise((r) => {
+  const done = () => { clearTimeout(t); sleepers.delete(done); r(); }, t = setTimeout(done, ms(x));
+  sleepers.add(done);
+});
+let tickerTimer = null;
+function showTicker(e) {
+  const line = document.getElementById('actionTicker');
+  clearTimeout(tickerTimer);
+  line.hidden = !e; line.textContent = e ? e.text : ''; line.title = e ? e.text : '';
+  if (e) tickerTimer = setTimeout(() => showTicker(null), ms(4000));
 }
-function drawActionStatus() {
-  const arrival = logArrival(state.log || [], tickerTracker);
-  if (arrival.reset) {
-    clearTimeout(tickerTimer); tickerTimer = null; tickerQueue.length = 0;
-    document.getElementById('actionTicker').hidden = true;
-    document.getElementById('actionTicker').textContent = '';
+function setSpeed(k) {
+  pb.speed = k;
+  try { localStorage.setItem('animSpeed', String(k)); } catch { /* private window */ }
+  document.documentElement.style.setProperty('--sp', k);
+  if (map3d) map3d.setSpeed(k);
+  document.querySelectorAll('#pbSpeeds button').forEach((b) => b.classList.toggle('on', +b.dataset.k === k));
+}
+document.getElementById('pbSpeeds').innerHTML = SPEEDS.map((k) => `<button data-k="${k}">${k === 0.5 ? '½' : k}×</button>`).join('');
+document.getElementById('pbSpeeds').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) setSpeed(+b.dataset.k); });
+document.getElementById('pbSkip').addEventListener('click', skipToNow);
+setSpeed(pb.speed);
+
+const animates = (e) => e.type === 'move' && e.data && Array.isArray(e.data.path) && e.data.path.length > 1 && !!state.creatures[e.data.id] && !state.creatures[e.data.id].hidden;
+// While a creature has a move that hasn't played, it stays at that move's start square.
+function rebuildHolds() {
+  const h = {};
+  for (const it of [pb.cur, ...pb.queue]) if (it && it.move && !it.moved && !(it.e.data.id in h)) h[it.e.data.id] = it.e.data.path[0];
+  pb.held = h;
+  document.getElementById('pbSkip').hidden = !(pb.queue.length || pb.cur);
+}
+const floorElev = (c) => (c && c.fog !== 'unknown' ? (c.h || 0) + (c.obj && c.obj.stand ? c.obj.height : 0) : 0);
+// What the map and the log draw: the polled state, with held creatures back at their start square and
+// the log cut off at what has played.
+function display() {
+  if (!state || state.empty || state.error || !state.log) return state;
+  let creatures = state.creatures;
+  if (Object.keys(pb.held).length) {
+    creatures = { ...creatures };
+    for (const [id, cell] of Object.entries(pb.held)) if (creatures[id]) {
+      const p = parseCell(cell), row = state.cells && state.cells[p.y];
+      creatures[id] = { ...creatures[id], pos: cell, elev: floorElev(row && row[p.x]) };
+    }
   }
-  tickerQueue.push(...arrival.fresh.filter((e) => TICKER_ACTIONS.has(e.type)));
-  if (!tickerTimer && tickerQueue.length) advanceTicker();
-  // A stale listening heartbeat alone says nothing about work. Only a declared
-  // action acknowledged by the DM gives us evidence that resolution is underway.
-  const resolving = me && me.dm && !me.dm.listening && (me.intents || []).some((e) => e.handled && !e.done);
-  document.getElementById('dmResolving').hidden = !resolving;
+  const first = state.log.length ? state.log[0].n : Infinity;
+  let log = pb.older.length ? [...pb.older.filter((e) => e.n < first), ...state.log] : state.log;
+  if (pb.queue.length || pb.cur) log = log.filter((e) => e.n <= pb.shownN);
+  return { ...state, creatures, log };
 }
-// New log entries with roll data play in order: the d20 lands, the shot flies (or the attacker
-// lunges), then the target flashes and the damage rises off it.
-let fxBusy = false;
-const fxTracker = {};
-const fxQueue = [];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function queueFx(log) {
-  const arrival = logArrival(log, fxTracker);
-  if (arrival.reset) fxQueue.length = 0;
-  for (const e of arrival.fresh) if (e.data && ['attack', 'damage', 'heal', 'roll', 'ruling'].includes(e.type)) fxQueue.push(e);
-  if (!fxBusy) runFx();
+function resetPlayback() {
+  pb.gen++; pb.queue = []; pb.cur = null; pb.held = {}; pb.floor = 0; pb.older = []; pb.more = true; pb.shownN = Infinity;
+  [...sleepers].forEach((f) => f());
+  if (map3d) map3d.snap();
+  showTicker(null);
+  document.getElementById('dice').innerHTML = '';
+  if (fxLayer) fxLayer.innerHTML = '';
+  rebuildHolds();
 }
-async function runFx() {
-  fxBusy = true;
-  while (fxQueue.length) { try { await playFx(fxQueue.shift()); } catch { /* keep going */ } }
-  fxBusy = false;
+function skipToNow() {
+  const had = pb.queue.length || pb.cur;
+  pb.gen++; pb.queue = []; pb.cur = null; pb.held = {}; pb.shownN = Infinity;
+  [...sleepers].forEach((f) => f());
+  showTicker(null);
+  rebuildHolds();
+  if (had) { render(); if (map3d) map3d.snap(); }
 }
+const estimate = (e) => e.type === 'move' ? 1000 + 150 * (e.data && e.data.path ? e.data.path.length : 1) : e.type === 'attack' ? 1500 : e.type === 'roll' || e.type === 'ruling' ? 650 : FX_TYPES.includes(e.type) ? 300 : TICKER_ACTIONS.has(e.type) ? 500 : 0;
+// Play only the current turn: drop everything queued before the last turn entry, straight into the log.
+function catchUp() {
+  let idx = -1;
+  pb.queue.forEach((it, i) => { if (it.e.type === 'turn') idx = i; });
+  if (idx > 0) {
+    const dropped = pb.queue.splice(0, idx);
+    pb.floor = dropped[dropped.length - 1].e.n;
+    if (!pb.cur) pb.shownN = Math.max(pb.shownN, pb.floor);
+  }
+  rebuildHolds();
+}
+// Called on every refresh, before render: reset on a new game, queue what's new.
+function ingest() {
+  const p = pb.played;
+  if (!state || state.empty || state.error || !state.log) { if (p) resetPlayback(); pb.played = null; return; }
+  const log = state.log, maxN = log.length ? log[log.length - 1].n : 0;
+  if (!p || p.game !== state.game || maxN < p.n) { // first load, another encounter, or a rewound log: nothing replays
+    resetPlayback(); pb.played = { game: state.game, n: maxN }; pb.catchUp = false; return;
+  }
+  const fresh = log.filter((e) => e.n > p.n);
+  if (fresh.length) {
+    if (!pb.queue.length && !pb.cur) pb.shownN = p.n;
+    p.n = maxN;
+    for (const e of fresh) pb.queue.push({ e, move: animates(e), moved: false });
+  }
+  rebuildHolds();
+  if (pb.catchUp || pb.queue.reduce((t, it) => t + estimate(it.e), 0) / pb.speed > 8000) catchUp();
+  pb.catchUp = false;
+  if (pb.queue.length && !pb.running) runPlayback();
+}
+async function runPlayback() {
+  pb.running = true;
+  const gen = pb.gen;
+  try {
+    while (pb.queue.length && gen === pb.gen) {
+      while ((document.hidden || pb.catchUp) && gen === pb.gen) await new Promise((r) => setTimeout(r, 200)); // not while hidden
+      if (gen !== pb.gen || !pb.queue.length) break;
+      const it = pb.cur = pb.queue.shift();
+      rebuildHolds();
+      try { await playItem(it, gen); } catch { /* keep going */ }
+      if (gen !== pb.gen) break;
+      pb.cur = null;
+      pb.shownN = Math.max(it.e.n, pb.floor);
+      rebuildHolds();
+      render();
+    }
+  } finally {
+    pb.running = false;
+    if (pb.queue.length) runPlayback();
+    else if (gen === pb.gen && !pb.cur) { pb.shownN = Infinity; rebuildHolds(); render(); }
+  }
+}
+async function playItem(it, gen) {
+  const e = it.e, alive = () => gen === pb.gen;
+  let fx = false;
+  if (it.move) {
+    const d = e.data;
+    if (THREE_D) { if (map3d) await map3d.glide(d.id, d.path); }
+    else drawTrail(e);
+    if (!alive()) return;
+    it.moved = true; rebuildHolds(); render(); // the token now belongs at its polled square
+    if (!THREE_D) await sleep(450);
+  }
+  if (FX_TYPES.includes(e.type) && e.data) { fx = true; await playFx(e, alive); }
+  if (!alive()) return;
+  if (TICKER_ACTIONS.has(e.type)) { showTicker(e); await sleep(fx ? 250 : 500); }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { pb.catchUp = true; refresh(); } });
+
+// Older entries: when the log is scrolled to its end (the oldest line) or doesn't fill the panel, fetch the next page.
+async function moreOlder() {
+  const box = document.getElementById('log');
+  if (!state || !state.log || !pb.more || pb.fetching || box.scrollHeight - box.scrollTop - box.clientHeight > 60) return;
+  const lows = [...pb.older, ...state.log].map((e) => e.n).filter((n) => n > 0);
+  if (!lows.length) return;
+  const lowest = Math.min(...lows), game = state.game;
+  if (lowest <= 1) { pb.more = false; return; }
+  pb.fetching = true;
+  try {
+    const r = await (await fetch(`/api/log?before=${lowest}&view=${DM ? 'dm' : 'player'}&limit=80`)).json();
+    if (state.game !== game || (r.game || null) !== (game || null)) return;
+    if (!r.log || !r.log.length) pb.more = false;
+    else { pb.older = [...r.log, ...pb.older]; disp = display(); drawLog(disp); }
+  } catch { /* try again on the next scroll */ }
+  finally { pb.fetching = false; }
+}
+document.getElementById('log').addEventListener('scroll', moreOlder);
+
 const D20 = '<svg viewBox="0 0 46 46"><polygon points="23,2 43,13 43,33 23,44 3,33 3,13" fill="#d8b45a" stroke="#8a6a2f" stroke-width="2"/><polygon points="23,9 37,31 9,31" fill="none" stroke="#8a6a2f" stroke-width="1.2" opacity=".6"/></svg>';
 function showRoll({ nat, line, sub, res }) {
   const tray = document.getElementById('dice');
@@ -1623,10 +1741,10 @@ function showRoll({ nat, line, sub, res }) {
   while (tray.children.length > 3) tray.firstChild.remove();
   const num = box.querySelector('.die span');
   let i = 0;
-  const tick = setInterval(() => { num.textContent = 1 + Math.floor(Math.random() * 20); if (++i >= 8) { clearInterval(tick); num.textContent = nat; } }, 60);
-  setTimeout(() => { box.classList.add('out'); setTimeout(() => box.remove(), 400); }, 2600);
+  const tick = setInterval(() => { num.textContent = 1 + Math.floor(Math.random() * 20); if (++i >= 8) { clearInterval(tick); num.textContent = nat; } }, ms(60));
+  setTimeout(() => { box.classList.add('out'); setTimeout(() => box.remove(), ms(400)); }, ms(2600));
 }
-const centerOf = (id) => { const c = state.creatures[id]; if (!c) return null; const p = parseCell(c.pos); return { x: p.x * CELL + CELL / 2, y: p.y * CELL + CELL / 2 }; };
+const centerOf = (id) => { const c = (disp || state).creatures[id]; if (!c) return null; const p = parseCell(c.pos); return { x: p.x * CELL + CELL / 2, y: p.y * CELL + CELL / 2 }; };
 function shoot2d(from, to, dtype) {
   return new Promise((done) => {
     const a = centerOf(from), b = centerOf(to), g = svg && svg.querySelector('#hitfx');
@@ -1634,7 +1752,7 @@ function shoot2d(from, to, dtype) {
     const color = { fire: '#ff8a3d', radiant: '#fff3b0', cold: '#9fe3ff', necrotic: '#b48cff', lightning: '#cfe8ff' }[dtype] || '#e9dcb8';
     const arrow = dtype === 'piercing';
     const shot = arrow ? el('line', { stroke: color, 'stroke-width': 3, 'stroke-linecap': 'round' }, g) : el('circle', { r: 6, fill: color }, g);
-    const dist = Math.hypot(b.x - a.x, b.y - a.y), dur = Math.min(600, 150 + dist * 1.1), born = performance.now();
+    const dist = Math.hypot(b.x - a.x, b.y - a.y), dur = ms(Math.min(600, 150 + dist * 1.1)), born = performance.now();
     const ux = (b.x - a.x) / (dist || 1), uy = (b.y - a.y) / (dist || 1);
     const step = (now) => {
       const k = Math.min(1, (now - born) / dur), x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k - Math.sin(Math.PI * k) * Math.min(40, dist * 0.15);
@@ -1652,7 +1770,7 @@ function bump2d(from, to) {
     const d = Math.hypot(b.x - a.x, b.y - a.y) || 1, ux = (b.x - a.x) / d, uy = (b.y - a.y) / d, born = performance.now();
     let sent = false;
     const step = (now) => {
-      const k = Math.min(1, (now - born) / 300), off = Math.sin(Math.PI * k) * 16;
+      const k = Math.min(1, (now - born) * pb.speed / 300), off = Math.sin(Math.PI * k) * 16;
       g.style.transform = `translate(${ux * off}px, ${uy * off}px)`;
       if (k >= 0.5 && !sent) { sent = true; done(); }
       if (k < 1) requestAnimationFrame(step); else g.style.transform = '';
@@ -1666,22 +1784,24 @@ function hitFx(id, text, { big = false, color = '#ff6b4f', flash = true } = {}) 
   if (!c || !g) return;
   if (flash) {
     const tok = tokLayer.querySelector(`[data-id="${id}"]`);
-    if (tok) { tok.classList.remove('flash'); void tok.getBBox(); tok.classList.add('flash'); setTimeout(() => tok.classList.remove('flash'), 420); }
+    if (tok) { tok.classList.remove('flash'); void tok.getBBox(); tok.classList.add('flash'); setTimeout(() => tok.classList.remove('flash'), ms(420)); }
     const ring = el('circle', { cx: c.x, cy: c.y, r: CELL * 0.45, fill: color, class: 'hitflash' }, g);
-    setTimeout(() => ring.remove(), 400);
+    setTimeout(() => ring.remove(), ms(400));
   }
   const t = el('text', { x: c.x, y: c.y - CELL * 0.45, 'text-anchor': 'middle', fill: color, class: 'dmgnum' + (big ? ' big' : '') }, g);
   t.textContent = text;
-  setTimeout(() => t.remove(), 1300);
+  setTimeout(() => t.remove(), ms(1300));
 }
-async function playFx(e) {
+async function playFx(e, alive = () => true) {
   const d = e.data;
   if (e.type === 'attack') {
     const res = d.hit ? (d.crit ? ['CRIT!', 'crit'] : ['HIT', 'hit']) : ['MISS', 'miss'];
     showRoll({ nat: d.nat, line: `${nameOf(d.attacker)} → ${nameOf(d.target)}`, sub: `${d.weapon}: ${d.total} vs AC ${d.ac}`, res });
     await sleep(560);
+    if (!alive()) return;
     if (d.ranged) await (THREE_D ? (map3d ? map3d.shoot(d.attacker, d.target, d.dtype === 'piercing' ? 'arrow' : d.dtype) : null) : shoot2d(d.attacker, d.target, d.dtype));
     else await (THREE_D ? (map3d ? map3d.bump(d.attacker, d.target) : null) : bump2d(d.attacker, d.target));
+    if (!alive()) return;
     if (d.hit) hitFx(d.target, `-${d.dmg}`, { big: d.crit });
     else hitFx(d.target, 'miss', { flash: false, color: '#b8b09c' });
     await sleep(350);
@@ -1691,6 +1811,13 @@ async function playFx(e) {
     showRoll({ nat: d.nat, line: `${nameOf(d.id)}: ${d.label || 'check'}`, sub: `${d.total}${d.dc !== null && d.dc !== undefined ? ` vs DC ${d.dc}` : ''}`, res: d.ok === null || d.ok === undefined ? null : d.ok ? ['SUCCESS', 'ok'] : ['FAIL', 'miss'] });
     await sleep(650);
   }
+}
+
+function drawResolving() {
+  // A stale listening heartbeat alone says nothing about work. Only a declared
+  // action acknowledged by the DM gives us evidence that resolution is underway.
+  const resolving = me && me.dm && !me.dm.listening && (me.intents || []).some((e) => e.handled && !e.done);
+  document.getElementById('dmResolving').hidden = !resolving;
 }
 
 // ---------- pings ----------
@@ -1727,6 +1854,7 @@ function drawCard() {
 
 function render() {
   if (!state) return;
+  disp = display();
   // A creature that walked out of sight (or was removed) can't stay pointed at.
   if (cursor.id && !(state.creatures && state.creatures[cursor.id])) { cursor.id = null; selected = null; look = null; }
   drawAct();
@@ -1738,10 +1866,10 @@ function render() {
   const blank = state.error ? esc(state.error) : state.empty ? 'No encounter loaded.<br><code>node engine.js load rope-bridge</code>' : null;
   document.getElementById('zoombox').hidden = !!(blank || THREE_D);
   if (blank) { document.getElementById('mapwrap').innerHTML = `<div class="empty">${blank}</div>`; if (map3d) { map3d.dispose(); map3d = null; } svg = null; return; }
-  if (THREE_D) { render3d(); drawSide(state); return; }
+  if (THREE_D) { render3d(); drawSide(disp); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
   if (!svg || svg.dataset.key !== key) { buildSvg(state); svg.dataset.key = key; }
-  drawTerrain(state); drawTokens(state); drawCursor2D(); drawSide(state);
+  drawTerrain(disp); drawTokens(disp); drawCursor2D(); drawSide(disp);
 }
 
 // The 3D map loads three.js from a CDN on first use; the 2D map never needs it.
@@ -1754,7 +1882,7 @@ function render3d() {
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
         map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => selectRef(id, 'map'), onCell: pointCell, onHover: hoverCell });
-        map3d.setFollow(followTurn);
+        map3d.setFollow(followTurn); map3d.setSpeed(pb.speed);
         render();
       }).catch((e) => {
         map3dError = e;
@@ -1763,7 +1891,7 @@ function render3d() {
     }
     return;
   }
-  map3d.update(state, { selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
+  map3d.update(disp, { selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
 }
 
 const followButton = document.getElementById('bFollow');
@@ -1794,14 +1922,16 @@ async function refresh() {
     for (const k of Object.keys(hoverCache)) delete hoverCache[k];
     hoverEpoch++; clearTimeout(hover.timer);
     if (hover.id) hover.timer = setTimeout(() => fetchHover(hover.id), 120);
+    ingest();
     render();
-    drawActionStatus();
-    if (state && state.log) queueFx(state.log);
+    drawResolving();
     if (cursor.id || cursor.cell) fetchLook(); // things moved: what you can tell may have changed
   } catch (e) { /* server restarting */ }
 }
 const es = new EventSource('/events');
 es.onmessage = refresh;
+let esOpened = false;
+es.onopen = () => { if (esOpened) { pb.catchUp = true; refresh(); } esOpened = true; }; // reconnected: play only the current turn
 es.addEventListener('ping', (e) => { try { showPing(JSON.parse(e.data)); } catch { /* ignore */ } });
 refresh();
 // Keeps the "sent 12s ago" clocks honest between pushes.

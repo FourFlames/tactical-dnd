@@ -99,9 +99,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let flames = [], waters = [], lights = [];
   let framed = false, wallsLow = false;
   let lastState = null, lastSelected = null, hoveredId = null;
-  let previousLog = null, turnKey = null, follow = true, followYielded = false;
-  const moveQueue = [];
-  let activeMove = null;
+  let turnKey = null, follow = true, followYielded = false, speed = 1;
+  const glides = new Map(); // creature id -> resolve, for glides still walking
   const wallMeshes = [], wallMaterials = [];
   const tokenObjs = new Map();
   let trail = null;
@@ -501,6 +500,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     for (const [id, g] of tokenObjs) if (!seen.has(id)) {
       tokens.remove(g); tokenObjs.delete(id);
+      if (glides.has(id)) { const r = glides.get(id); glides.delete(id); r(); }
       g.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
         if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
@@ -514,68 +514,44 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     fx.remove(trail); trail.geometry.dispose(); trail.material.dispose(); trail = null;
   }
   function resetMoves() {
-    moveQueue.length = 0; activeMove = null; clearTrail();
+    clearTrail(); settleGlides();
     for (const g of tokenObjs.values()) {
       g.userData.path = [];
       if (g.userData.target) g.position.copy(g.userData.target);
       g.userData.applied = null;
     }
   }
-  const logKey = (entry) => JSON.stringify(entry);
-  // Ordered snapshot overlap handles batched moves and equal timestamps. Replaced
-  // or rewound history establishes a new baseline instead of replaying a load.
-  function playMoves(v) {
-    const entries = v.log || [], keys = entries.map(logKey);
-    let fresh = [];
-    if (previousLog !== null) {
-      let overlap = Math.min(previousLog.length, keys.length);
-      while (overlap && !previousLog.slice(-overlap).every((key, i) => key === keys[i])) overlap--;
-      const oldTail = previousLog[previousLog.length - 1], oldTime = oldTail ? JSON.parse(oldTail).t : null;
-      if (overlap) fresh = entries.slice(overlap);
-      else if (!previousLog.length || (entries.length && entries[0].t > oldTime)) fresh = entries;
-      else { resetMoves(); turnKey = null; }
-    }
-    previousLog = keys;
-    if (fresh.some((entry) => entry.type === 'scene')) {
-      resetMoves(); turnKey = null; hoveredId = null; ease = null; return;
-    }
-    for (const entry of fresh) {
-      const data = entry.data;
-      if (entry.type !== 'move' || !data || !Array.isArray(data.path) || data.path.length < 2) continue;
-      const c = v.creatures[data.id];
-      if (!c || c.hidden) continue;
-      const pts = data.path.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(v, p.x, p.y) * FT, p.y + 0.5); });
-      const g = tokenObjs.get(data.id);
-      if (g && !(activeMove && activeMove.id === data.id) && !moveQueue.some((move) => move.id === data.id)) {
-        // Hold each waiting token at its first path square, rather than showing the
-        // polled destination and snapping back when its place in the queue arrives.
-        g.position.copy(pts[0]); g.userData.applied = null;
-      }
-      moveQueue.push({ id: data.id, pts });
-    }
-    for (let i = moveQueue.length - 1; i >= 0; i--)
-      if (!v.creatures[moveQueue[i].id] || v.creatures[moveQueue[i].id].hidden) moveQueue.splice(i, 1);
-    if (activeMove && (!v.creatures[activeMove.id] || v.creatures[activeMove.id].hidden)) {
-      const g = tokenObjs.get(activeMove.id);
-      if (g) { g.userData.path = []; g.position.copy(g.userData.target); g.userData.applied = null; }
-      activeMove = null; clearTrail();
-    }
+  function settleGlides() { const rs = [...glides.values()]; glides.clear(); rs.forEach((r) => r()); }
+  // Walks a token along a path of cells; resolves on arrival (at once if it has no token). The
+  // caller decides when it starts, so a goblin's move plays in log order, not on arrival.
+  function glide(id, cells) {
+    const g = tokenObjs.get(id);
+    if (!g || !lastState || !cells || cells.length < 2) return Promise.resolve();
+    const pts = cells.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(lastState, p.x, p.y) * FT, p.y + 0.5); });
+    if (glides.has(id)) glides.get(id)();
+    g.position.copy(pts[0]); g.userData.applied = null; g.userData.path = pts.slice(1);
+    clearTrail();
+    const geometry = new THREE.BufferGeometry().setFromPoints(pts.map((p) => p.clone().setY(p.y + 0.06)));
+    trail = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
+    trail.computeLineDistances(); trail.userData.born = performance.now(); fx.add(trail);
+    // Frames stop in a background tab or on a lost GL context; never let one glide wedge the queue.
+    let len = 0; for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+    return new Promise((done) => {
+      const finish = () => { clearTimeout(timer); if (glides.get(id) === finish) glides.delete(id); done(); };
+      const timer = setTimeout(() => {
+        if (glides.get(id) !== finish) return;
+        g.userData.path = []; g.position.copy(pts[pts.length - 1]); g.userData.applied = null; finish();
+      }, (len / 7 * 1000 + 1500) / speed);
+      glides.set(id, finish);
+    });
   }
-  function startNextMove(now) {
-    if (activeMove) {
-      const g = tokenObjs.get(activeMove.id);
-      if (g && g.userData.path.length) return;
-      activeMove = null;
-    }
-    while (moveQueue.length) {
-      const move = moveQueue.shift(), g = tokenObjs.get(move.id);
-      if (!g) continue;
-      activeMove = move;
-      g.position.copy(move.pts[0]); g.userData.applied = null; g.userData.path = move.pts.slice(1);
-      clearTrail();
-      const geometry = new THREE.BufferGeometry().setFromPoints(move.pts.map((p) => p.clone().setY(p.y + 0.06)));
-      trail = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
-      trail.computeLineDistances(); trail.userData.born = now; fx.add(trail); break;
+  // Finish every glide where it stands: tokens jump to their (already updated) targets.
+  function snap() {
+    clearTrail(); settleGlides();
+    for (const g of tokenObjs.values()) {
+      g.userData.path = [];
+      if (g.userData.target) g.position.copy(g.userData.target);
+      g.userData.applied = null;
     }
   }
 
@@ -653,7 +629,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       let light = null;
       if (look.glow) { light = new THREE.PointLight(look.color, 3, 3); mesh.add(light); }
       fx.add(mesh);
-      const dur = Math.min(650, 160 + a.distanceTo(b) * 45), born = performance.now(), arc = Math.min(1.2, a.distanceTo(b) * 0.08);
+      const dur = Math.min(650, 160 + a.distanceTo(b) * 45) / speed, born = performance.now(), arc = Math.min(1.2, a.distanceTo(b) * 0.08);
+      setTimeout(done, dur + 400); // no frames (background tab): don't hold up the playback queue
       const at = (k) => a.clone().lerp(b, k).setY(a.y + (b.y - a.y) * k + Math.sin(Math.PI * k) * arc);
       effects.push((now) => {
         const k = Math.min(1, (now - born) / dur), p = at(k);
@@ -673,9 +650,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (dir.lengthSq() < 1e-6) return done();
       dir.normalize();
       const born = performance.now();
+      setTimeout(done, 550 / speed); // as above
       let prev = 0, hitSent = false;
       effects.push((now) => {
-        const k = Math.min(1, (now - born) / 300), off = Math.sin(Math.PI * k) * 0.38;
+        const k = Math.min(1, (now - born) * speed / 300), off = Math.sin(Math.PI * k) * 0.38;
         g.userData.offset.addScaledVector(dir, off - prev); prev = off;
         if (k >= 0.5 && !hitSent) { hitSent = true; done(); }
         return k >= 1;
@@ -695,7 +673,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     fx.add(s);
     const born = performance.now(), base = g.position.clone().setY(g.position.y + 1.4);
     effects.push((now) => {
-      const k = (now - born) / 1300;
+      const k = (now - born) * speed / 1300;
       s.position.copy(base).setY(base.y + k * 0.8);
       s.material.opacity = k < 0.7 ? 1 : Math.max(0, 1 - (k - 0.7) / 0.3);
       if (k < 1) return false;
@@ -711,7 +689,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const m = g.userData.sprite.material, born = performance.now();
     let prev = new THREE.Vector3();
     effects.push((now) => {
-      const k = Math.min(1, (now - born) / (big ? 520 : 380));
+      const k = Math.min(1, (now - born) * speed / (big ? 520 : 380));
       m.color.setRGB(1, 0.35 + 0.65 * k, 0.3 + 0.7 * k);
       const amp = (1 - k) * (big ? 0.12 : 0.07), off = new THREE.Vector3(Math.sin(now / 18) * amp, 0, Math.cos(now / 23) * amp);
       g.userData.offset.add(off.clone().sub(prev)); prev = off;
@@ -842,7 +820,6 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
     for (const w of waters) { const m = w.material.map; m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; }
-    startNextMove(now);
     for (const g of tokens.children) {
       const u = g.userData;
       // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
@@ -850,10 +827,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       u.applied = u.offset.clone();
       if (u.path.length) {
         const next = u.path[0];
-        const step = 7 * dt;
+        const step = 7 * speed * dt;
         const d = g.position.distanceTo(next);
         if (d <= step) { g.position.copy(next); u.path.shift(); } else g.position.lerp(next, step / d);
-      } else if (u.target && !(activeMove && activeMove.id === u.id) && !moveQueue.some((move) => move.id === u.id)) g.position.lerp(u.target, 1 - Math.exp(-dt * 10));
+        if (!u.path.length && glides.has(u.id)) { const r = glides.get(u.id); glides.delete(u.id); r(); }
+      } else if (u.target && !glides.has(u.id)) g.position.lerp(u.target, 1 - Math.exp(-dt * 10 * speed));
       g.position.add(u.applied);
       u.turnRing.material.opacity = 0.55 + Math.sin(t * 4) * 0.35;
     }
@@ -869,7 +847,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
     }
     if (trail) {
-      const age = (now - trail.userData.born) / 2400;
+      const age = (now - trail.userData.born) * speed / 2400;
       trail.material.opacity = Math.max(0, 0.9 * (1 - age));
       if (age >= 1) clearTrail();
     }
@@ -887,19 +865,19 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   return {
     update(v, { selected, cursor, hovered } = {}) {
       const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
-      if (encounterChanged) { previousLog = null; turnKey = null; resetMoves(); hoveredId = null; ease = null; framed = false; }
+      if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = null; ease = null; framed = false; }
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
       updateTokens(v, selected);
-      playMoves(v);
       followTurn(v);
       setCursor(v, cursor);
     },
     ping: addPing,
-    setPath, shoot, bump, hit,
+    setPath, shoot, bump, hit, glide, snap,
+    setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
