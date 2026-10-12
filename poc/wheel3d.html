@@ -26,6 +26,7 @@
   #stems line { stroke: #e9e3d3; stroke-width: 1.2; opacity: 0; }
   #stems line.hot { stroke: var(--gold); }
 
+  body.dragging .mk, body.dragging .arr, body.dragging #bar { pointer-events: none !important; filter: grayscale(.8) brightness(.7); }
   .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 2px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
   .mk .ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
   .mk.party .ic { border-color: var(--party); color: var(--party); }
@@ -155,7 +156,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(6, 0, 4.8);
 controls.enableDamping = true;
 controls.maxPolarAngle = 1.38;
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };   // LMB is our ground drag (below)
 controls.update();
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -385,7 +386,7 @@ function layoutRow(r, mem, now) {
 
 function updateMarkers() {
   const bar = mode === 'bar';
-  const busy = !!W;
+  const busy = wheelUp();
   const now = performance.now();
   // 1. which bodies are on screen, in view, and near the cursor
   for (const e of ents) {
@@ -405,7 +406,8 @@ function updateMarkers() {
       e.gate = B?.ent !== e && s.front && !(B && !B.ent);
     } else {
       const ramp = Math.max(nearRamp(e, NEAR_SCORE_PILLS), Math.min(1, Math.max(0, (60 - pillD) / 30)));
-      if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
+      if (W?.ent === e) want = busy ? 0 : 1;   // folded wheel: its pill stays as the selection display
+      else if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = !busy && s.front;
     }
     e.want = want;
@@ -441,7 +443,7 @@ function updateMarkers() {
     m.x += (m.tx - m.x) * .35; m.y += (m.ty - m.y) * .35;
     const a = m.alpha < .02 ? 0 : m.alpha;
     m.el.style.opacity = a;
-    m.el.style.pointerEvents = a > .4 && !W ? 'auto' : 'none';
+    m.el.style.pointerEvents = a > .4 && !wheelUp() ? 'auto' : 'none';
     m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
     // the world stem: placed at the base, faded with the pill
     const hot = m.el.classList.contains('hot');
@@ -468,7 +470,7 @@ function updateMarkers() {
     for (const [el, d, x] of [[r.aL, -1, r.lx], [r.aR, 1, r.rx]]) {
       const cnt = d < 0 ? r.t : r.n - r.cap - r.t, en = cnt > 0;
       el.style.opacity = a * (en ? 1 : .4);
-      el.style.pointerEvents = en && a > .4 && !W ? 'auto' : 'none';
+      el.style.pointerEvents = en && a > .4 && !wheelUp() ? 'auto' : 'none';
       el.style.transform = `translate(${x}px, ${r.y - 11}px)`;
       el.classList.toggle('off', !en);
       el.classList.toggle('hot', r.hot === d);
@@ -480,7 +482,7 @@ function updateMarkers() {
     if (bar) {
       const mate = B && !B.ent && B.square.c === e.c && B.square.r === e.r;
       glow(e, hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want);
-    } else glow(e, W?.ent === e ? .45 : hoverEnt === e ? .55 : W ? 0 : .16 * e.want);
+    } else glow(e, W?.ent === e ? .45 : hoverEnt === e ? .55 : wheelUp() ? 0 : .16 * e.want);
     e.mk.el.classList.toggle('hot', hoverEnt === e);
   }
 }
@@ -589,6 +591,7 @@ function squareRoot(s) {
 // ---------- Wheel mode: a pip wheel around the body (poc/pip-wheel.js) ----------
 // The ring is centred on what was picked and sized from its on-screen footprint, so the body stays visible inside it.
 let W = null;   // { ent } or { square }
+const wheelUp = () => !!W && !pw.folded;   // open and unfolded: it owns the pointer
 const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel() });
 const camRight = new THREE.Vector3();
 function bodyAnchor(e) { const h = shapeOf(e); return { x: h.x, y: h.y, r: Math.max(h.rx, h.ry) }; }
@@ -624,7 +627,7 @@ function runSlot(s) {
 let startMode = 'wheel';
 try { if (localStorage.getItem('wheel3d.mode') === 'bar') startMode = 'bar'; } catch (e) { /* storage blocked: default */ }
 const HINTS = {
-  wheel: 'Click a body or its pill, or the floor · aim anywhere toward a pip, click · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
+  wheel: 'Click a body or its pill, or the floor · aim anywhere toward a pip, click · drag pans, right-drag orbits · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike',
   bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
 };
 function setMode(m) {
@@ -675,9 +678,9 @@ function cellAt(x, y) {
 }
 let lastBody = null;
 function updateHover() {
-  const free = !W && !mouse.ui && !mouse.btn && mouse.x > -1e3;
+  const free = !wheelUp() && !mouse.ui && !mouse.btn && mouse.x > -1e3;
   if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
-  hoverEnt = W ? null : mkHover || lastBody;
+  hoverEnt = wheelUp() ? null : mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
   drawHits();
 }
@@ -878,14 +881,34 @@ document.documentElement.addEventListener('pointerleave', () => setTip(null));
 // A click (not a drag) on the scene picks the body under the cursor, else the floor. While the pip wheel is open it
 // takes clicks itself, so none reach here.
 let down = null;
-renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; });
+// LMB drags the ground: the floor point under the cursor stays under it. RMB orbits, the wheel zooms (OrbitControls).
+const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+let grab = null;
+function groundAt(x, y) {
+  ray.setFromCamera(new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), camera);
+  return ray.ray.intersectPlane(ground, new THREE.Vector3());
+}
+renderer.domElement.addEventListener('pointerdown', (ev) => {
+  down = { x: ev.clientX, y: ev.clientY, b: ev.button };
+  if (ev.button === 0) { grab = groundAt(ev.clientX, ev.clientY); renderer.domElement.setPointerCapture(ev.pointerId); }
+});
+addEventListener('pointermove', (ev) => {
+  if (!down || !ev.buttons) return;
+  if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) document.body.classList.add('dragging');
+  if (!grab || !(ev.buttons & 1)) return;
+  const p = groundAt(ev.clientX, ev.clientY);
+  if (!p || p.distanceTo(grab) > 30) return;   // near the horizon the plane runs away; skip those moves
+  const d = grab.clone().sub(p);
+  camera.position.add(d); controls.target.add(d); camera.updateMatrixWorld();
+});
+addEventListener('pointerup', () => { grab = null; document.body.classList.remove('dragging'); }, true);
 renderer.domElement.addEventListener('pointerup', (ev) => {
-  if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+  if (!down || ev.button !== 0 || ev.pwHandled || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
   const e = bodyAt(ev.clientX, ev.clientY, lastBody);
   if (e) return openWheelOn(e);
   const cell = cellAt(ev.clientX, ev.clientY);
-  if (cell) openWheelOnSquare(cell.c, cell.r);
+  if (cell) openWheelOnSquare(cell.c, cell.r); else closeAll();
 });
 addEventListener('contextmenu', (ev) => {
   ev.preventDefault();

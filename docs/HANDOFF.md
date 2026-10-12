@@ -32,6 +32,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-11: 3D mockup: LMB drags the ground, RMB orbits; pills grey out and pass the mouse during drags; the wheel no longer swallows pointerup (stuck drag); far from the wheel it folds and keeps the selection.
 - 2026-10-11: 3D mockup: snug pill rows with hover-scroll arrows (Sonnet); hover/click by screen-space ellipses scored on the fly ("hit areas" toggle shows them).
 - 2026-10-11: 3D mockup: pip wheel replaces the pie (direction-aimed, body stays visible); world-space stems dashed when hidden, order-keeping pills; Bar mode toggle (Sonnet).
 - 2026-10-11: 3D wheel try-out `poc/wheel3d.html`: pills show near the cursor and only in line of sight; pills in a shared square push apart (replaces the 2D fan-out), >6 → "+N more".

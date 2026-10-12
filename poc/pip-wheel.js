@@ -8,7 +8,10 @@
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
 //   pw.open(menu, () => ({ x, y, r }));   // anchor in client px, polled every frame; r = target's screen radius
 //
-// While open the wheel owns clicks (not drags), keys 1-6, Esc/Backspace and right-click, in the capture phase.
+// While open the wheel owns clicks (not drags), keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
+// stops a pointerup (camera controls must see every button release); a click it used is marked `ev.pwHandled`.
+// Move the pointer well away and the wheel folds (fades into the target) without closing: keys still work, and clicks
+// pass through to the page, so the host can pick something else. Coming back unfolds it.
 
 const CSS = `
 .pw { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 20; pointer-events: none; font: 12px/1.2 system-ui, sans-serif; }
@@ -51,7 +54,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function open(menu, anchor) {
     close(true);
-    S = { stack: [menu], anchor, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
+    S = { stack: [menu], anchor, folded: false, fold: 0, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
     el.hidden = false;
     build();
     spin(+1, .5);
@@ -100,8 +103,10 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     S.R = Math.max(62, Math.min(130, (a.r || 30) + 30));
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
-    S.r = S.R * (.6 + .4 * ease(g));
-    // keep the pips (not every chip) on screen, so the ring stays centred on the target as long as possible
+    S.fold += ((S.folded ? 1 : 0) - S.fold) * .3;
+    S.r = S.R * (.6 + .4 * ease(g)) * (1 - .55 * S.fold);
+    el.style.opacity = 1 - S.fold;
+    el.style.visibility = S.fold > .97 ? 'hidden' : '';    // keep the pips (not every chip) on screen, so the ring stays centred on the target as long as possible
     const padX = S.R + 18, padY = S.R + 18;
     S.x = Math.max(padX, Math.min(innerWidth - padX, a.x));
     S.y = Math.max(padY, Math.min(innerHeight - padY, a.y));
@@ -134,7 +139,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
   function aim(mx, my) {
     const dx = mx - S.x, dy = my - S.y, d = Math.hypot(dx, dy);
     if (d < S.R * .5) return { zone: 'dead' };
-    if (d > S.R + 150) return { zone: 'out' };
+    if (d > S.R + (S.folded ? 110 : 150)) return { zone: 'out' };   // hysteresis, so the fold doesn't flicker
     const ang = Math.atan2(dy, dx) * 180 / Math.PI - S.offset;
     const k = ((Math.round((ang + 90) / 60) % 6) + 6) % 6 + 1;
     return { zone: 'ring', k: slotOf(k) ? k : 0 };
@@ -160,7 +165,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     close(true);
     onLeaf(s);
   }
-  function drill(menu) { S.stack.push(menu); build(); spin(+1); }
+  function drill(menu) { S.folded = false; S.stack.push(menu); build(); spin(+1); }
   function back() {
     if (!S) return;
     if (S.stack.length === 1) return close();
@@ -169,21 +174,26 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   let down = null, last = null;
   const listeners = [
-    ['pointermove', (ev) => { last = { x: ev.clientX, y: ev.clientY }; const a = aim(ev.clientX, ev.clientY); setHot(a.zone === 'ring' ? a.k : 0); }],
+    ['pointermove', (ev) => {
+      last = { x: ev.clientX, y: ev.clientY };
+      if (ev.buttons) return;   // dragging the camera: leave the wheel as it is
+      const a = aim(ev.clientX, ev.clientY);
+      S.folded = a.zone === 'out';
+      setHot(a.zone === 'ring' ? a.k : 0);
+    }],
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
     ['pointerup', (ev) => {
       // a drag (e.g. orbiting the camera) passes through; a click is ours
-      if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
-      ev.stopPropagation();
-      if (ev.button !== 0) return;
+      if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
       const a = aim(ev.clientX, ev.clientY);
-      if (a.zone === 'out') close();
-      else if (a.zone === 'dead') back();
+      if (a.zone === 'out') return;
+      ev.pwHandled = true;
+      if (a.zone === 'dead') back();
       else if (a.k) choose(a.k, ev.shiftKey);
     }],
-    ['click', (ev) => ev.stopPropagation()],
     ['contextmenu', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
+      if (S.folded) return;
       if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) <= 5) back();
     }],
     ['keydown', (ev) => {
@@ -192,5 +202,5 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }],
   ];
 
-  return { open, close: () => close(), back, get isOpen() { return !!S; } };
+  return { open, close: () => close(), back, get isOpen() { return !!S; }, get folded() { return !!S?.folded; } };
 }
