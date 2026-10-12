@@ -248,7 +248,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
       const k = hit(ev.clientX, ev.clientY);
       if (k) { ev.pwHandled = true; return choose(k, ev.shiftKey); }
-      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; return onInnerClick(ev) || back(); }
+      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; const r = onInnerClick(ev) || back(); if (!S) ev.pwClosed = true; return r; } // pwClosed: the click folded the wheel away
       close();
     }],
     ['contextmenu', (ev) => {

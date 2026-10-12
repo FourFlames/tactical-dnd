@@ -570,7 +570,7 @@ function buildSvg(v) {
     return { x: Math.floor(p.x / CELL), y: Math.floor(p.y / CELL) };
   };
   svg.addEventListener('mousemove', (e) => { const c = cellAt(e); hoverCell(c.x, c.y); });
-  svg.addEventListener('click', (e) => { if (eatClick) return; const c = cellAt(e); pointCell(c.x, c.y); if (c.x >= 0 && c.y >= 0 && c.x < state.width && c.y < state.height) wheelTap(cellName(c.x, c.y)); });
+  svg.addEventListener('click', (e) => { if (eatClick) return; const c = cellAt(e); if (c.x >= 0 && c.y >= 0 && c.x < state.width && c.y < state.height) clickRef(cellName(c.x, c.y), 'map', [c.x, c.y]); });
   svg.addEventListener('mouseleave', () => { document.getElementById('hover').textContent = ''; hoverPath(-1, -1); });
   wrap.appendChild(svg);
   view2d = { base: { x: -pad, y: -pad, w: W + pad + 4, h: H + pad + 4 } };
@@ -604,18 +604,24 @@ function focusRef(ref) {
   };
   panAnim = requestAnimationFrame(step);
 }
-// Click selects; a second click on the same thing within 400 ms also centres the camera. Timed by hand because
-// the first click often redraws whatever was clicked, so the browser's dblclick never fires. ref: creature id or cell id.
-let lastRef = {};
-function selectRef(ref, src) {
-  const now = performance.now(), dbl = lastRef.ref === ref && now - lastRef.t < 400, isCreature = !!(state && state.creatures[ref]);
-  lastRef = dbl ? {} : { ref, t: now };
-  const point = () => isCreature ? pointCreature(ref, src !== 'map') : pointSquare(ref);
-  if (!dbl) return point();
-  if (isCreature ? cursor.id !== ref : cursor.cell !== ref) point(); // the second click toggled it off
-  focusRef(ref);
+// One shared click rule for portraits, log chips, 2D tokens/cells and 3D: the first click acts at once (selects; on the map a
+// seated player's wheel opens); a second click on the same ref within 400 ms is a double and adds focusRef on top, leaving
+// the selection as the first click made it. Timed by hand because the first click often redraws what was clicked.
+let lastTap = {};
+function tap(ref) {
+  const now = performance.now(), dbl = lastTap.ref === ref && now - lastTap.t < 400;
+  lastTap = dbl ? {} : { ref, t: now };
+  return dbl;
 }
-document.addEventListener('click', (e) => { const r = e.target.closest && e.target.closest('[data-ref]'); if (r) selectRef(r.dataset.ref, 'ref'); });
+// ref: creature id or cell id. src 'map' also opens the wheel for a seated player. cellXY: the 2D/3D cell click, which selects via pointCell.
+function clickRef(ref, src, cellXY) {
+  const dbl = tap(ref), isCreature = !!(state && state.creatures[ref]);
+  if (dbl) { closeWheel(); focusRef(ref); return; } // the wheel folds back into the token while the camera glides there
+  if (cellXY) pointCell(cellXY[0], cellXY[1]); else if (isCreature) pointCreature(ref, src !== 'map'); else pointSquare(ref);
+  if (src === 'map') wheelTap(ref);
+}
+// preventDefault: a chip inside a <summary> would otherwise toggle its details and shift the log under a double-click
+document.addEventListener('click', (e) => { const r = e.target.closest && e.target.closest('[data-ref]'); if (r) { e.preventDefault(); clickRef(r.dataset.ref, 'ref'); } });
 function zoomBy(f, clientX, clientY) {
   if (!svg || !view2d) return;
   const vb = view2d.vb, r = svg.getBoundingClientRect();
@@ -742,7 +748,7 @@ function drawTokens(v) {
     if (!g) {
       g = el('g', { class: 'tok', 'data-id': c.id }, tokLayer);
       g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
-      g.addEventListener('click', (e) => { e.stopPropagation(); if (eatClick) return; selectRef(c.id, 'map'); wheelTap(c.id); });
+      g.addEventListener('click', (e) => { e.stopPropagation(); if (eatClick) return; clickRef(c.id, 'map'); });
     }
     g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
     g.innerHTML = '';
@@ -939,7 +945,7 @@ function drawLog(v) {
       const count = group.entries.filter(COMBAT).length;
       const links = group.linked ? `<div class="loglink"><span>Linked story &amp; details · ${count} event${count === 1 ? '' : 's'}</span>${!logFilters.story ? '<button type="button" data-reveal="story">Show story</button>' : ''}</div>` : '';
       const collapsed = logFilters.story && !logFilters.combat ? group.entries.filter((e) => COMBAT(e) && !STORY.has(e.type)) : [];
-      const details = collapsed.length ? `<details class="storydetails" data-detail-key="${esc(String(group.entries[0].t) + ':' + i)}"><summary>${collapsed.length} detail${collapsed.length === 1 ? '' : 's'}${collapsed.length === 1 ? ' · ' + esc(collapsed[0].type) : ''}${collapsed.map((e) => mechanicsChips(e, true)).join('')}</summary>${collapsed.slice().reverse().map(logEntry).join('')}</details>` : '';
+      const details = collapsed.length ? `<details class="storydetails" data-detail-key="${esc(String(group.entries[0].n ?? group.entries[0].t + ':' + i))}"><summary>${collapsed.length} detail${collapsed.length === 1 ? '' : 's'}${collapsed.length === 1 ? ' · ' + esc(collapsed[0].type) : ''}${collapsed.map((e) => mechanicsChips(e, true)).join('')}</summary>${collapsed.slice().reverse().map(logEntry).join('')}</details>` : '';
       return `<div class="loggroup${group.linked ? ' linked' : ''}" data-group="${i}">${links}${shown.slice().reverse().map(logEntry).join('')}${details}</div>`;
     }).reverse().join('') || `<div class="logempty">${!logFilters.story && !logFilters.combat ? 'Both filters are off. Turn on Story or Details to see the log.' : 'No events match these filters yet.'}</div>`;
     log.querySelectorAll('details').forEach((d) => { d.open = openDetails.has(d.dataset.detailKey); });
@@ -1561,6 +1567,7 @@ function loadWheel() {
     return pw;
   }));
 }
+if (TOKEN) loadWheel(); // ready before the first click
 function closeWheel() { W = null; wheelSeq++; if (pw) pw.close(); }
 // The wheel's anchor, polled every frame: the creature's (or cell's) centre in client px and its on-screen radius.
 function wheelAnchor(ref) {
@@ -1579,19 +1586,15 @@ function wheelAnchor(ref) {
   };
 }
 
-// A tap on the map: after the same 400 ms single/double split as selectRef, the wheel opens. A double-click focuses
-// the camera (selectRef) and never opens it.
-let tap = {};
-function wheelTap(ref) {
-  if (!wheelOk()) return;
-  const now = performance.now(), dbl = tap.ref === ref && now - tap.t < 400;
-  clearTimeout(tap.timer);
-  if (dbl) { tap = {}; closeWheel(); return; }
-  tap = { ref, t: now, timer: setTimeout(() => openWheelAt(ref), 400) };
-}
+// The wheel opens at once on a map click (clickRef calls this); a double never gets here, it closes the wheel instead.
+function wheelTap(ref) { if (wheelOk()) openWheelAt(ref); }
 // A click the wheel used must not also select what is under it.
 addEventListener('pointerdown', () => { eatClick = false; }, true);
-addEventListener('pointerup', (e) => { eatClick = !!e.pwHandled; if (!eatClick && pw && pw.isOpen && pw.folded) closeWheel(); }); // a click away from a folded wheel dismisses it
+addEventListener('pointerup', (e) => {
+  eatClick = !!e.pwHandled;
+  if (e.pwClosed && lastTap.ref && performance.now() - lastTap.t < 400) { const r = lastTap.ref; lastTap = {}; focusRef(r); } // the wheel itself folded on click 2: the double adds the glide
+  if (!eatClick && pw && pw.isOpen && pw.folded) closeWheel(); // a click away from a folded wheel dismisses it
+});
 document.addEventListener('focusin', (e) => { if (pw && pw.isOpen && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) closeWheel(); }); // keys 1-6 are for the wheel
 
 function selectOnly(ref) { // the click may have toggled the selection off; the card should show what the wheel is on
@@ -2232,7 +2235,7 @@ function render3d() {
       const wrap = document.getElementById('mapwrap');
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
-        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => { selectRef(id, 'map'); wheelTap(id); }, onCell: (x, y) => { pointCell(x, y); wheelTap(cellName(x, y)); }, onHover: hoverCell });
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => clickRef(id, 'map'), onCell: (x, y) => clickRef(cellName(x, y), 'map', [x, y]), onHover: hoverCell });
         map3d.setFollow(followTurn); map3d.setSpeed(pb.speed);
         render();
       }).catch((e) => {
