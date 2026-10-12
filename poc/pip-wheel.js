@@ -6,7 +6,8 @@
 // is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes.
 //
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
-//   pw.open(menu, () => ({ x, y, r }));   // anchor in client px, polled every frame; r = target's screen radius
+//   pw.open(menu, () => ({ x, y, r, s }));   // anchor in client px, polled every frame; r = target's screen radius,
+//                                            // s = optional size factor for the whole wheel (eased)
 //
 // While open the wheel owns its clicks, keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
 // stops a pointerup (camera controls must see every button release); a click it used is marked `ev.pwHandled`.
@@ -124,14 +125,15 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (t >= 1) S.spin = null;
     }
     const a = S.anchor();
-    S.R = Math.max(70, Math.min(120, (a.r || 30) + D / 2 + GAP));   // 70: the least that keeps neighbouring captions apart
+    S.k = (S.k || a.s || 1) + ((a.s || 1) - (S.k || a.s || 1)) * .25;
+    S.r = Math.max(70, Math.min(120, (a.r || 0) + D / 2 + GAP));   // layout radius; 70: the least that keeps neighbouring captions apart
+    S.R = S.r * S.k;   // on screen
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
     // How open it looks is spatial: `near` (1 on or inside the ring or an icon, 0 at NEAR px past the nearest one) drives size .85→1,
     // opacity and colour; the easing below only smooths frame to frame.
     S.vis += ((S.hot ? 1 : S.near) - S.vis) * .35;   // on a button (even its caption) it is always full
-    S.r = S.R;
-    S.scale = (.6 + .4 * ease(g)) * (.85 + .15 * S.vis);
+    S.scale = (.6 + .4 * ease(g)) * (.85 + .15 * S.vis) * S.k;
     const op = S.vis ** 1.5;
     el.style.opacity = op;
     el.style.filter = S.vis < .99 ? `grayscale(${(1 - S.vis).toFixed(2)})` : '';
@@ -178,10 +180,10 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
   // too): its icon circle or its caption, grown by `slack` px. Else 0.
   function hit(mx, my, slack = 4) {
     for (const b of S.btns) {
-      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t);
-      const c = b.querySelector('.c'), cw = c.offsetWidth / 2, cy = iy + D / 2 + 2;
-      if (Math.hypot(mx - ix, my - iy) < D / 2 + slack
-        || (Math.abs(mx - ix) < cw + slack && my > cy - slack && my < cy + c.offsetHeight + slack)) return +b.dataset.k;
+      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t), k = S.k;
+      const c = b.querySelector('.c'), cw = c.offsetWidth / 2 * k, cy = iy + (D / 2 + 2) * k;
+      if (Math.hypot(mx - ix, my - iy) < D / 2 * k + slack
+        || (Math.abs(mx - ix) < cw + slack && my > cy - slack && my < cy + c.offsetHeight * k + slack)) return +b.dataset.k;
     }
     return 0;
   }
@@ -190,7 +192,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     let d = away(mx, my);
     for (const b of S.btns) {
       const t = rad(slotAngle(+b.dataset.k) + S.offset);
-      d = Math.min(d, Math.hypot(mx - S.x - S.R * Math.cos(t), my - S.y - S.R * Math.sin(t)) - D / 2);
+      d = Math.min(d, Math.hypot(mx - S.x - S.R * Math.cos(t), my - S.y - S.R * Math.sin(t)) - D / 2 * S.k);
     }
     return Math.max(0, d);
   }

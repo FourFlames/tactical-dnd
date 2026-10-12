@@ -740,7 +740,16 @@ const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeW
   // inside the ring, a click on another body (a square-mate, a flier above) switches the wheel to it
   onInnerClick: (ev) => { const e = bodyAt(ev.clientX, ev.clientY, lastBody); if (!e || e === W?.ent) return false; openWheelOn(e); return true; } });
 const camRight = new THREE.Vector3();
-function bodyAnchor(e) { const h = shapeOf(e); return { x: h.x, y: h.y, r: Math.max(h.rx, h.ry) }; }
+// The wheel sits at a fixed spot relative to the gold selection ring: its centre, raised a quarter of the model's
+// height (fliers: their own middle). It scales a little with the ring's size on screen, .85-1.15, never all the way.
+function bodyAnchor(e) {
+  const p = e.obj.position, foot = e.alt ? p.y + e.top / 2 : floorTop(e.c, e.r) + Math.min(e.top * .25, .35);
+  const c = toScreen(tmp.set(p.x, foot, p.z));
+  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const edge = toScreen(tmp.set(p.x, foot, p.z).addScaledVector(camRight, Math.min(.48, e.half * 1.35 + .04)));
+  const ringPx = Math.hypot(edge.x - c.x, edge.y - c.y);
+  return { x: c.x, y: c.y, r: 0, s: Math.max(.85, Math.min(1.15, (ringPx / 17) ** .35)) };
+}
 function squareAnchor(c, r) {
   const y = floorTop(c, r), m = toScreen(new THREE.Vector3(c + .5, y, r + .5));
   const a = toScreen(new THREE.Vector3(c, y, r)), b = toScreen(new THREE.Vector3(c + 1, y, r + 1));
