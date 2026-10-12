@@ -19,6 +19,14 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - Branch: `playable-1`. Pushed: hidden turns + initiative strip; minds talk menus; `TDND_DATA` sandbox.
 - Card 1 merged into `playable-1` (`08db108`).
 - Wheel mockups: `poc/wheel.html` (2D) and `poc/wheel3d.html` (3D; Wheel mode = pip wheel `poc/pip-wheel.js` around the body, Bar mode = action bar under the square), open with `preview_start poc` (port 5175). Waiting on the user's sign-off on the feel before Card 5.
+- 3D mockup map, for tweaking (`poc/wheel3d.html` unless noted):
+  - Hover: `shapeOf`/`hoverScores`/`bodyAt` (screen ellipse incl. footprint, score <1 = inside, 20% stickiness); "hit areas" toggle draws them.
+  - Highlight: `hlStep` (fresnel rim, floor halo, gold ring sized from `e.half`, capped at the square; ~100 ms snap); "Highlight" panel, saved in localStorage `wheel3d.hl`.
+  - Markers: equal world stems (`STEM_W`, Line2, dashed when hidden), icon on the stem top, label above; tracing a stem (≤11 px) holds hover, gold + spark; top of stem → icon mode (that square's icons spread by a fixed-pass force layout, stems lean).
+  - Pip wheel (`poc/pip-wheel.js`): icons on a hexagon, title caption under each, details in one tooltip; anchored by `bodyAnchor` to the gold ring (centre + ¼ height), size .85-1.15; folds by unsigned distance to the nearest grey line (`NEAR` 96 px), pops back on full-size ring/icons (+`GRACE` 10); clicking inside the ring re-picks a square-mate (`onInnerClick`).
+  - Rook (`me`) is selectable: self wheel, status strip `.rk`, full sheet in `#card`, movement spent by moves.
+  - Controls: LMB drags the ground, RMB orbits, wheel zooms; pills grey out while dragging.
+  - Work style: small edits directly; bigger ones go to a Sonnet with a precise spec, one agent per file at a time.
 - Next card: **3**.
 
 ## Cards (in order; each fits one session)
