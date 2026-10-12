@@ -75,6 +75,18 @@
   #log:empty, #card:empty { display: none; }
   [hidden] { display: none !important; }
   #overlay { z-index: 5; } .hud { z-index: 2; }
+  /* highlight settings: closed by default, tiny */
+  #hl { right: 8px; bottom: 8px; width: 224px; padding: 3px 8px; font-size: 11px; color: var(--ink-dim); }
+  #hl > summary { cursor: pointer; color: var(--ink-dim); user-select: none; }
+  #hl[open] { max-height: calc(100vh - 60px); overflow-y: auto; }
+  #hl h6 { margin: 6px 0 2px; font: 600 10px/1.2 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--gold); }
+  #hl label { display: flex; align-items: center; gap: 5px; min-height: 18px; }
+  #hl label > span { flex: 1; }
+  #hl input[type=range] { width: 74px; height: 12px; margin: 0; accent-color: var(--gold); }
+  #hl input[type=color] { width: 26px; height: 16px; padding: 0; border: 1px solid var(--line); background: none; }
+  #hl output { width: 30px; text-align: right; color: var(--ink-faint); font: 10px ui-monospace, monospace; }
+  #hl button { all: unset; cursor: pointer; margin-top: 6px; padding: 1px 9px; border: 1px solid var(--line); border-radius: 6px; }
+  #hl button:hover { border-color: var(--gold); color: var(--gold); }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .seg button { all: unset; cursor: pointer; padding: 1px 9px; color: var(--ink-dim); font-size: 11px; }
   .seg button.on { background: var(--gold); color: #14130f; font-weight: 600; }
@@ -129,6 +141,7 @@
 </div>
 <div class="hud" id="card"></div>
 <div class="hud" id="log"></div>
+<details class="hud" id="hl"><summary>Highlight</summary></details>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -248,6 +261,70 @@ function body(e) {
   scene.add(g);
   return g;
 }
+// ---------- highlight: a faint, growing approach that snaps to "picked" ----------
+// Four layers, switchable: fresnel rim (shader), floor halo, floor graphic (picked only), and the old flat emissive.
+const HL0 = { fre: true, halo: true, gfx: true, old: false,
+  apC: '#d8b45a', apInt: .35, gamma: 2.2, range: 3, full: 1,
+  pkC: '#ffe08a', pkInt: 1.3, snap: 100, over: true,
+  frePow: 2.5, freBias: 0, grow: true, growCurve: 1.3 };
+const HL_KEY = 'wheel3d.hl';
+const S = { ...HL0 };
+try { const o = JSON.parse(localStorage.getItem(HL_KEY) || '{}'); for (const k in HL0) if (typeof o[k] === typeof HL0[k]) S[k] = o[k]; } catch {}
+const hlSave = () => { try { localStorage.setItem(HL_KEY, JSON.stringify(S)); } catch {} };
+function hlTex(n, draw) {
+  const c = document.createElement('canvas'); c.width = c.height = n;
+  draw(c.getContext('2d'), n);
+  return new THREE.CanvasTexture(c);
+}
+const haloTex = hlTex(128, (g, n) => {
+  const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+  r.addColorStop(0, 'rgba(255,255,255,.3)'); r.addColorStop(.55, 'rgba(255,255,255,.85)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, n, n);
+});
+const gfxTex = hlTex(256, (g, n) => {   // a thin ring with four bold brackets on the diagonals
+  g.strokeStyle = '#fff'; g.lineCap = 'round';
+  g.globalAlpha = .45; g.lineWidth = 2; g.beginPath(); g.arc(n / 2, n / 2, n * .4, 0, 7); g.stroke();
+  g.globalAlpha = 1; g.lineWidth = 9;
+  for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(n / 2, n / 2, n * .4, Math.PI * (.25 + i / 2) - .42, Math.PI * (.25 + i / 2) + .42); g.stroke(); }
+});
+const flat = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+const flatMat = (map) => new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+function hlAttach(e) {
+  const fu = e.fu = { uRimC: { value: new THREE.Color() }, uRimK: { value: 0 }, uRimP: { value: 2.5 }, uRimB: { value: 0 } };
+  e.obj.traverse((o) => {
+    if (!o.isMesh) return;
+    o.material.onBeforeCompile = (sh) => {   // facing-ratio rim added to the emissive term
+      Object.assign(sh.uniforms, fu);
+      sh.fragmentShader = 'uniform vec3 uRimC; uniform float uRimK, uRimP, uRimB;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+         totalEmissiveRadiance += uRimC * uRimK * mix(uRimB, 1., pow(1. - abs(dot(normalize(vNormal), normalize(vViewPosition))), uRimP));`);
+    };
+  });
+  e.halo = new THREE.Mesh(flat, flatMat(haloTex)); e.gfx = new THREE.Mesh(flat, flatMat(gfxTex));
+  for (const m of [e.halo, e.gfx]) { m.visible = false; m.renderOrder = 1; m.frustumCulled = false; scene.add(m); }
+  Object.assign(e, { apL: 0, pr: 0, lvl: 0, pk: 0 });
+}
+const easeBack = (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+const easeOut = (t) => 1 - (1 - t) ** 3;
+const cA = new THREE.Color(), cB = new THREE.Color();
+// tg: 0 / .55 (square-mate) / 1 (hovered or selected); p: approach 0..1 (already smoothed in e.apL)
+function hlStep(e, tg, dt) {
+  e.lvl += (tg - e.lvl) * .4;
+  const up = tg > 0;
+  e.pr = up ? Math.min(1, e.pr + dt / S.snap) : Math.max(0, e.pr - dt / (S.snap * .6));
+  e.pk = e.lvl * (up && S.over ? easeBack(e.pr) : easeOut(e.pr));
+  const kk = Math.min(e.pk, 1), a0 = S.apInt * Math.pow(e.apL, S.gamma), I = Math.max(0, a0 + (S.pkInt - a0) * e.pk), on = I > .003;
+  cA.set(S.apC).lerp(cB.set(S.pkC), kk);
+  const fu = e.fu;
+  fu.uRimK.value = S.fre && on ? I * 1.8 : 0; fu.uRimP.value = S.frePow; fu.uRimB.value = S.freBias; fu.uRimC.value.copy(cA);
+  const R = Math.max(e.half, .3) * 1.3 + .1, p = e.obj.position, y = floorTop(e.c, e.r);
+  const h = e.halo, g = e.gfx;
+  h.visible = S.halo && on;
+  if (h.visible) { h.material.color.copy(cA); h.material.opacity = Math.min(1, I * .5); h.scale.setScalar(R * 3.4 * (1.25 - .25 * e.pk)); h.position.set(p.x, y + .015, p.z); }
+  g.visible = S.gfx && kk > .01;
+  if (g.visible) { g.material.color.copy(cA); g.material.opacity = Math.min(1, kk * S.pkInt * .8); g.scale.setScalar(R / .4 * (1.5 - .5 * e.pk)); g.position.set(p.x, y + .025, p.z); g.rotation.y = e.pr < 1 ? (1 - e.pr) * .9 : 0; }
+}
+
 // Where each thing stands: things sharing a square spread out within it.
 function layout() {
   const groups = {};
@@ -265,7 +342,7 @@ function layout() {
     for (const e of list.filter((x) => x.alt)) e.target = new THREE.Vector3(e.c + .5, floorTop(e.c, e.r) + e.alt * FT, e.r + .5);
   }
   for (const e of ents) if (!e.obj) {
-    e.obj = body(e); e.obj.position.copy(e.target);
+    e.obj = body(e); e.obj.position.copy(e.target); hlAttach(e);
   }
 }
 layout();
@@ -435,19 +512,26 @@ function updateMarkers() {
     let want = 0;
     if (bar) {
       // direct hover shows the icon at full; "near" fades it in (only while nothing is selected)
-      const ramp = Math.max(nearRamp(e, NEAR_SCORE), Math.min(1, Math.max(0, (60 - pillD) / 30)));
+      const ramp = Math.min(1, Math.max(0, (60 - pillD) / 30));   // the pill itself only shows once picked; this keeps it while the cursor travels to it
       if (B?.ent === e) want = 0;   // its icon is in the bar
       else if (B && !B.ent && B.square.c === e.c && B.square.r === e.r) want = 1;
       else if (s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = B?.ent !== e && s.front && !(B && !B.ent);
     } else {
-      const ramp = Math.max(nearRamp(e, NEAR_SCORE_PILLS), Math.min(1, Math.max(0, (60 - pillD) / 30)));
+      const ramp = Math.min(1, Math.max(0, (60 - pillD) / 30));
       if (W?.ent === e) want = busy ? 0 : 1;   // folded wheel: its pill stays as the selection display
       else if (!busy && s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
       e.gate = !busy && s.front;
     }
     if (e.me && s.front && !busy && B?.ent !== e) want = Math.max(want, .55);   // you are always on the map, dimmer from afar
     e.want = want;
+    // approach: 0 far .. 1 when picked (or at the `full` score); not while a wheel or the bar is up
+    let ap = 0;
+    if (!busy && !(bar && B) && s.front) {
+      const q = Math.min(1, (S.range - e.hv.s) / Math.max(.05, S.range - S.full));
+      if (hoverEnt === e) ap = 1; else if (q > 0 && inView(e)) ap = Math.min(q, .97);
+    }
+    e.apL += (ap - e.apL) * .35; if (e.apL < .002) e.apL = 0;
   }
   // 1b. a row stays whole: its pills scrolled out of view (or far from the cursor) follow the row's strongest one
   const keep = new Map();
@@ -484,7 +568,7 @@ function updateMarkers() {
     m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
     // the world stem: placed at the base, faded with the pill
     const hot = m.el.classList.contains('hot');
-    for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
+    if (!m.ent) for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
       l.visible = a > 0; l.position.copy(m.base);
       l.material.opacity = a * k; l.material.color.set(hot ? '#d8b45a' : '#e9e3d3');
     }
@@ -515,12 +599,25 @@ function updateMarkers() {
       el._tip = en ? `<b>${cnt} more</b> to the ${d < 0 ? 'left' : 'right'}<br>Hover to scroll` : '';
     }
   }
+  const dt = Math.min(50, now - (updateMarkers.t ?? now)); updateMarkers.t = now;
   for (const e of ents) if (e.mk) {
-    if (bar) {
-      const mate = B && !B.ent && B.square.c === e.c && B.square.r === e.r;
-      glow(e, hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want);
-    } else glow(e, W?.ent === e ? .45 : hoverEnt === e ? .55 : wheelUp() ? 0 : .16 * e.want);
-    e.mk.el.classList.toggle('hot', hoverEnt === e);
+    const mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
+    const sel = W?.ent === e || B?.ent === e;
+    hlStep(e, hoverEnt === e || sel ? 1 : mate ? .55 : 0, dt);
+    // legacy flat emissive, same strengths as before
+    if (S.old) glow(e, bar ? (hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want) : (W?.ent === e ? .45 : hoverEnt === e ? .55 : wheelUp() ? 0 : .16 * e.want));
+    else glow(e, 0);
+    // the world stem grows with the approach; it is full once the pill is there
+    const m = e.mk, a = m.alpha < .02 ? 0 : m.alpha;
+    const len = Math.max(S.grow ? Math.pow(e.apL, S.growCurve) : 1, Math.min(1, a * 2));
+    const op = Math.max(a, .55 * Math.min(1, e.apL * (S.grow ? 4 : 1)));
+    const vis = op > .01 && len > .01;
+    cB.set('#e9e3d3').lerp(cA.set(S.pkC), Math.min(e.pk, 1));
+    for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
+      l.visible = vis;
+      if (vis) { l.position.copy(m.base); l.scale.y = len; l.material.opacity = op * k; l.material.color.copy(cB); }
+    }
+    m.el.classList.toggle('hot', hoverEnt === e);
   }
 }
 
@@ -690,7 +787,6 @@ const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : null);
 // inside. Where ellipses overlap, the body whose centre the cursor is relatively nearer wins: move toward the one you
 // mean. Line of sight (the costly part) is only checked for bodies the cursor is inside, best first.
 const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = .8;
-const NEAR_SCORE = 2.5, NEAR_SCORE_PILLS = 4;   // faint glow / pills fade in below these scores
 function shapeOf(e) {
   const p = e.obj.position, c = toScreen(tmp.copy(p).setY(p.y + e.top / 2));
   const t = toScreen(tmp.copy(p).setY(p.y + e.top)), b = toScreen(p);
@@ -706,7 +802,6 @@ function hoverScores(x, y) {
     h.s = h.front ? Math.hypot((x - h.x) / h.rx, (y - h.y) / h.ry) : Infinity;
   }
 }
-const nearRamp = (e, limit) => Math.max(0, Math.min(1, (limit - (e.hv?.s ?? Infinity)) / (limit - 1.2)));
 // The body at (x, y). `cur` (the last pick) holds on until another body scores clearly better, so edges don't flicker.
 function bodyAt(x, y, cur) {
   hoverScores(x, y);
@@ -1087,6 +1182,29 @@ function updateTint() {
   if (!on || tint._k === k) return;
   tint._k = k;
   for (const m of tint.children) m.visible = mvNeed(5 * Math.max(Math.abs(m.userData.c - P.c), Math.abs(m.userData.r - P.r))) <= P.move;
+}
+
+// ---------- highlight settings panel ----------
+{
+  const spec = [['Composition'], ['fre', 'Fresnel rim'], ['halo', 'Floor halo'], ['gfx', 'Picked ring'], ['old', 'Old flat glow'],
+    ['Approach'], ['apC', 'Colour'], ['apInt', 'Max intensity', 0, 1, .01], ['gamma', 'Curve (γ)', .5, 5, .1], ['range', 'Starts at', 1.5, 6, .1], ['full', 'Full at', .6, 1.2, .05],
+    ['Picked'], ['pkC', 'Colour'], ['pkInt', 'Intensity', .2, 3, .05], ['snap', 'Snap (ms)', 30, 400, 5], ['over', 'Overshoot'],
+    ['Fresnel'], ['frePow', 'Power (theta)', .5, 6, .1], ['freBias', 'Bias', 0, .8, .02],
+    ['Stem'], ['grow', 'Grows with approach'], ['growCurve', 'Grow curve', .5, 3, .1]];
+  const el = document.getElementById('hl'), ins = [];
+  const put = (v, k) => { for (const [i, o] of ins) if (k === undefined || i.dataset.k === k) { if (i.type === 'checkbox') i.checked = S[i.dataset.k]; else i.value = S[i.dataset.k]; if (o) o.value = (+S[i.dataset.k]).toFixed(2).replace(/\.?0+$/, ''); } };
+  for (const [k, label, min, max, step] of spec) {
+    if (!label) { el.insertAdjacentHTML('beforeend', `<h6>${k}</h6>`); continue; }
+    const type = typeof HL0[k] === 'boolean' ? 'checkbox' : k.endsWith('C') ? 'color' : 'range';
+    const lb = document.createElement('label'), i = document.createElement('input'), o = type === 'range' ? document.createElement('output') : null;
+    lb.innerHTML = `<span>${label}</span>`; i.type = type; i.dataset.k = k;
+    if (type === 'range') Object.assign(i, { min, max, step });
+    i.oninput = () => { S[k] = type === 'checkbox' ? i.checked : type === 'range' ? +i.value : i.value; put(0, k); hlSave(); };
+    lb.append(...(o ? [i, o] : [i])); el.append(lb); ins.push([i, o]);
+  }
+  const rb = document.createElement('button'); rb.textContent = 'Reset';
+  rb.onclick = () => { Object.assign(S, HL0); put(); hlSave(); };
+  el.append(rb); put();
 }
 
 // ---------- loop ----------
