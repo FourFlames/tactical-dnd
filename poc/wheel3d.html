@@ -161,6 +161,8 @@ const ents = [
   { id: 'sword', name: 'Shortsword', kind: 'object', item: true, c: 4, r: 5 },
 ];
 for (let i = 0; i < 9; i++) ents.push({ id: 'rat' + (i + 1), name: 'Rat ' + (i + 1), kind: 'enemy', rat: true, c: 9, r: 6, ac: 10, hp: 1 });
+// the horrible square: a swarm packed shoulder to shoulder
+for (let i = 0; i < 36; i++) ents.push({ id: 'swarm' + (i + 1), name: 'Swarm rat ' + (i + 1), kind: 'enemy', rat: true, c: 7, r: 7, ac: 10, hp: 1 });
 
 const me = () => ents.find((e) => e.me);
 const dist = (a, b) => 5 * Math.max(Math.abs(a.c - b.c), Math.abs(a.r - b.r), Math.round(((a.alt || 0) - (b.alt || 0)) / 5));
@@ -328,7 +330,11 @@ function layout() {
     ground.forEach((e, i) => {
       let ox = 0, oz = 0;
       if (ground.length > 1) {
-        if (e.rat) { ox = (i % 3 - 1) * .3; oz = (Math.floor(i / 3) - 1) * .3; }
+        if (e.rat) {   // a grid as tight as the count needs, with a fixed wobble so it doesn't look drilled
+          const n = Math.ceil(Math.sqrt(ground.length)), sp = .9 / n;
+          e.sz = Math.min(1, sp / .3);   // smaller rats when packed tighter than 3 across
+          ox = (i % n - (n - 1) / 2) * sp + Math.sin(i * 12.9898) * sp * .2; oz = (Math.floor(i / n) - (n - 1) / 2) * sp + Math.cos(i * 78.233) * sp * .2;
+        }
         else if (e.item) { ox = -.28; oz = .25; }
       }
       e.target = new THREE.Vector3(e.c + .5 + ox, floorTop(e.c, e.r), e.r + .5 + oz);
@@ -336,7 +342,8 @@ function layout() {
     for (const e of list.filter((x) => x.alt)) e.target = new THREE.Vector3(e.c + .5, floorTop(e.c, e.r) + e.alt * FT, e.r + .5);
   }
   for (const e of ents) if (!e.obj) {
-    e.obj = body(e); e.obj.position.copy(e.target); hlAttach(e);
+    e.obj = body(e); e.obj.position.copy(e.target);
+    if (e.sz < 1) { e.obj.scale.setScalar(e.sz); e.top *= e.sz; e.half *= e.sz; } hlAttach(e);
   }
 }
 layout();
@@ -388,7 +395,7 @@ function makeMarker(cls, glyph, label) {
   lb.className = 'lb'; lb.innerHTML = label; lbLayer.appendChild(lb);
   const el = document.createElement('div');
   el.className = 'mk tipped ' + cls; el.textContent = glyph; icLayer.appendChild(el);
-  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
+  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, big: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
     shown: false, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
 }
 ents.forEach((e, i) => {
@@ -430,9 +437,10 @@ function inView(e) {
 // Icon mode: hovering an icon, or tracing a stem to its top, spreads the icons of everything in that square a little. A fixed
 // number of relaxation passes from the stem tops each frame (no running simulation), so it is stable while orbiting. Each
 // icon's offset is turned back into world space at its stem top's depth, so the stem leans to it: no screen-space lines.
-let iconMode = null, escHold = false;   // { c, r, list, pin } or null (graphic mode)
-let pre = null;   // the last 15% of a traced stem blends into icon mode: { list, pin, k } with k 0..1
+let iconMode = null, escHold = false;   // { c, r, list, pin, from (the last icon hovered), full } or null (graphic mode)
+let pre = null;   // the last 15% of a traced stem blends into icon mode: { list, pin, tr (the traced one), k 0..1, full }; `full` = spreadLayout
 const SPREAD_D = 26, SPREAD_EXIT = 50;
+const SPREAD = false;   // icon mode pushes packed icons apart (spreadLayout); off for now: icons stay on their stem tops
 // `pin` (the icon you came in by) keeps its place; the others move around it
 function spreadLayout(list, pin) {
   const home = list.map((e) => e.mk.ta), p = home.map((h) => ({ x: h.x, y: h.y }));
@@ -455,9 +463,9 @@ function worldAt(x, y, ref) {   // the point under screen (x, y) on the camera-f
   camera.getWorldDirection(camF);
   return rayD.clone().multiplyScalar(tmp.copy(ref).sub(camera.position).dot(camF) / rayD.dot(camF)).add(camera.position);
 }
-function enterSpread(e) {
+function enterSpread(e, pin = e) {
   const list = ents.filter((o) => o.c === e.c && o.r === e.r);
-  if (list.length > 1) iconMode = { c: e.c, r: e.r, list, pin: e };
+  if (list.length > 1) iconMode = { c: e.c, r: e.r, list, pin, from: e };
   pre = null;
 }
 const inSpread = (e) => iconMode?.list.includes(e);
@@ -505,7 +513,8 @@ function updateMarkers() {
     if (busy || mouse.x < x0 || mouse.x > x1 || mouse.y < y0 || mouse.y > y1) iconMode = null;
   }
   const spr = iconMode || pre, sk = iconMode ? 1 : pre?.k || 0;
-  const offs = spr ? spreadLayout(spr.list, spr.pin).map((o) => ({ x: o.x * sk, y: o.y * sk })) : null;
+  if (spr) spr.full = SPREAD ? spreadLayout(spr.list, spr.pin) : spr.list.map(() => ({ x: 0, y: 0 }));
+  const offs = spr ? spr.full.map((o) => ({ x: o.x * sk, y: o.y * sk })) : null;
   // 3. draw: the stem grows with the approach, the icon rides its top from 40% growth, the label grows out of the icon near the end
   for (const e of ents) {
     const m = e.mk, sel = W?.ent === e || B?.ent === e, mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
@@ -521,16 +530,19 @@ function updateMarkers() {
     const ik = sstep(.35, .7, r), op = m.op = ik * m.dim;
     m.el.style.opacity = op < .02 ? 0 : op;
     m.el.style.pointerEvents = ik > .6 && !busy && m.front ? 'auto' : 'none';
-    m.el.style.transform = `translate(${m.x}px, ${m.y}px) scale(${.6 + .4 * ik})`;
+    // the icon you're on in icon mode is bigger; a traced one grows into that with the blend
+    m.big += ((iconMode ? +(hoverEnt === e) : pre?.tr === e ? pre.k : 0) - m.big) * .3;
+    const sc = (.6 + .4 * ik) * (1 + .3 * m.big);
+    m.el.style.transform = `translate(${m.x}px, ${m.y}px) scale(${sc})`;
     m.el.classList.toggle('hot', hoverEnt === e); m.lb.classList.toggle('hot', hoverEnt === e);
     // the label: always above its icon
-    // in a crowd of icons (graphic mode) only the hovered one is named
-    const crowd = !iconMode && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
+    // in a crowd of icons only the hovered one is named (icon mode too, unless it spreads them)
+    const crowd = !(iconMode && SPREAD) && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
     m.lab += (((!bar && !crowd) ? sstep(.65, 1, r) : 0) - m.lab) * .3; if (m.lab < .01) m.lab = 0;
     if (!m.w) m.w = m.lb.offsetWidth;
     m.lb.style.opacity = m.lab * m.dim;
     m.lb.style.clipPath = `inset(0 ${50 * (1 - m.lab)}% round 6px)`;
-    m.lb.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 22}px)`;
+    m.lb.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11 * sc - 11}px)`;
     m.el._lab = m.lab;
     // the stem: gold and wider from the body up to the trace point (all of it for the icon and the selection)
     const tracing = trace.e === e && !iconMode;
@@ -542,7 +554,7 @@ function updateMarkers() {
     m.shown = sop > .05 && r > .3 && !busy && m.front && !(bar && B?.ent === e);
     if (tracing && m.shown) {   // the spark rides the gold's tip
       spark.visible = true; spark.position.copy(pD);
-      spark.scale.setScalar(.0125 * (1 + .25 * Math.sin(now / 45) + .15 * Math.sin(now / 17)));
+      spark.scale.setScalar(.0125 * (1 + .08 * Math.sin(now / 45) + .05 * Math.sin(now / 17)));
       spark.material.opacity = .85 + .15 * Math.sin(now / 31);
     }
     e.want = m.gp;
@@ -775,15 +787,42 @@ function traceAt(x, y) {
   let best = null, bd = TRACE_R, bt = 0;
   const cur = trace.e || lastBody;
   if (!wheelUp()) for (const e of ents) {
-    const m = e.mk, x0 = e.anchor.x, y0 = e.anchor.y, dx = m.x - x0, dy = m.y - y0, l2 = dx * dx + dy * dy;
-    if (!m.shown || l2 < 64) continue;
+    if (pre && e !== pre.tr) continue;   // mid-blend only the traced stem counts
+    if (!e.mk.shown) continue;
     if (e !== cur && ents.some((o) => o !== e && o.hv.s < 1)) continue;   // a stem doesn't steal the cursor from a body it is over, unless it is the one being followed
-    const t = Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / l2));
-    const d = Math.hypot(x - x0 - t * dx, y - y0 - t * dy) * (e === cur ? .7 : 1);
-    if (d < bd) { bd = d; best = e; bt = t; }
+    const g = stemT(e, x, y);
+    if (g.l2 < 64) continue;
+    const d = g.d * (e === cur ? .7 : 1);
+    if (d < bd) { bd = d; best = e; bt = g.t; }
   }
   trace.e = best; trace.t = bt;
   return best;
+}
+// Where (x, y) sits along e's stem on screen: t up from the body, d off it. In a spread the icon leans toward its spread
+// place by the blend, and the blend follows t, so t is found by a few fixed-point steps (the pull is weak; it settles).
+function stemT(e, x, y) {
+  const m = e.mk, x0 = e.anchor.x, y0 = e.anchor.y, ux = m.x - m.ox, uy = m.y - m.oy;   // ux, uy: the upright top
+  const s = iconMode || pre, j = s?.full ? s.list.indexOf(e) : -1, f = j >= 0 ? s.full[j] : null;
+  let k = iconMode ? 1 : pre?.k || 0, t = 0, d = 0, l2 = 0;
+  for (let i = 0; i < (f ? 4 : 1); i++) {
+    const dx = ux + (f ? f.x * k : 0) - x0, dy = uy + (f ? f.y * k : 0) - y0;
+    l2 = dx * dx + dy * dy;
+    t = l2 ? Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / l2)) : 0;
+    d = Math.hypot(x - x0 - t * dx, y - y0 - t * dy);
+    k = sstep(.85, 1, t);
+  }
+  return { t, d, l2 };
+}
+// In icon mode, sliding off the last icon you were on and down its own stem traces back out, the blend running in reverse.
+// An icon in the way takes the hover first, and then the way down is that icon's stem.
+function traceDown() {
+  const e = iconMode.from;
+  if (!e || mkHover || !e.mk.shown) return;
+  const g = stemT(e, mouse.x, mouse.y);
+  if (g.d >= TRACE_R || g.t >= .995) return;
+  trace.e = lastBody = e; trace.t = g.t; trace.lock = { x: mouse.x, y: mouse.y };
+  pre = { list: iconMode.list, pin: iconMode.pin, tr: e, k: sstep(.85, 1, g.t), full: iconMode.full };
+  iconMode = null;
 }
 const pickAt = (x, y) => traceAt(x, y) || bodyAt(x, y, lastBody);
 let lastBody = null;
@@ -791,6 +830,8 @@ function updateHover() {
   // hover keeps working while a wheel is open, except over its icons, so you can re-aim within the selected square
   const onOwnIcon = trace.e && mkHover === trace.e;   // tracing carries on over the stem's own icon, so the blend can finish
   const free = !(wheelUp() && pw.hot) && (!mouse.ui || onOwnIcon) && !mouse.btn && mouse.x > -1e3;
+  if (iconMode && mkHover && iconMode.list.includes(mkHover)) iconMode.from = mkHover;
+  if (iconMode && free) traceDown();
   if (free && !iconMode) {
     const was = trace.e, b = bodyAt(mouse.x, mouse.y, lastBody); traceAt(mouse.x, mouse.y); lastBody = trace.e || b;
     // while a stem is traced, the other stems' growth uses where the trace began, so they hold still as the cursor climbs
@@ -801,9 +842,10 @@ function updateHover() {
   // (a traced stem blends in over its last 15% and commits at the very top; an icon reached any other way is instant)
   const top = !iconMode && !wheelUp() && (mkHover && mkHover !== trace.e ? mkHover : trace.e && trace.t >= .995 ? trace.e : null);
   const blend = !iconMode && !wheelUp() && trace.e ? sstep(.85, 1, trace.t) : 0;
-  if (!top && !blend) escHold = false; else if (top && !escHold) enterSpread(top);
+  const keep = pre?.tr === trace.e ? pre : null;   // a trace back down keeps the spread's pin, so nothing jumps
+  if (!top && !blend) escHold = false; else if (top && !escHold) enterSpread(top, keep && top === trace.e ? keep.pin : top);
   const mates = blend && !escHold && !iconMode ? ents.filter((o) => o.c === trace.e.c && o.r === trace.e.r) : [];
-  pre = mates.length > 1 ? { list: mates, pin: trace.e, k: blend } : null;
+  pre = mates.length > 1 ? { list: mates, pin: keep ? keep.pin : trace.e, tr: trace.e, k: blend, full: keep?.full } : null;
   hoverEnt = mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
   drawHits();
