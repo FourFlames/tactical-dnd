@@ -116,6 +116,14 @@
   .loglink button { background: none; border: 0; padding: 2px 0; color: var(--gold); font: inherit; text-decoration: underline; cursor: pointer; }
   .logtabs button:focus-visible, .loglink button:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
   .logempty { color: var(--ink-faint); font: 13px/1.5 var(--sans); padding: 14px 0; }
+  .mechanics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .mechanics span { border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; color: var(--ink-dim); font: 10px var(--sans); }
+  .storydetails { padding: 4px 8px 8px 0; }
+  .storydetails summary { cursor: pointer; color: var(--gold); font: 11px var(--sans); padding: 5px 0; }
+  .storydetails summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .actionstatus { min-width: 0; margin-bottom: 6px; font: 12px/1.5 var(--sans); }
+  .actionticker { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-dim); }
+  .resolving { color: var(--gold); }
   .empty { padding: 60px; text-align: center; color: var(--ink-dim); font-family: var(--display); font-size: 22px; }
   .entry.declare { color: var(--party); font-size: 13px; }
   .act textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 14px/1.4 var(--sans); }
@@ -155,15 +163,34 @@
   .zctl button, .ghost { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; font: 12px var(--sans); cursor: pointer; padding: 3px 8px; }
   .zctl button:hover, .ghost:hover { background: var(--panel-2); }
   .zctl input { width: 44px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font: 12px var(--mono); padding: 3px 4px; text-align: right; }
-  .look { margin-top: 10px; font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
-  .look h3 { margin: 0 0 2px; font-family: var(--display); font-size: 20px; color: var(--ink); font-weight: 500; letter-spacing: .03em; }
-  .look h3 small { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: 6px; letter-spacing: 0; }
-  .look .ln { margin: 2px 0; }
-  .look .atks { margin-top: 6px; font-family: var(--mono); font-size: 12px; }
-  .look .atks .y { color: #6fbf73; }
-  .look .atks .m { color: var(--gold); }
-  .look .atks .n { color: var(--ink-faint); }
-  .look .facts { margin-top: 8px; border-left: 2px solid var(--gold); padding-left: 8px; color: var(--ink); }
+  .look { margin-top: 8px; font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+  .ecard { border-left: 3px solid var(--c, var(--line)); padding-left: 10px; }
+  .ecard .eh { display: flex; align-items: center; gap: 8px; }
+  .ecard h3 { margin: 0; flex: 1; min-width: 0; font-family: var(--display); font-size: 20px; color: var(--ink); font-weight: 500; letter-spacing: .03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ecard .es { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .ecard .es em { font-style: normal; color: var(--gold); }
+  .ecard.pv h3, .ecard.pv .es { opacity: .65; }
+  .hchip { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .hchip.healthy { color: #6fbf73; } .hchip.bloodied { color: var(--gold); } .hchip.near-death { color: #d25b4a; } .hchip.down { color: var(--ink-faint); }
+  .ehp { display: flex; align-items: center; gap: 8px; margin-top: 5px; font: 11px var(--mono); color: var(--ink-dim); }
+  .ehp b { flex: 1; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .ehp i { display: block; height: 100%; }
+  .odds, .achips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .odds span { font: 11px var(--mono); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--ink); }
+  .odds span.no { color: var(--ink-faint); }
+  .achips span { font: 11px var(--mono); padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+  .achips .y { color: #6fbf73; border-color: rgba(111, 191, 115, .45); background: rgba(111, 191, 115, .1); }
+  .achips .m { color: var(--gold); border-color: rgba(216, 180, 90, .5); background: rgba(216, 180, 90, .1); }
+  .achips .n { color: var(--ink-faint); border-color: var(--line); text-decoration: line-through; }
+  .ecard .lns { margin-top: 8px; }
+  .ecard .ln { margin: 2px 0; }
+  .ecard .facts { margin-top: 8px; border-left: 2px solid var(--gold); padding-left: 8px; color: var(--ink); }
+  .ecard .movebox { border-top: 0; margin-top: 8px; padding-top: 0; }
+  .ecard .btn.gold { background: none; color: var(--gold); }
+  .ecard .btn.gold small { color: var(--ink-faint); }
+  .hovchip { position: absolute; z-index: 6; pointer-events: none; padding: 3px 9px; border: 1px solid var(--c, var(--line)); border-radius: 10px; background: rgba(28, 27, 22, .92); font: 11px/1.4 var(--mono); color: var(--ink); white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+  .hovchip.faint { color: var(--ink-faint); }
+  .hovchip small { display: block; font-size: 11px; color: var(--gold); }
   .look .acts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   .look .ask { display: flex; gap: 6px; margin-top: 8px; }
   .look .ask input { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: 13px var(--sans); }
@@ -183,7 +210,7 @@
   .caret { background: none; border: 0; color: var(--ink-dim); font-size: 13px; width: 20px; height: 20px; padding: 0; cursor: pointer; border-radius: 4px; transition: transform .15s; }
   .caret:hover { color: var(--ink); background: var(--panel-2); }
   .float.closed .caret { transform: rotate(-90deg); }
-  .lookfloat { top: 10px; right: 10px; width: 310px; max-height: calc(100% - 20px); overflow-y: auto; }
+  .lookfloat { top: 10px; right: 10px; width: 300px; max-height: calc(100% - 20px); overflow-y: auto; }
   .lookfloat.closed .look { display: none; }
   .hud { left: 10px; bottom: 10px; width: min(360px, calc(100% - 20px)); transition: border-color .2s, box-shadow .2s; }
   .hud.mine { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 22px rgba(216, 180, 90, .22), 0 8px 28px rgba(0, 0, 0, .45); }
@@ -373,6 +400,7 @@
       <span class="round" id="round"></span>
       <span class="spacer"></span>
       <div class="tools" id="tools3d" hidden>
+        <button id="bFollow" class="on" aria-pressed="true" title="Follow the active visible creature">Follow turn</button>
         <button id="bWalls" title="Cut walls down so you can see inside">Low walls</button>
         <button id="bCam" title="Reset the camera">Reset view</button>
       </div>
@@ -386,6 +414,10 @@
       </div>
     </div>
     <div class="initbar" id="initbar"></div>
+    <div class="actionstatus">
+      <div id="actionTicker" class="actionticker" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+      <div id="dmResolving" class="resolving" role="status" hidden>DM is resolving…</div>
+    </div>
     <div class="mapzone">
       <div class="mapwrap" id="mapwrap"></div>
       <div class="zoombox" id="zoombox" hidden>
@@ -402,6 +434,7 @@
         </div>
         <div class="look" id="look"></div>
       </div>
+      <div class="hovchip" id="hovchip" hidden></div>
       <div class="dicetray" id="dice"></div>
       <div class="offer" id="offerSec" hidden></div>
       <div class="float act hud" id="actSec" hidden>
@@ -438,8 +471,8 @@
   <aside class="side">
     <div class="section" id="cardSec" hidden><div class="card" id="card"></div></div>
     <div class="logtabs" id="logtabs" role="group" aria-label="Log filters">
-      <button type="button" data-filter="story" aria-pressed="true">Narration<i aria-hidden="true"></i></button>
-      <button type="button" data-filter="combat" aria-pressed="true">Combat<i aria-hidden="true"></i></button>
+      <button type="button" data-filter="story" aria-pressed="true">Story<i aria-hidden="true"></i></button>
+      <button type="button" data-filter="combat" aria-pressed="false">Details<i aria-hidden="true"></i></button>
       <button type="button" class="sheetbtn" id="sheetTab" aria-pressed="false" hidden>Character</button>
     </div>
     <div class="log" id="log"></div>
@@ -468,6 +501,8 @@ const TOUCH = matchMedia('(hover: none)').matches;
 const NS = 'http://www.w3.org/2000/svg';
 let state = null, selected = null, lastLogLen = 0, svg = null, tokLayer = null, fxLayer = null;
 let map3d = null, map3dLoading = null, map3dError = null;
+let hoveredCreature = null;
+let followTurn = (() => { try { return localStorage.getItem('followTurn') !== 'off'; } catch { return true; } })();
 
 const SIDE_COLOR = { party: 'var(--party)', enemy: 'var(--enemy)', neutral: 'var(--neutral)' };
 const el = (tag, attrs = {}, parent) => {
@@ -545,6 +580,22 @@ function setViewBox(vb) {
   svg.setAttribute('viewBox', `${view2d.vb.x} ${view2d.vb.y} ${view2d.vb.w} ${view2d.vb.h}`);
   document.getElementById('mapwrap').classList.toggle('pannable', view2d.vb.w < b.w);
 }
+// Glide the 2D view (keeping the zoom) so a creature's square is centred; 3D has its own camera move.
+let panAnim = 0;
+function focusCreature(id) {
+  const c = state && state.creatures[id];
+  if (!c) return;
+  if (THREE_D) { if (map3d && map3d.focus) map3d.focus(id); return; }
+  if (!svg || !view2d) return;
+  const p = parseCell(c.pos), from = Object.assign({}, view2d.vb), cx = (p.x + .5) * CELL, cy = (p.y + .5) * CELL, t0 = performance.now();
+  cancelAnimationFrame(panAnim);
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / 350), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    setViewBox({ x: from.x + (cx - from.w / 2 - from.x) * e, y: from.y + (cy - from.h / 2 - from.y) * e, w: from.w, h: from.h });
+    if (k < 1) panAnim = requestAnimationFrame(step);
+  };
+  panAnim = requestAnimationFrame(step);
+}
 function zoomBy(f, clientX, clientY) {
   if (!svg || !view2d) return;
   const vb = view2d.vb, r = svg.getBoundingClientRect();
@@ -577,6 +628,10 @@ document.getElementById('zmFit').addEventListener('click', () => view2d && setVi
 
 function hoverCell(x, y) {
   hoverPath(x, y);
+  const cell = x >= 0 && y >= 0 ? String.fromCharCode(65 + x) + (y + 1) : null;
+  hoveredCreature = Object.values(state && state.creatures || {}).find((c) => c.pos === cell)?.id || null;
+  const hc = state && x >= 0 && y >= 0 && x < state.width && y < state.height && creatureAtCell(cellName(x, y));
+  setHover(hc ? hc.id : null);
   const h = document.getElementById('hover');
   if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) { h.textContent = ''; return; }
   const c = state.cells[y][x];
@@ -713,7 +768,7 @@ const hpColor = (f) => f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a';
 
 // The initiative strip: starting from whoever is acting, through the end of the round, a round
 // marker, then round to the current creature again. A '?' is creatures acting out of sight.
-let lastCurrent;
+let lastCurrent, lastPorClick = {};
 function drawInit(v) {
   const bar = document.getElementById('initbar');
   const order = v.turnOrder || [];
@@ -730,7 +785,7 @@ function drawInit(v) {
     if (down && c.side !== 'party') return '';
     const mine = me && me.creatures && me.creatures.includes(id);
     const tip = `${c.name}${c.hp !== undefined ? ` · ${c.hp}/${c.maxHp} HP` : c.health ? ` · ${c.health}` : ''}${c.hidden ? ' · hidden' : ''}`;
-    return `<button class="por${isCur ? ' cur' : ''}${isCur && changed ? ' pop' : ''}${down ? ' down' : ''}${c.hidden ? ' hid' : ''}${mine ? ' mine' : ''}" data-id="${id}" title="${esc(tip)}" style="--c:${SIDE_COLOR[c.side] || SIDE_COLOR.neutral}">`
+    return `<button class="por${isCur ? ' cur' : ''}${isCur && changed ? ' pop' : ''}${down ? ' down' : ''}${c.hidden ? ' hid' : ''}${mine ? ' mine' : ''}" data-id="${id}" title="${esc(tip + ' · double-click to focus')}" style="--c:${SIDE_COLOR[c.side] || SIDE_COLOR.neutral}">`
       + `<span class="face">${esc(labels[id] || '?')}</span><span class="hpb"><i style="width:${f * 100}%;background:${hpColor(f)}"></i></span></button>`;
   };
   const rest = order.slice(start), wrap = order.slice(0, start);
@@ -740,7 +795,16 @@ function drawInit(v) {
   const cap = c ? `Round ${v.round} · <b>${esc(c.name)}</b>${me && me.creatures && me.creatures.includes(v.current) ? ' (you)' : ''}`
     : v.currentUnseen ? `Round ${v.round} · <span class="lurk">something moves out of sight…</span>` : `Round ${v.round}`;
   bar.innerHTML = `<div class="portraits">${html}</div><div class="initcap">${cap}</div>`;
-  bar.querySelectorAll('.por[data-id]').forEach((b) => b.addEventListener('click', () => pointCreature(b.dataset.id, true)));
+  // The first click redraws the strip, so the browser's dblclick never fires: time the clicks instead.
+  bar.onclick = (e) => {
+    const b = e.target.closest('.por[data-id]');
+    if (!b) return;
+    const id = b.dataset.id, now = performance.now(), dbl = lastPorClick.id === id && now - lastPorClick.t < 400;
+    lastPorClick = dbl ? {} : { id, t: now };
+    if (!dbl) return pointCreature(id, true);
+    if (cursor.id !== id) pointCreature(id, true); // the second click toggled it off
+    focusCreature(id);
+  };
   if (changed) turnBanner(c ? `${c.name}'s turn` : 'Something moves out of sight…', !c);
   lastCurrent = `${v.round}:${curKey}`;
 }
@@ -772,7 +836,7 @@ let logFilters = (() => {
     const saved = JSON.parse(localStorage.getItem('logFilters'));
     if (saved && typeof saved.story === 'boolean' && typeof saved.combat === 'boolean') return saved;
   } catch { /* private window or old preference */ }
-  return { story: true, combat: true };
+  return { story: true, combat: false };
 })();
 const seenT = { story: 0, combat: 0 };
 let logSeenInitialized = false;
@@ -813,6 +877,21 @@ function foldUnseen(entries) {
   }
   return out;
 }
+function mechanicsChips(e, inline = false) {
+  const d = e.data || {}, chips = [];
+  if (typeof d.hit === 'boolean') chips.push(d.crit ? 'Critical hit' : d.hit ? 'Hit' : 'Miss');
+  if (Number.isFinite(d.dmg)) chips.push(`${d.dmg} ${d.dtype || ''} damage`.replace(/ +/g, ' '));
+  if (e.type === 'heal' && Number.isFinite(d.amt)) chips.push(`${d.amt} healed`);
+  if (Number.isFinite(d.total)) chips.push(`${d.label || (e.type === 'attack' ? 'Attack' : 'Check')} ${d.total}`);
+  if (Number.isFinite(d.dc)) chips.push(`DC ${d.dc}`);
+  if (Number.isFinite(d.ac)) chips.push(`AC ${d.ac}`);
+  if (typeof d.ok === 'boolean') chips.push(d.ok ? 'Success' : 'Failure');
+  const tag = inline ? 'span' : 'div';
+  return chips.length ? `<${tag} class="mechanics">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</${tag}>` : '';
+}
+function logEntry(e) {
+  return `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${esc(e.text)}${mechanicsChips(e)}</div>`;
+}
 function drawLog(v) {
   const log = document.getElementById('log');
   const visible = (e) => (logFilters.story && STORY.has(e.type)) || (logFilters.combat && COMBAT(e));
@@ -820,14 +899,18 @@ function drawLog(v) {
   const filtersKey = JSON.stringify(logFilters);
   const key = filtersKey + ':' + JSON.stringify(v.log);
   if (log.dataset.key !== key) {
+    const openDetails = new Set([...log.querySelectorAll('details[open]')].map((d) => d.dataset.detailKey));
     const groups = logGroups(foldUnseen(v.log));
     log.innerHTML = groups.map((group, i) => {
       const shown = group.entries.filter(visible);
-      if (!shown.length) return '';
+      if (!shown.length && !(logFilters.story && group.entries.some(COMBAT))) return '';
       const count = group.entries.filter(COMBAT).length;
-      const links = group.linked ? `<div class="loglink"><span>Linked narration &amp; combat · ${count} event${count === 1 ? '' : 's'}</span>${!logFilters.combat ? '<button type="button" data-reveal="combat">Show combat</button>' : ''}${!logFilters.story ? '<button type="button" data-reveal="story">Show narration</button>' : ''}</div>` : '';
-      return `<div class="loggroup${group.linked ? ' linked' : ''}" data-group="${i}">${links}${shown.slice().reverse().map((e) => `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${esc(e.text)}</div>`).join('')}</div>`;
-    }).reverse().join('') || `<div class="logempty">${!logFilters.story && !logFilters.combat ? 'Both filters are off. Turn on Narration or Combat to see the log.' : 'No events match these filters yet.'}</div>`;
+      const links = group.linked ? `<div class="loglink"><span>Linked story &amp; details · ${count} event${count === 1 ? '' : 's'}</span>${!logFilters.story ? '<button type="button" data-reveal="story">Show story</button>' : ''}</div>` : '';
+      const collapsed = logFilters.story && !logFilters.combat ? group.entries.filter((e) => COMBAT(e) && !STORY.has(e.type)) : [];
+      const details = collapsed.length ? `<details class="storydetails" data-detail-key="${esc(String(group.entries[0].t) + ':' + i)}"><summary>${collapsed.length} detail${collapsed.length === 1 ? '' : 's'}${collapsed.length === 1 ? ' · ' + esc(collapsed[0].type) : ''}${collapsed.map((e) => mechanicsChips(e, true)).join('')}</summary>${collapsed.slice().reverse().map(logEntry).join('')}</details>` : '';
+      return `<div class="loggroup${group.linked ? ' linked' : ''}" data-group="${i}">${links}${shown.slice().reverse().map(logEntry).join('')}${details}</div>`;
+    }).reverse().join('') || `<div class="logempty">${!logFilters.story && !logFilters.combat ? 'Both filters are off. Turn on Story or Details to see the log.' : 'No events match these filters yet.'}</div>`;
+    log.querySelectorAll('details').forEach((d) => { d.open = openDetails.has(d.dataset.detailKey); });
     if (atTop || log.dataset.filters !== filtersKey) log.scrollTop = 0;
     log.dataset.key = key; log.dataset.filters = filtersKey;
   }
@@ -1069,10 +1152,10 @@ function fetchLook() {
   const key = JSON.stringify([cursor.id, cursor.cell, cursor.z]);
   if (!cursor.id && !cursor.cell) { look = null; lookKey = key; drawLook(); return; }
   clearTimeout(lookTimer);
+  const q = new URLSearchParams(cursor.id ? { id: cursor.id } : { cell: cursor.cell });
+  if (!cursor.id && cursor.z !== null) q.set('z', cursor.z);
+  if (SEAT) q.set('token', SEAT);
   lookTimer = setTimeout(async () => {
-    const q = new URLSearchParams(cursor.id ? { id: cursor.id } : { cell: cursor.cell });
-    if (!cursor.id && cursor.z !== null) q.set('z', cursor.z);
-    if (SEAT) q.set('token', SEAT);
     try {
       const r = await fetch('/api/look?' + q);
       const out = await r.json();
@@ -1082,6 +1165,81 @@ function fetchLook() {
     drawLook();
   }, 90);
 }
+
+const isMine = (id) => !!(me && me.creatures && me.creatures.includes(id));
+const COVER = { 0: 'no cover', 2: '½ cover', 5: '¾ cover' };
+const VERDICT = { 'in reach': 'reach', 'in range': 'range', advantage: 'adv', disadvantage: 'dis' };
+const shortVerdict = (v) => v.split(', ').map((p) => VERDICT[p] || p).join(' · ');
+const coverWord = (L) => COVER[L.cover] || `cover ${L.cover}`;
+
+// One card for creatures and squares alike: stripe by side, odds cells, attack chips, then the prose.
+function cardHtml(L, pv) {
+  const c = L.kind === 'creature' && state.creatures[L.id], mine = c && isMine(L.id);
+  const sub = esc(L.cell + (L.z ? ` · ${L.z} ft` : '')) + (pv ? ' · <em>hovering</em>' : '');
+  const health = c && c.hp === undefined && c.health ? `<span class="hchip ${c.health.replace(' ', '-')}">${esc(c.health)}</span>` : '';
+  const f = c && c.hp !== undefined ? hpFrac(c) : null;
+  const hp = f !== null ? `<div class="ehp"><b><i style="width:${f * 100}%;background:${hpColor(f)}"></i></b>${c.hp}/${c.maxHp}</div>` : '';
+  const odds = !mine && L.dist !== undefined ? '<div class="odds">' + [
+    `<span>${L.dist} ft</span>`, L.los ? `<span>${coverWord(L)}</span>` : '', `<span${L.los ? '' : ' class="no"'}>${L.los ? 'in sight' : 'no LoS'}</span>`,
+    L.rise ? `<span>${L.rise > 0 ? '↑' : '↓'}${Math.abs(L.rise)} ft</span>` : '',
+  ].join('') + '</div>' : '';
+  const atk = (L.attacks || []).length ? '<div class="achips">' + L.attacks.map((a) =>
+    `<span class="${!a.ok ? 'n' : a.mode === 'dis' ? 'm' : 'y'}">${esc(a.name)} · ${esc(shortVerdict(a.verdict))}</span>`).join('') + '</div>' : '';
+  const lines = L.lines.filter((l) => !(odds && /^\d+ ft from /.test(l)) && !/^Looks (healthy|bloodied|near death|down)\.?$/.test(l));
+  return `<div class="ecard${pv ? ' pv' : ''}" style="--c:${L.kind === 'creature' ? SIDE_COLOR[L.side] || SIDE_COLOR.neutral : 'var(--line)'}">`
+    + `<div class="eh"><h3 title="As ${esc(L.from.name)} sees it">${esc(L.name)}</h3>${health}</div><div class="es">${sub}</div>${hp}${odds}${atk}`
+    + (lines.length ? `<div class="lns">${lines.map((l) => `<div class="ln">${esc(l)}</div>`).join('')}</div>` : '')
+    + (L.facts.length ? `<div class="facts">${L.facts.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : '') + '</div>';
+}
+
+// ---------- hover: preview in the card + a chip at the pointer ----------
+// Looks for hovered creatures are cached until the next state refresh; only ids the client already has are asked about.
+const hover = { id: null, timer: null, pos: null }, hoverCache = {};
+let hoverEpoch = 0;
+function setHover(id) {
+  if (id && !(state && state.creatures[id])) id = null;
+  if (id === hover.id) return;
+  hover.id = id; clearTimeout(hover.timer);
+  if (id && !hoverCache[id] && !TOUCH) hover.timer = setTimeout(() => fetchHover(id), 120);
+  hoverChanged();
+}
+async function fetchHover(id) {
+  const epoch = hoverEpoch, q = new URLSearchParams({ id });
+  if (SEAT) q.set('token', SEAT);
+  try {
+    const r = await fetch('/api/look?' + q), out = await r.json();
+    if (epoch !== hoverEpoch) return; // state moved on; refresh() asks again
+    hoverCache[id] = r.ok ? out : { error: out.error };
+  } catch { return; }
+  if (hover.id === id) hoverChanged();
+}
+function hoverChanged() { updateChip(); drawLook(); }
+function updateChip() {
+  const chip = document.getElementById('hovchip'), id = hover.id;
+  const L = id && (look && look.id === id ? look : hoverCache[id]);
+  if (!L || L.error || TOUCH || isMine(id) || !hover.pos) { chip.hidden = true; return; }
+  const best = (L.attacks || []).find((a) => a.ok && a.verdict.startsWith('in reach')) || (L.attacks || []).find((a) => a.ok);
+  const head = `${L.dist} ft` + (L.los ? (L.cover ? ` · ${coverWord(L)}` : '') : ' · no line of sight');
+  chip.className = 'hovchip' + (!L.los || (L.attacks && L.attacks.length && !best) ? ' faint' : '');
+  chip.style.setProperty('--c', SIDE_COLOR[L.side] || SIDE_COLOR.neutral);
+  chip.innerHTML = esc(head) + (best ? `<small>${esc(best.name)} · ${esc(shortVerdict(best.verdict))}</small>` : '');
+  chip.hidden = false; placeChip();
+}
+function placeChip() {
+  const chip = document.getElementById('hovchip'), r = chip.parentElement.getBoundingClientRect();
+  if (chip.hidden || !hover.pos) return;
+  const x = hover.pos.x - r.left, y = hover.pos.y - r.top, flip = x + 14 + chip.offsetWidth > r.width;
+  chip.style.left = (flip ? x - 14 - chip.offsetWidth : x + 14) + 'px';
+  chip.style.top = Math.max(2, y - 14 - chip.offsetHeight) + 'px';
+}
+(() => {
+  const wrap = document.getElementById('mapwrap'), chip = document.getElementById('hovchip');
+  wrap.addEventListener('pointermove', (e) => {
+    hover.pos = { x: e.clientX, y: e.clientY };
+    if (e.buttons) chip.hidden = true; else if (chip.hidden) updateChip(); else placeChip();
+  });
+  wrap.addEventListener('pointerleave', () => { hover.pos = null; setHover(null); updateChip(); });
+})();
 
 function drawLook() {
   const sec = document.getElementById('curSec');
@@ -1093,26 +1251,26 @@ function drawLook() {
   zctl.hidden = !cursor.cell;
   if (cursor.cell && document.activeElement !== zin) zin.value = cursor.z !== null ? cursor.z : floorAt(cursor.cell);
   const box = document.getElementById('look');
-  if (!cursor.id && !cursor.cell || !look || look.error) box.dataset.html = '';
-  if (!cursor.id && !cursor.cell) {
+  // Hovering another creature previews it, unless you're mid-question or have a square picked.
+  const ask = document.getElementById('askText'), hl = hover.id && hoverCache[hover.id];
+  const pv = hl && !hl.error && hover.id !== cursor.id && !TOUCH && !(cursor.mode === 'square' && cursor.cell)
+    && !(ask && (document.activeElement === ask || ask.value)) ? hl : null;
+  const L = pv || look;
+  if (!pv && (!cursor.id && !cursor.cell || !look || look.error)) box.dataset.html = '';
+  if (!pv && !cursor.id && !cursor.cell) {
     box.innerHTML = `<div class="hint">${TOUCH ? 'Tap' : 'Click'} the map to point at ${cursor.mode === 'entity' ? 'a creature' : 'a square'}.`
       + (TOUCH ? '' : ' <span title="M switch mode · arrows move · [ ] height · P ping · Esc clear"><kbd>M</kbd> <kbd>P</kbd> <kbd>Esc</kbd> …</span>') + '</div>';
     return;
   }
-  if (!look) { box.innerHTML = '<div class="hint">Looking…</div>'; return; }
-  if (look.error) { box.innerHTML = `<div class="hint">${esc(look.error)}</div>`; return; }
-  const atk = (look.attacks || []).map((a) => `<div class="${/^in /.test(a.verdict) ? 'y' : /long/.test(a.verdict) ? 'm' : 'n'}">${esc(a.name)}: ${esc(a.verdict)}</div>`).join('');
-  const facts = look.facts.length ? `<div class="facts">${look.facts.map((f) => `<div>${esc(f)}</div>`).join('')}</div>` : '';
-  const where = look.cell + (look.z ? ` · ${look.z} ft` : '');
-  const html = `<h3>${esc(look.name)}<small>${esc(where)}</small></h3>`
-    + `<div class="hint" style="margin:0 0 4px">As ${esc(look.from.name)} sees it</div>`
-    + look.lines.map((l) => `<div class="ln">${esc(l)}</div>`).join('')
-    + (atk ? `<div class="atks"><div class="hint" style="margin:0">${esc(look.from.name)}'s attacks against it</div>${atk}</div>` : '') + facts
-    + `<div class="acts"><button class="ghost" id="lkPing" title="Flash this spot on everyone's map (P)">Ping</button></div>`
-    + lookActions()
-    + (canTalk() ? `<div class="ask"><input id="askText" maxlength="300" placeholder="Ask the DM about ${esc(look.name)}…"><button class="ghost" id="askSend">Ask</button></div>` : '');
+  if (!L) { box.innerHTML = '<div class="hint">Looking…</div>'; return; }
+  if (L.error) { box.innerHTML = `<div class="hint">${esc(L.error)}</div>`; return; }
+  const html = cardHtml(L, !!pv)
+    + (pv ? '' : `<div class="acts"><button class="ghost" id="lkPing" title="Flash this spot on everyone's map (P)">Ping</button></div>`
+      + lookActions()
+      + (canTalk() ? `<div class="ask"><input id="askText" maxlength="300" placeholder="Ask the DM about ${esc(look.name)}…"><button class="ghost" id="askSend">Ask</button></div>` : ''));
   if (box.dataset.html === html) return; // unchanged: leave the ask box alone mid-typing
   box.innerHTML = html; box.dataset.html = html;
+  if (pv) return;
   document.getElementById('lkPing').onclick = sendPing;
   wireLookActions();
   if (canTalk()) {
@@ -1374,16 +1532,51 @@ function drawOffer() {
 }
 
 // ---------- dice and hits ----------
+// Track the append-only public tail rather than timestamps: multiple events can share
+// a timestamp, and loading another encounter can replace or truncate the log.
+function logArrival(log, tracker) {
+  const keys = log.map((e) => JSON.stringify(e));
+  const append = tracker.keys && tracker.keys.length > 0 && tracker.keys.length <= keys.length && tracker.keys.every((k, i) => k === keys[i]);
+  const fresh = append ? log.slice(tracker.keys.length) : [];
+  const reset = !!tracker.keys && !append;
+  tracker.keys = keys;
+  return { fresh, reset };
+}
+const tickerTracker = {}, tickerQueue = [];
+let tickerTimer = null;
+const TICKER_ACTIONS = new Set(['turn', 'move', 'attack', 'damage', 'heal', 'roll', 'ruling', 'action', 'condition', 'terrain', 'spawn']);
+function advanceTicker() {
+  const line = document.getElementById('actionTicker'), e = tickerQueue.shift();
+  tickerTimer = null;
+  line.hidden = !e;
+  line.textContent = e ? e.text : '';
+  line.title = e ? e.text : '';
+  if (e) tickerTimer = setTimeout(advanceTicker, 4000);
+}
+function drawActionStatus() {
+  const arrival = logArrival(state.log || [], tickerTracker);
+  if (arrival.reset) {
+    clearTimeout(tickerTimer); tickerTimer = null; tickerQueue.length = 0;
+    document.getElementById('actionTicker').hidden = true;
+    document.getElementById('actionTicker').textContent = '';
+  }
+  tickerQueue.push(...arrival.fresh.filter((e) => TICKER_ACTIONS.has(e.type)));
+  if (!tickerTimer && tickerQueue.length) advanceTicker();
+  // A stale listening heartbeat alone says nothing about work. Only a declared
+  // action acknowledged by the DM gives us evidence that resolution is underway.
+  const resolving = me && me.dm && !me.dm.listening && (me.intents || []).some((e) => e.handled && !e.done);
+  document.getElementById('dmResolving').hidden = !resolving;
+}
 // New log entries with roll data play in order: the d20 lands, the shot flies (or the attacker
 // lunges), then the target flashes and the damage rises off it.
-let fxT = null, fxBusy = false;
+let fxBusy = false;
+const fxTracker = {};
 const fxQueue = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function queueFx(log) {
-  const latest = Math.max(0, ...log.map((e) => e.t || 0));
-  if (fxT === null) { fxT = latest; return; } // first load: history doesn't replay
-  for (const e of log) if ((e.t || 0) > fxT && e.data && ['attack', 'damage', 'heal', 'roll', 'ruling'].includes(e.type)) fxQueue.push(e);
-  fxT = Math.max(fxT, latest);
+  const arrival = logArrival(log, fxTracker);
+  if (arrival.reset) fxQueue.length = 0;
+  for (const e of arrival.fresh) if (e.data && ['attack', 'damage', 'heal', 'roll', 'ruling'].includes(e.type)) fxQueue.push(e);
   if (!fxBusy) runFx();
 }
 async function runFx() {
@@ -1533,6 +1726,7 @@ function render3d() {
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
         map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: pointCreature, onCell: pointCell, onHover: hoverCell });
+        map3d.setFollow(followTurn);
         render();
       }).catch((e) => {
         map3dError = e;
@@ -1541,8 +1735,19 @@ function render3d() {
     }
     return;
   }
-  map3d.update(state, { selected, cursor: { cell: cursor.cell, z: cursor.z } });
+  map3d.update(state, { selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
 }
+
+const followButton = document.getElementById('bFollow');
+followButton.classList.toggle('on', followTurn);
+followButton.setAttribute('aria-pressed', String(followTurn));
+followButton.addEventListener('click', () => {
+  followTurn = !followTurn;
+  followButton.classList.toggle('on', followTurn);
+  followButton.setAttribute('aria-pressed', String(followTurn));
+  try { localStorage.setItem('followTurn', followTurn ? 'on' : 'off'); } catch { /* private window */ }
+  if (map3d) map3d.setFollow(followTurn);
+});
 document.getElementById('bWalls').addEventListener('click', (e) => {
   e.currentTarget.classList.toggle('on');
   if (map3d) map3d.setWallsLow(e.currentTarget.classList.contains('on'));
@@ -1558,7 +1763,11 @@ async function refresh() {
       me = await r.json();
       if (!r.ok && !SEAT) me = null; // not on the DM's machine: just a spectator
     }
+    for (const k of Object.keys(hoverCache)) delete hoverCache[k];
+    hoverEpoch++; clearTimeout(hover.timer);
+    if (hover.id) hover.timer = setTimeout(() => fetchHover(hover.id), 120);
     render();
+    drawActionStatus();
     if (state && state.log) queueFx(state.log);
     if (cursor.id || cursor.cell) fetchLook(); // things moved: what you can tell may have changed
   } catch (e) { /* server restarting */ }

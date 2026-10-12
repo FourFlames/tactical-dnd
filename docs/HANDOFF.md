@@ -29,19 +29,22 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
   - Work style: small edits directly; bigger ones go to a Sonnet with a precise spec, one agent per file at a time.
 - Side projects (atomic history, council, recognition, sword icons, codex) are parked on their own branches and in `git stash`; keep them off `playable-1`.
 - HUD (Card 3): one `.float.hud` bottom-left (`drawAct`/`drawTurn` fill it; turn strip is `#turnSec` inside it); Character tab = `#sheet` in the sidebar, localStorage `sideView`. Party view now carries `resources` and `char`.
-- Next card: **4**.
+- Card 4: `#look` is one `.ecard` (`cardHtml()`); hover preview + `#hovchip` via `hoverCell`/`hoverCache` (cleared in `refresh()`). No hit % (would leak AC). Double-click a portrait = `focusCreature(id)` (2D viewBox pan; 3D `map3d.focus(id)`), detected by click timing because the strip redraws.
+- Card 6 is in progress in another session (brief in `.session/BRIEF.md`): Follow turn button + `setFollow` in map3d are in; the rest is not done.
+- Next card: **6** (finish), then **5**/**7**.
 
 ## Cards (in order; each fits one session)
 1. [x] **Kill native dialogs + builder focus.** Replace `confirm()` at viewer.html ~1075 (end turn with the action unused) and ~1167 (move provokes) with an in-card second click ("Provokes gob1. Click again to move."). Builder: `save()` → `render()` redraws the form 500 ms after typing stops and steals focus (builder.html ~284); don't redraw `renderMain` while focus is inside it, or restore focus and caret.
 2. [x] **Wheel mockup**, standalone `poc/wheel.html`, no game wiring. A 6-slot ring around a token with keys 1-6, submenu rotation (clockwise in, counter-clockwise back, ~150 ms, Back at bottom slot 4), a fan-out of 3 entities in one square with leader lines. For the user to try the feel before Card 5. Ref: wheel-lexicon.
 3. [x] **Player HUD**: a docked bottom-left character card (HP ring, movement as 5-ft squares, action/bonus/reaction pips, resources) that replaces the turn panel and swallows the compose box, plus a **Character** tab next to Narration/Combat with the full sheet. Clean and minimal. Ref: plan Phase 1.1.
-4. [ ] **Fixed entity card** top-right of the map, plus a hover chip over tokens ("65% · 30 ft · ½ cover"). Remove the stacked inspect panel. Odds come from `/api/look`, only for ids the client already has.
+4. [x] **Fixed entity card** top-right of the map, plus a hover chip over tokens ("65% · 30 ft · ½ cover"). Remove the stacked inspect panel. Odds come from `/api/look`, only for ids the client already has.
 5. [ ] **Action wheel, wired**: entity and square wheels, the multi-entity fan-out from the client's own view (count 0/1/2+, no "hidden" special case), smart Strike, player-set slots 2-3 with class defaults (stored on the character, with a "Wheel" section in the builder). Ref: wheel-lexicon. Needs Card 2's feel signed off.
 6. [ ] **Turn feel**: camera eases to the active creature and yields on any pointer or wheel input; walls between the camera and focused tokens fade; monster moves glide along `data.path`; one-line ticker; a "DM is resolving…" strip; the log defaults to Story, with Details and chips.
 7. [ ] **DM speed (engine)**: `auto <id>` monster turn, `next --auto`, monster opportunity attacks rolled on the move, templated flavor lines; update CLAUDE.md's turn loop. Ref: plan Phase 2.
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-12: Card 4 (Sonnet): entity card with side stripe, health chip/HP bar, odds cells, attack chips; hover preview and pointer chip; portrait double-click focuses the camera (2D and 3D). Fixed a look request racing the cursor (`cell=null`). Card 6 partial work from the other session committed alongside.
 - 2026-10-12: Card 3 (Sonnet): docked HUD (HP ring, A/B/R pips, 5-ft movement squares, resources, attacks, "Tell the DM…" input) replaces the turn panel and compose box; Character tab with the full sheet. 99 tests pass; sandbox checked incl. 3D, 375 px and the End-turn second click.
 - 2026-10-11: The wheel unfolds out of the entity's icon (smaller, .8); icon, stem and label stay, other icons drop lower and behind; clicking the icon deselects; fold = pips slide under the icon, unfold = rush out in a line toward the pointer then fan to the hexagon.
 - 2026-10-11: Icons and labels share one layer, stacked by distance to the cursor (nearest on top); each label is one z-step above its own icon.
@@ -49,4 +52,3 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 - 2026-10-11: Trace back down from the last hovered icon in icon mode (blend in reverse; an icon in the way takes over); hovered icon in icon mode grows 1.3×; calmer spark. Spread displacement off (`SPREAD = false`, crowd labels apply in icon mode); a 36-rat swarm square (H8) for trying it.
 - 2026-10-11: Tracing a stem: its last 15% blends into icon mode (square-mates grow and spread around the pinned traced icon, others fade), committing at the top; other stems' growth uses the point where the trace began.
 - 2026-10-11: Spark ¼ size; marker labels always above their icon (no flip in icon mode) and styled like the wheel captions; wheel captions tuck 4 px under their icon.
-- 2026-10-11: Markers (Sonnet): icons ride equal world stems, no screen kinks; tracing a stem holds the hover with a gold, wider section and a spark; reaching the top spreads that square's icons (fixed-pass force layout, stems lean in world space).
