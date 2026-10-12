@@ -529,10 +529,10 @@ function updateMarkers() {
     if (m.ox || m.oy) pB.copy(worldAt(m.x, m.y, pB));   // leaning toward its spread icon
     const ik = sstep(.35, .7, r), op = m.op = ik * m.dim;
     m.el.style.opacity = op < .02 ? 0 : op;
-    m.el.style.pointerEvents = ik > .6 && !busy && m.front ? 'auto' : 'none';
+    m.el.style.pointerEvents = ik > .6 && !busy && m.front && !iconMode ? 'auto' : 'none';   // icon mode hits icons by distance instead
     // the icon you're on in icon mode is bigger; a traced one grows into that with the blend
     m.big += ((iconMode ? +(hoverEnt === e) : pre?.tr === e ? pre.k : 0) - m.big) * .3;
-    const sc = (.6 + .4 * ik) * (1 + .3 * m.big);
+    const sc = m.sc = (.6 + .4 * ik) * (1 + .3 * m.big);
     m.el.style.transform = `translate(${m.x}px, ${m.y}px) scale(${sc})`;
     m.el.classList.toggle('hot', hoverEnt === e); m.lb.classList.toggle('hot', hoverEnt === e);
     // the label: always above its icon
@@ -813,6 +813,16 @@ function stemT(e, x, y) {
   }
   return { t, d, l2 };
 }
+// In icon mode the icons catch the pointer 25% wider than they're drawn; where those overlap, the nearest centre wins.
+function iconHit(x, y) {
+  if (mouse.btn || mouse.x < -1e3 || wheelUp()) return null;
+  let best = null, bd = Infinity;
+  for (const e of iconMode.list) {
+    const m = e.mk, d = Math.hypot(x - m.x, y - m.y);
+    if (m.op > .3 && m.front && d < 11 * (m.sc || 1) * 1.25 && d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
 // In icon mode, sliding off the last icon you were on and down its own stem traces back out, the blend running in reverse.
 // An icon in the way takes the hover first, and then the way down is that icon's stem.
 function traceDown() {
@@ -830,6 +840,10 @@ function updateHover() {
   // hover keeps working while a wheel is open, except over its icons, so you can re-aim within the selected square
   const onOwnIcon = trace.e && mkHover === trace.e;   // tracing carries on over the stem's own icon, so the blend can finish
   const free = !(wheelUp() && pw.hot) && (!mouse.ui || onOwnIcon) && !mouse.btn && mouse.x > -1e3;
+  if (iconMode) {
+    const h = iconHit(mouse.x, mouse.y);
+    if (h) mkHover = h; else if (inSpread(mkHover)) mkHover = null;
+  }
   if (iconMode && mkHover && iconMode.list.includes(mkHover)) iconMode.from = mkHover;
   if (iconMode && free) traceDown();
   if (free && !iconMode) {
@@ -1070,7 +1084,10 @@ addEventListener('pointermove', (ev) => {
 addEventListener('pointerup', () => { grab = null; document.body.classList.remove('dragging'); }, true);
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || ev.pwHandled || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
-  if (iconMode) { iconMode = null; return; }   // icons are the targets here; a click elsewhere just leaves
+  if (iconMode) {   // icons are the targets here (hit by distance, see iconHit); a click elsewhere just leaves
+    if (mkHover && inSpread(mkHover)) return pickEntity(mkHover);
+    iconMode = null; return;
+  }
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
   const e = pickAt(ev.clientX, ev.clientY);
   if (e) return openWheelOn(e);
