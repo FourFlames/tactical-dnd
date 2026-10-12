@@ -18,7 +18,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 ## State
 - Branch: `playable-1`. Pushed: hidden turns + initiative strip; minds talk menus; `TDND_DATA` sandbox.
 - Card 1 merged into `playable-1` (`08db108`).
-- Wheel mockup: `poc/wheel.html`, open with `preview_start poc` (port 5175). Waiting on the user's sign-off on the feel before Card 5.
+- Wheel mockups: `poc/wheel.html` (2D) and `poc/wheel3d.html` (3D: pick by a stem + name pill above the body, wheel opens on the pill), open with `preview_start poc` (port 5175). Waiting on the user's sign-off on the feel before Card 5.
 - Next card: **3**.
 
 ## Cards (in order; each fits one session)
@@ -32,6 +32,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
+- 2026-10-11: 3D wheel try-out `poc/wheel3d.html`: pills show near the cursor and only in line of sight; pills in a shared square push apart (replaces the 2D fan-out), >6 → "+N more".
 - 2026-10-11: Card 2 done: `poc/wheel.html` (6-slot ring, keys 1-6, spin in/out, Back at 4, Shift for full attack list, 3-entity fan-out, 9-rat "+N more"). Added `poc` to launch.json.
 - 2026-10-11: Card 1: in-card second clicks for unused-action End turn and provoking moves; autosave preserves the focused builder editor. 227 tests passed; sandbox UI verified (including continued typing after save). Screenshot: `screenshots/card-1-confirmation.png`.
 - 2026-10-11: Grill session; plan + wheel lexicon written; branch `playable-1` pushed with the work so far and the sandbox.

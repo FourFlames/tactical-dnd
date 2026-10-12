@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action wheel 3D</title>
+<!-- Feel test: the action wheel on a 3D map. Entities are picked by a stem and name pill above them, not by their body.
+     No game wiring; everything is fake. Ref: docs/wheel-lexicon.md, poc/wheel.html (the 2D version). -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+  :root {
+    --bg: #14130f; --panel: #1c1b16; --panel-2: #232118; --line: #34312a;
+    --ink: #e9e3d3; --ink-dim: #9c9584; --ink-faint: #6b6557;
+    --gold: #d8b45a; --party: #4fb3a4; --enemy: #cf6a4c; --neutral: #a59f8e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; }
+  canvas { display: block; position: fixed; inset: 0; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+  #stems { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #stems line { stroke: #e9e3d3; stroke-width: 1.2; }
+  #stems circle { fill: #e9e3d3; }
+  #stems g { opacity: 0; }
+  #stems .hot line, #stems line.hot { stroke: var(--gold); }
+
+  .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 2px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
+  .mk .ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
+  .mk.party .ic { border-color: var(--party); color: var(--party); }
+  .mk.enemy .ic { border-color: var(--enemy); color: var(--enemy); }
+  .mk.object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
+  .mk.square .ic { border-color: var(--gold); color: var(--gold); border-radius: 3px; }
+  .mk.more { border-style: dashed; color: var(--ink-dim); }
+  .mk small { color: var(--ink-faint); }
+  .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1ef0; }
+
+  /* the wheel (same as poc/wheel.html) */
+  #wheel { position: absolute; width: 0; height: 0; z-index: 10; }
+  #wheel svg { position: absolute; left: -150px; top: -150px; width: 300px; height: 300px; overflow: visible; pointer-events: none; }
+  #wheel .sector { fill: #1c1b16e0; stroke: var(--line); stroke-width: 1.5; pointer-events: all; cursor: pointer; transition: fill .08s; }
+  #wheel .sector.hot { fill: #2e2a1ef2; stroke: var(--gold); }
+  #wheel .sector.off { fill: #181713e6; cursor: not-allowed; }
+  #wheel .sector.back { fill: #201f1aee; }
+  #wheel .hub { fill: #14130ff2; stroke: var(--gold); stroke-width: 1.5; pointer-events: all; cursor: pointer; }
+  .lab { position: absolute; width: 104px; margin-left: -52px; transform: translateY(-50%); text-align: center; pointer-events: none; line-height: 1.15; }
+  .lab .role { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+  .lab .what { font-size: 12.5px; font-weight: 600; }
+  .lab .odds { font-size: 11px; color: var(--gold); }
+  .lab .key { position: absolute; left: 50%; top: -15px; margin-left: -7px; width: 14px; height: 14px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); font: 9px/12px ui-monospace, monospace; color: var(--ink-dim); }
+  .lab .self { font-size: 9px; color: var(--party); border: 1px solid var(--party); border-radius: 3px; padding: 0 3px; margin-left: 3px; vertical-align: 1px; }
+  .lab.off .what { color: var(--ink-faint); font-weight: 400; }
+  .lab.off .odds { color: var(--ink-faint); }
+  .lab.hot .what { color: var(--gold); }
+  .hubtxt { position: absolute; width: 70px; margin-left: -35px; transform: translateY(-50%); text-align: center; font-size: 10.5px; color: var(--ink-dim); pointer-events: none; line-height: 1.15; }
+
+  .morelist { position: absolute; pointer-events: all; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; max-height: 180px; overflow: auto; z-index: 11; min-width: 120px; }
+  .morelist div { padding: 3px 8px; cursor: pointer; border-radius: 4px; }
+  .morelist div:hover { background: var(--panel-2); color: var(--gold); }
+
+  .hud { position: fixed; background: #1c1b16e6; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+  #top { top: 6px; left: 6px; right: 6px; padding: 3px 8px; font-size: 11px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; color: var(--ink-faint); }
+  #top b { color: var(--ink); font-weight: 600; }
+  #top kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--ink-dim); font: 10.5px ui-monospace, monospace; }
+  #top label { display: flex; gap: 5px; align-items: center; color: var(--ink-dim); }
+  #card { top: 36px; right: 8px; width: 210px; color: var(--ink-dim); }
+  #card b { color: var(--ink); }
+  #log { bottom: 8px; left: 8px; max-width: 420px; }
+  #log div { color: var(--ink-dim); }
+  #log div:first-child { color: var(--ink); }
+  #log code { color: var(--gold); font: 11px ui-monospace, monospace; }
+  #log:empty, #card:empty { display: none; }
+</style>
+</head>
+<body>
+<div id="overlay"><svg id="stems"></svg></div>
+<div class="hud" id="top">
+  <b>Action wheel · 3D</b>
+  <span>Hover near a body, click its pill · floor click = square wheel · drag orbits, right-drag pans · <kbd>1</kbd>–<kbd>6</kbd> <kbd>Esc</kbd> <kbd>Shift</kbd>+Strike</span>
+  <label><input type="checkbox" id="slow"> slow-mo spin</label>
+</div>
+<div class="hud" id="card"></div>
+<div class="hud" id="log"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const COLS = 12, ROWS = 9, FT = 1 / 5;
+const SPIN = () => (document.getElementById('slow').checked ? 600 : 150);
+const NEAR_PX = 170;     // how close the cursor must be for a marker to show
+const STEM_PX = 46;      // stem length from the top of the body to the pill
+const colName = (c) => String.fromCharCode(65 + c);
+const cellName = (c, r) => colName(c) + (r + 1);
+
+const walls = new Set(['A1','B1','C1','D1','E1','F1','G1','H1','I1','J1','K1','L1','A2','A3','A9','L9','L8','D4','D5','I3','L4','L6']);
+const chasm = new Set(['G4','G5','G6','H5']);
+
+// Same fake world as the 2D mockup. `alt` is height in feet; hp 0 means down.
+const ents = [
+  { id: 'rook', name: 'Rook', kind: 'party', me: true, c: 2, r: 6, ac: 18, hp: 28 },
+  { id: 'gob1', name: 'Goblin', kind: 'enemy', c: 3, r: 7, ac: 15, hp: 7 },
+  { id: 'gob2', name: 'Goblin archer', kind: 'enemy', c: 9, r: 3, ac: 13, hp: 7 },
+  { id: 'gob3', name: 'Goblin (behind wall)', kind: 'enemy', c: 8, r: 1, ac: 15, hp: 7 },
+  { id: 'door1', name: 'Oak door', kind: 'object', c: 11, r: 4, ac: 15 },
+  { id: 'wren', name: 'Wren', kind: 'party', c: 4, r: 5, ac: 14, hp: 0, prone: true },
+  { id: 'bat', name: 'Giant bat', kind: 'enemy', c: 4, r: 5, ac: 13, hp: 22, alt: 10 },
+  { id: 'sword', name: 'Shortsword', kind: 'object', item: true, c: 4, r: 5 },
+];
+for (let i = 0; i < 9; i++) ents.push({ id: 'rat' + (i + 1), name: 'Rat ' + (i + 1), kind: 'enemy', rat: true, c: 9, r: 6, ac: 10, hp: 1 });
+
+const me = () => ents.find((e) => e.me);
+const dist = (a, b) => 5 * Math.max(Math.abs(a.c - b.c), Math.abs(a.r - b.r), Math.round(((a.alt || 0) - (b.alt || 0)) / 5));
+const odds = (bonus, ac, dis) => { const p = Math.min(.95, Math.max(.05, (21 - (ac - bonus)) / 20)); return Math.round(100 * (dis ? p * p : p)) + '%'; };
+
+// ---------- scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#14130f');
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(4.5, 9.5, 14);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(6, 0, 4.8);
+controls.enableDamping = true;
+controls.maxPolarAngle = 1.38;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.update();
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+scene.add(new THREE.HemisphereLight('#d9d2bf', '#2a2620', 1.0));
+const sun = new THREE.DirectionalLight('#ffe9c4', 1.7);
+sun.position.set(9, 14, 3); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10 });
+sun.target.position.set(6, 0, 4.5);
+scene.add(sun, sun.target);
+
+const occluders = [];   // what blocks the view of a marker (walls and floors)
+const floorTop = (c, r) => (chasm.has(cellName(c, r)) ? -2.6 : 0);
+const M = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: .85, ...o });
+const floorMats = [M('#3d382e'), M('#37332a')];
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+  const n = cellName(c, r);
+  let mesh;
+  if (walls.has(n)) {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1.8, 1), M('#2a2620'));
+    mesh.position.set(c + .5, .9, r + .5);
+  } else if (chasm.has(n)) {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(1, .4, 1), M('#16130f'));
+    mesh.position.set(c + .5, -2.8, r + .5);
+  } else {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 3, 1), floorMats[(c + r) % 2]);
+    mesh.position.set(c + .5, -1.5, r + .5);
+  }
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.userData.cell = { c, r };
+  occluders.push(mesh); scene.add(mesh);
+}
+{ // faint grid on the floor
+  const pts = [];
+  for (let c = 0; c <= COLS; c++) pts.push(c, .005, 0, c, .005, ROWS);
+  for (let r = 0; r <= ROWS; r++) pts.push(0, .005, r, COLS, .005, r);
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: .25 })));
+}
+
+// ---------- entity bodies ----------
+const SIDE = { party: '#4fb3a4', enemy: '#cf6a4c', object: '#a59f8e' };
+function body(e) {
+  const g = new THREE.Group();
+  const col = M(SIDE[e.kind], { roughness: .55 });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  if (e.item) {
+    add(new THREE.BoxGeometry(.07, .03, .55), M('#b9b4a8', { metalness: .7, roughness: .3 }), 0, .03, -.05);
+    add(new THREE.BoxGeometry(.22, .04, .05), M('#6b4a2b'), 0, .03, .22);
+    e.top = .12;
+  } else if (e.kind === 'object') {
+    add(new THREE.BoxGeometry(.9, 1.5, .14), M('#6b4a2b'), 0, .75, 0).rotation.y = Math.PI / 2;
+    e.top = 1.55;
+  } else if (e.rat) {
+    add(new THREE.SphereGeometry(.11, 12, 8), col, 0, .1, 0).scale.set(1, .8, 1.5);
+    add(new THREE.SphereGeometry(.06, 10, 8), col, 0, .14, .16);
+    e.top = .22;
+  } else if (e.id === 'bat') {
+    add(new THREE.SphereGeometry(.16, 14, 10), col, 0, 0, 0);
+    for (const s of [-1, 1]) add(new THREE.BoxGeometry(.5, .02, .28), col, s * .32, .04, 0).rotation.z = s * .35;
+    e.top = .2;
+  } else {
+    const torso = add(new THREE.CapsuleGeometry(.2, .5, 6, 14), col, 0, .5, 0);
+    const head = add(new THREE.SphereGeometry(.15, 16, 12), M('#d8c7a8'), 0, 1.05, 0);
+    add(new THREE.CylinderGeometry(.34, .36, .06, 24), M('#1f1d18'), 0, .03, 0);
+    if (e.prone) { torso.rotation.z = Math.PI / 2; torso.position.set(0, .22, 0); head.position.set(.5, .2, 0); }
+    e.top = e.prone ? .45 : 1.25;
+  }
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.material = o.material.clone(); } });
+  scene.add(g);
+  return g;
+}
+// Where each thing stands: things sharing a square spread out within it.
+function layout() {
+  const groups = {};
+  for (const e of ents) (groups[e.c + ',' + e.r] ||= []).push(e);
+  for (const list of Object.values(groups)) {
+    const ground = list.filter((e) => !e.alt);
+    ground.forEach((e, i) => {
+      let ox = 0, oz = 0;
+      if (ground.length > 1) {
+        if (e.rat) { ox = (i % 3 - 1) * .3; oz = (Math.floor(i / 3) - 1) * .3; }
+        else if (e.item) { ox = -.28; oz = .25; }
+      }
+      e.target = new THREE.Vector3(e.c + .5 + ox, floorTop(e.c, e.r), e.r + .5 + oz);
+    });
+    for (const e of list.filter((x) => x.alt)) e.target = new THREE.Vector3(e.c + .5, floorTop(e.c, e.r) + e.alt * FT, e.r + .5);
+  }
+  for (const e of ents) if (!e.obj) { e.obj = body(e); e.obj.position.copy(e.target); }
+}
+layout();
+function glow(e, on) {
+  if (!e?.obj || e.glowing === on) return;
+  e.glowing = on;
+  e.obj.traverse((o) => { if (o.isMesh) { o.material.emissive = new THREE.Color(on ? '#d8b45a' : '#000000'); o.material.emissiveIntensity = on ? .45 : 0; } });
+}
+
+// ---------- markers: stem + icon + name ----------
+const overlay = document.getElementById('overlay');
+const stems = document.getElementById('stems');
+const SVGNS = 'http://www.w3.org/2000/svg';
+function makeMarker(cls, icon, label) {
+  const el = document.createElement('div');
+  el.className = 'mk ' + cls;
+  el.innerHTML = `<span class="ic">${icon}</span><span>${label}</span>`;
+  overlay.appendChild(el);
+  const g = document.createElementNS(SVGNS, 'g');
+  g.innerHTML = '<line/><circle r="2"/>';
+  stems.appendChild(g);
+  return { el, g, line: g.firstChild, w: 0, alpha: 0, x: null, y: null };
+}
+for (const e of ents) {
+  if (e.me) continue;
+  const icon = e.item ? '⚔' : e.kind === 'object' ? '▯' : e.name[0];
+  const sub = e.alt ? `<small>${e.alt} ft up</small>` : e.hp === 0 ? '<small>down</small>' : '';
+  e.mk = makeMarker(e.kind, icon, e.name + ' ' + sub);
+  e.mk.el.onclick = (ev) => { ev.stopPropagation(); openWheelOn(e); };
+  e.mk.el.onmouseenter = () => { hoverEnt = e; };
+  e.mk.el.onmouseleave = () => { if (hoverEnt === e) hoverEnt = null; };
+}
+const moreMk = {}; // per crowded square, a "+N more" marker
+const sqMk = makeMarker('square', '▢', '');
+let hoverEnt = null, listEl = null;
+
+const mouse = { x: -1e4, y: -1e4 };
+addEventListener('pointermove', (ev) => { mouse.x = ev.clientX; mouse.y = ev.clientY; });
+document.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; });
+
+const ray = new THREE.Raycaster();
+const tmp = new THREE.Vector3();
+function toScreen(v) {
+  tmp.copy(v).project(camera);
+  return { x: (tmp.x + 1) / 2 * innerWidth, y: (1 - tmp.y) / 2 * innerHeight, front: tmp.z < 1 && Math.abs(tmp.x) < 1.15 && Math.abs(tmp.y) < 1.15 };
+}
+// In view = some part of the body (its top or its middle) has a clear line from the camera.
+function inView(e) {
+  for (const h of [e.top, e.top / 2]) {
+    const p = e.obj.position.clone().setY(e.obj.position.y + h + .02);
+    const d = p.distanceTo(camera.position);
+    ray.set(camera.position, p.sub(camera.position).normalize()); ray.far = d - .05;
+    if (!ray.intersectObjects(occluders, false).length) return true;
+  }
+  return false;
+}
+
+function updateMarkers() {
+  const shown = [];
+  const busy = !!W;
+  // 1. which bodies are on screen, in view, and near the cursor
+  const live = [];
+  for (const e of ents) {
+    if (!e.mk) continue;
+    const top = e.obj.position.clone().setY(e.obj.position.y + e.top);
+    const s = toScreen(top);
+    e.anchor = s;
+    const sel = W && W.ent === e;
+    const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
+    const near = Math.min(Math.hypot(mouse.x - s.x, mouse.y - s.y), pillD);
+    let want = 0;
+    if (sel) want = 1;
+    else if (!busy && !listEl && s.front && inView(e)) want = hoverEnt === e ? 1 : Math.max(0, Math.min(1, (NEAR_PX - near) / 50));
+    e.want = want;
+    if (want > 0 || e.mk.alpha > .02) live.push(e);
+  }
+  // 2. a crowded square shows 5 and a "+N more"
+  const bySq = {};
+  for (const e of live) if (e.want > 0) (bySq[e.c + ',' + e.r] ||= []).push(e);
+  const crowded = new Set();
+  for (const [k, list] of Object.entries(bySq)) {
+    if (list.length <= 6) continue;
+    list.sort((a, b) => (b.kind === 'enemy') - (a.kind === 'enemy') || a.id.localeCompare(b.id, undefined, { numeric: true }));
+    const rest = list.slice(5);
+    for (const e of rest) e.want = 0;
+    const m = moreMk[k] ||= Object.assign(makeMarker('more', '+', ''), { key: k });
+    m.rest = rest; m.el.lastChild.textContent = `${rest.length} more`;
+    const [c, r] = k.split(',').map(Number);
+    m.anchor = toScreen(new THREE.Vector3(c + .5, floorTop(c, r) + .3, r + .5));
+    m.want = Math.max(...list.slice(0, 5).map((e) => e.want));
+    m.el.onclick = (ev) => { ev.stopPropagation(); showMore(m); };
+    crowded.add(m);
+  }
+  for (const m of Object.values(moreMk)) if (!crowded.has(m)) m.want = 0;
+  // the square marker exists only while its wheel is open
+  if (W && W.square) { sqMk.anchor = toScreen(W.square.point); sqMk.want = 1; sqMk.el.lastChild.textContent = cellName(W.square.c, W.square.r); }
+  else sqMk.want = 0;
+
+  // 3. lay the pills out above their bodies, then push overlapping pills apart sideways
+  const items = [...live.map((e) => e.mk && Object.assign(e.mk, { anchor: e.anchor, wantA: e.want })), ...Object.values(moreMk).map((m) => Object.assign(m, { wantA: m.want })), Object.assign(sqMk, { wantA: sqMk.want })]
+    .filter((m) => m && m.anchor && (m.wantA > 0 || m.alpha > .02));
+  for (const m of items) {
+    if (!m.w) m.w = m.el.offsetWidth || 80;
+    m.tx = m.anchor.x; m.ty = m.anchor.y - STEM_PX;
+  }
+  const act = items.filter((m) => m.wantA > 0);
+  act.sort((a, b) => a.tx - b.tx);
+  for (let it = 0; it < 8; it++) for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
+    const a = act[i], b = act[j];
+    if (Math.abs(a.ty - b.ty) > 26) continue;
+    const over = (a.w + b.w) / 2 + 6 - Math.abs(a.tx - b.tx);
+    if (over > 0) { const s = a.tx <= b.tx ? 1 : -1; a.tx -= s * over / 2; b.tx += s * over / 2; }
+  }
+  // 4. draw
+  for (const m of items) {
+    m.alpha += (m.wantA - m.alpha) * .25;
+    if (m.x === null || m.alpha < .05) { m.x = m.tx; m.y = m.ty; }
+    m.x += (m.tx - m.x) * .35; m.y += (m.ty - m.y) * .35;
+    const a = m.alpha < .02 ? 0 : m.alpha;
+    m.el.style.opacity = a; m.g.style.opacity = a;
+    m.el.style.pointerEvents = a > .4 && !(W && m !== W.mk) ? 'auto' : 'none';
+    m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
+    m.el.style.visibility = W && m === W.mk ? 'hidden' : '';   // the wheel's hub takes the pill's place
+    const ty = W && m === W.mk ? W.y : m.y + 11;
+    const tx = W && m === W.mk ? W.x : m.x;
+    m.line.setAttribute('x1', m.anchor.x); m.line.setAttribute('y1', m.anchor.y);
+    m.line.setAttribute('x2', tx); m.line.setAttribute('y2', ty);
+    m.g.lastChild.setAttribute('cx', m.anchor.x); m.g.lastChild.setAttribute('cy', m.anchor.y);
+  }
+  for (const e of ents) if (e.mk) { glow(e, (W && W.ent === e) || hoverEnt === e); e.mk.el.classList.toggle('hot', hoverEnt === e); }
+}
+
+function showMore(m) {
+  closeMore();
+  listEl = document.createElement('div');
+  listEl.className = 'morelist';
+  listEl.style.left = m.x + m.w / 2 + 6 + 'px'; listEl.style.top = m.y - 11 + 'px';
+  listEl.innerHTML = m.rest.map((e) => `<div data-id="${e.id}">${e.name}</div>`).join('');
+  listEl.onclick = (ev) => { const e = ents.find((x) => x.id === ev.target.dataset.id); if (e) { closeMore(); openWheelOn(e); } };
+  overlay.appendChild(listEl);
+}
+function closeMore() { listEl?.remove(); listEl = null; }
+
+// ---------- menus (same as the 2D mockup) ----------
+function strikeFor(t) {
+  const d = dist(me(), t);
+  if (d <= 5) return { what: 'Longsword', odds: odds(5, t.ac), act: `attack rook ${t.id} longsword` };
+  if (d <= 30) return { what: 'Javelin', odds: odds(5, t.ac) + ` · ${d} ft`, act: `attack rook ${t.id} javelin` };
+  if (d <= 120) return { what: 'Javelin (long)', odds: odds(5, t.ac, true) + ' · disadv', act: `attack rook ${t.id} javelin` };
+  return { what: 'Out of range', off: true };
+}
+function weaponList(t) {
+  const d = dist(me(), t);
+  const w = (name, bonus, reach, long) => d <= reach ? { what: name, odds: odds(bonus, t.ac), act: `attack rook ${t.id} ${name.toLowerCase()}` }
+    : d <= long ? { what: name, odds: odds(bonus, t.ac, true) + ' · disadv', act: `attack rook ${t.id} ${name.toLowerCase()}` }
+    : { what: name, odds: 'out of reach', off: true };
+  return { title: 'All attacks', slots: { 1: w('Longsword', 5, 5, 0), 2: w('Javelin', 5, 30, 120), 3: w('Handaxe', 5, 20, 60), 5: w('Unarmed', 5, 5, 0), 6: { what: 'Shove', act: `shove rook ${t.id}` } } };
+}
+function rootFor(t) {
+  if (t.kind === 'enemy') return {
+    title: t.name,
+    slots: {
+      1: { role: 'Strike', ...strikeFor(t), full: () => weaponList(t) },
+      2: { role: 'Signature', what: 'Approach & strike', odds: dist(me(), t) <= 30 ? 'in reach' : 'too far', off: dist(me(), t) > 30, act: `move rook (adjacent ${t.id}); attack rook ${t.id} longsword` },
+      3: { role: 'Kit', what: 'Maneuvers', sub: () => ({ title: 'Maneuvers', slots: {
+        1: { what: 'Trip Attack', odds: 'DC 13 Str', act: `ruling: trip ${t.id}` },
+        2: { what: 'Menacing', odds: 'DC 13 Wis', act: `ruling: frighten ${t.id}` },
+        3: { what: 'Precision', odds: '+1d8 to hit', act: 'note: precision on next miss' },
+        5: { what: 'Riposte', odds: 'reaction', off: true },
+        6: { what: 'Second Wind', self: true, odds: '1d10+3', act: 'heal rook 1d10+3' } } }) },
+      4: { role: 'Tactics', what: 'Tactics', sub: () => ({ title: 'Tactics', slots: {
+        1: { what: 'Shove', odds: 'Athletics', act: `shove rook ${t.id}` },
+        2: { what: 'Grapple', odds: 'Athletics', act: `ruling: grapple ${t.id}` },
+        3: { what: 'Disarm', odds: 'Athletics', act: `ruling: disarm ${t.id}` },
+        5: { what: 'Help ally', act: `ruling: help vs ${t.id}` },
+        6: { what: 'Ready', odds: 'on trigger', act: `ready rook attack ${t.id}` } } }) },
+      5: { role: 'Inspect', what: 'Inspect', inspect: t },
+      6: { role: 'Move', what: 'Move', sub: () => ({ title: 'Move', slots: {
+        1: { what: 'Approach', odds: dist(me(), t) + ' ft', act: `move rook (adjacent ${t.id})` },
+        2: { what: 'Flank', odds: 'opposite ally', act: `move rook (flank ${t.id})` },
+        3: { what: 'Out of reach', act: `move rook (away from ${t.id})` },
+        5: { what: 'Throw oil flask', odds: '20 ft', act: `ruling: oil on ${t.id}` },
+        6: { what: 'Disengage', act: 'disengage rook' } } }) },
+    },
+  };
+  if (t.kind === 'party') return {
+    title: t.name,
+    slots: {
+      1: t.hp === 0 ? { role: 'Aid', what: 'Stabilize', odds: 'Medicine DC 10', act: `check rook medicine 10 (stabilize ${t.id})` }
+                    : { role: 'Aid', what: 'Help', act: `help rook ${t.id}` },
+      2: { role: 'Signature', what: 'Approach & strike', odds: "can't target ally", off: true },
+      3: { role: 'Kit', what: 'Maneuvers', sub: () => ({ title: 'Maneuvers', slots: {
+        1: { what: 'Rally', odds: 'temp HP', off: t.hp === 0, act: `heal ${t.id} 1d8+1 --temp` },
+        2: { what: 'Trip Attack', off: true, odds: 'enemies only' },
+        6: { what: 'Second Wind', self: true, odds: '1d10+3', act: 'heal rook 1d10+3' } } }) },
+      4: { role: 'Tactics', what: 'Tactics', sub: () => ({ title: 'Tactics', slots: {
+        1: { what: 'Drag', odds: 'half speed', act: `ruling: drag ${t.id}` },
+        2: { what: 'Hand item', act: `ruling: hand item to ${t.id}` },
+        3: { what: 'Swap places', act: `ruling: swap with ${t.id}` } } }) },
+      5: { role: 'Inspect', what: 'Inspect', inspect: t },
+      6: { role: 'Talk', what: 'Talk', sub: () => ({ title: 'Talk', slots: {
+        1: { what: 'Speak', act: 'speak rook "…"' },
+        2: { what: 'Whisper', act: 'speak rook "…" --channel whisper' },
+        5: { what: 'Shout', act: 'speak rook "…" --channel shout' } } }) },
+    },
+  };
+  return {
+    title: t.name,
+    slots: {
+      1: t.item ? { role: 'Use', what: 'Pick up', act: `ruling: pick up ${t.id}` } : { role: 'Use', what: 'Open', act: `door ${t.id} open` },
+      2: { role: 'Signature', what: 'Approach & strike', off: true, odds: 'not a creature' },
+      3: { role: 'Kit', what: 'Maneuvers', off: true, odds: 'nothing fits' },
+      4: { role: 'Try something', what: 'Try something', sub: () => ({ title: 'Try something', slots: {
+        1: { what: 'Break', odds: 'Athletics 15', act: `ruling: break ${t.id}` },
+        2: { what: 'Listen', odds: 'Perception', act: 'check rook perception 12' },
+        6: { what: 'Set fire', act: `ruling: burn ${t.id}` } } }) },
+      5: { role: 'Inspect', what: 'Inspect', inspect: t },
+      6: { role: 'Other', what: 'Other', sub: () => ({ title: 'Other', slots: { 1: { what: 'Point it out', act: `ping ${t.id}` } } }) },
+    },
+  };
+}
+function squareRoot(s) {
+  const n = cellName(s.c, s.r);
+  const d = dist(me(), s);
+  const crossesChasm = [...chasm].some((x) => { const c = x.charCodeAt(0) - 65, r = +x.slice(1) - 1; return Math.min(me().c, s.c) < c && c < Math.max(me().c, s.c) && Math.abs(r - s.r) <= 1; });
+  const blocked = chasm.has(n);
+  return {
+    title: n,
+    slots: {
+      1: blocked ? { role: 'Move here', what: 'Chasm', off: true }
+        : { role: 'Move here', what: crossesChasm ? 'Jump here' : 'Walk here', odds: d + ' ft' + (d > 30 ? ' · too far' : ''), off: d > 30, act: `move rook ${n}${crossesChasm ? ' --jump' : ''}`, moveTo: s },
+      2: { role: 'Dash', what: 'Dash here', odds: d + ' ft', off: blocked || d > 60, act: `dash rook; move rook ${n}`, moveTo: s },
+      3: { role: 'Aim here', what: 'Aim here', sub: () => ({ title: 'Aim at ' + n, slots: { 1: { what: 'Oil flask', odds: '5-ft splash', act: `ruling: oil at ${n}` } } }) },
+      4: { role: 'Tricks', what: 'Movement tricks', sub: () => ({ title: 'Tricks', slots: {
+        1: { what: 'Jump', act: `move rook ${n} --jump`, moveTo: s, off: blocked },
+        3: { what: 'Vault', act: `move rook ${n} --vault`, moveTo: s, off: blocked },
+        5: { what: 'Drop prone', act: 'condition rook add prone' },
+        6: { what: 'Sneak there', odds: 'Stealth', act: `sneak rook; move rook ${n}`, moveTo: s, off: blocked } } }) },
+      5: { role: 'Inspect', what: 'Inspect square', inspectSq: n },
+      6: { role: 'Ping', what: 'Ping', act: `ping ${n}` },
+    },
+  };
+}
+
+// ---------- the wheel (same as the 2D mockup, but it rides on a pill) ----------
+const wheelEl = document.createElement('div');
+wheelEl.id = 'wheel'; wheelEl.hidden = true;
+overlay.appendChild(wheelEl);
+const R_IN = 40, R_OUT = 138, R_LAB = 90, GAP = 1.6;
+const slotAngle = (k) => -90 + (k - 1) * 60;
+let W = null;
+const rad = (a) => a * Math.PI / 180;
+function sectorPath(a) {
+  const a0 = rad(a - 30 + GAP), a1 = rad(a + 30 - GAP);
+  const p = (r, t) => `${(r * Math.cos(t)).toFixed(2)} ${(r * Math.sin(t)).toFixed(2)}`;
+  return `M ${p(R_IN, a0)} L ${p(R_OUT, a0)} A ${R_OUT} ${R_OUT} 0 0 1 ${p(R_OUT, a1)} L ${p(R_IN, a1)} A ${R_IN} ${R_IN} 0 0 0 ${p(R_IN, a0)} Z`;
+}
+function openWheelOn(e) {
+  closeAll();
+  W = { ent: e, mk: e.mk, stack: [rootFor(e)], hot: 0, offset: 0, spin: null };
+  startWheel();
+}
+function openWheelOnSquare(c, r) {
+  closeAll();
+  W = { square: { c, r, point: new THREE.Vector3(c + .5, floorTop(c, r), r + .5) }, mk: sqMk, stack: [squareRoot({ c, r })], hot: 0, offset: 0, spin: null };
+  sqMk.x = null;
+  startWheel();
+}
+function startWheel() {
+  wheelEl.hidden = false;
+  buildWheel();
+  spin(+1, .5);
+}
+function closeWheel() { W = null; wheelEl.hidden = true; wheelEl.innerHTML = ''; }
+function closeAll() { closeWheel(); closeMore(); }
+const curMenu = () => W.stack[W.stack.length - 1];
+const slotOf = (menu, k) => (W.stack.length > 1 && k === 4 ? { what: 'Back', back: true } : menu.slots[k] || null);
+
+function buildWheel() {
+  const menu = curMenu();
+  const depth = W.stack.length;
+  let svg = '<svg viewBox="-150 -150 300 300"><g id="ring">';
+  for (let k = 1; k <= 6; k++) {
+    const s = slotOf(menu, k);
+    const cls = !s ? 'sector off' : s.back ? 'sector back' : s.off ? 'sector off' : 'sector';
+    svg += `<path class="${cls}" data-k="${k}" d="${sectorPath(slotAngle(k))}"/>`;
+  }
+  svg += `</g><circle class="hub" r="${R_IN - 4}"/></svg>`;
+  let labs = '';
+  for (let k = 1; k <= 6; k++) {
+    const s = slotOf(menu, k);
+    if (!s) { labs += `<div class="lab off" data-k="${k}"><span class="key">${k}</span></div>`; continue; }
+    const role = depth === 1 && s.role && s.role !== s.what ? `<div class="role">${s.role}</div>` : '';
+    const what = s.back ? '↶ Back' : s.what + (s.sub ? ' ▸' : '');
+    labs += `<div class="lab${s.off ? ' off' : ''}" data-k="${k}"><span class="key">${k}</span>${role}<div class="what">${what}${s.self ? '<span class="self">self</span>' : ''}</div>${s.odds ? `<div class="odds">${s.odds}</div>` : ''}</div>`;
+  }
+  wheelEl.innerHTML = svg + labs + `<div class="hubtxt" style="top:0">${depth > 1 ? '‹ ' : ''}${menu.title}</div>`;
+  wheelEl.querySelectorAll('.sector').forEach((p) => {
+    const k = +p.dataset.k;
+    p.onmouseenter = () => setHot(k);
+    p.onmouseleave = () => setHot(0);
+    p.onclick = (ev) => { ev.stopPropagation(); choose(k, ev.shiftKey); };
+  });
+  wheelEl.querySelector('.hub').onclick = (ev) => { ev.stopPropagation(); back(); };
+  setHot(W.hot);
+  place();
+}
+function setHot(k) {
+  if (!W) return;
+  W.hot = k;
+  wheelEl.querySelectorAll('.sector').forEach((p) => p.classList.toggle('hot', +p.dataset.k === k && !p.classList.contains('off')));
+  wheelEl.querySelectorAll('.lab').forEach((l) => l.classList.toggle('hot', +l.dataset.k === k));
+}
+function spin(dir, frac = 1) { W.spin = { from: -dir * 60 * frac, t0: performance.now(), dur: SPIN() }; }
+const ease = (t) => 1 - Math.pow(1 - t, 3);
+function place() {
+  const ring = wheelEl.querySelector('#ring');
+  if (ring) ring.setAttribute('transform', `rotate(${W.offset.toFixed(2)})`);
+  wheelEl.querySelectorAll('.lab').forEach((l) => {
+    const a = rad(slotAngle(+l.dataset.k) + W.offset);
+    l.style.left = (R_LAB * Math.cos(a)).toFixed(1) + 'px';
+    l.style.top = (R_LAB * Math.sin(a) + 4).toFixed(1) + 'px';
+  });
+}
+// The wheel sits on its pill and follows it as the camera moves, kept inside the window.
+function updateWheel(now) {
+  if (!W) return;
+  if (W.spin) {
+    const t = Math.min(1, (now - W.spin.t0) / W.spin.dur);
+    W.offset = W.spin.from * (1 - ease(t));
+    if (t >= 1) W.spin = null;
+    place();
+  }
+  const m = W.mk;
+  const R = R_OUT + 4;
+  W.x = Math.max(R, Math.min(innerWidth - R, m.x));
+  W.y = Math.max(R, Math.min(innerHeight - R, m.y));
+  wheelEl.style.left = W.x + 'px'; wheelEl.style.top = W.y + 'px';
+}
+function choose(k, shift) {
+  if (!W) return;
+  const s = slotOf(curMenu(), k);
+  if (!s || s.off) return;
+  if (s.back) return back();
+  if (shift && s.full && W.stack.length === 1) return drill(s.full());
+  if (s.sub) return drill(s.sub());
+  if (s.inspect) inspect(s.inspect);
+  if (s.inspectSq) inspectSquare(s.inspectSq);
+  if (s.act) log(s.what, s.act);
+  if (s.moveTo) { Object.assign(me(), { c: s.moveTo.c, r: s.moveTo.r }); layout(); }
+  closeWheel();
+}
+function drill(menu) { W.stack.push(menu); W.hot = 0; buildWheel(); spin(+1); }
+function back() {
+  if (!W) return closeMore();
+  if (W.stack.length === 1) return closeWheel();
+  W.stack.pop(); W.hot = 0; buildWheel(); spin(-1);
+}
+
+// ---------- input ----------
+// A click (not a drag) on the scene: close what's open, or open the square wheel on the floor that was hit.
+// Bodies are never click targets; their pills are.
+let down = null;
+renderer.domElement.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; });
+renderer.domElement.addEventListener('pointerup', (ev) => {
+  if (!down || ev.button !== 0 || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+  if (W || listEl) return closeAll();
+  const ndc = new THREE.Vector2(ev.clientX / innerWidth * 2 - 1, -(ev.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera); ray.far = Infinity;
+  const hit = ray.intersectObjects(occluders, false)[0];
+  const cell = hit?.object.userData.cell;
+  if (cell && !walls.has(cellName(cell.c, cell.r))) openWheelOnSquare(cell.c, cell.r);
+});
+addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  const dragged = down && down.b === 2 && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5;
+  if (!dragged) back();
+});
+addEventListener('keydown', (ev) => {
+  if (/^Digit[1-6]$/.test(ev.code) && W) { const k = +ev.code.slice(5); setHot(k); choose(k, ev.shiftKey); return; }
+  if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); back(); }
+});
+
+// ---------- side panels ----------
+function log(what, act) {
+  const el = document.getElementById('log');
+  el.insertAdjacentHTML('afterbegin', `<div>${what} → <code>${act}</code></div>`);
+  while (el.children.length > 3) el.lastChild.remove();
+}
+function inspect(t) {
+  const d = t.kind === 'object' ? '' : ` · ${dist(me(), t)} ft`;
+  document.getElementById('card').innerHTML = `<b>${t.name}</b>${d}<br>${t.ac ? 'AC ' + t.ac : ''}${t.hp != null ? ` · ${t.hp === 0 ? 'down' : 'looks ' + (t.hp > 10 ? 'healthy' : 'fragile')}` : ''}${t.alt ? ` · flying ${t.alt} ft` : ''}${t.prone ? ' · prone' : ''}`;
+}
+function inspectSquare(n) {
+  document.getElementById('card').innerHTML = `<b>${n}</b><br>${chasm.has(n) ? 'A chasm. Jump or fall.' : 'Packed earth. Nothing lying here.'}`;
+}
+
+// ---------- loop ----------
+renderer.setAnimationLoop((now) => {
+  controls.update();
+  for (const e of ents) e.obj.position.lerp(e.target, .15);
+  const bat = ents.find((e) => e.id === 'bat');
+  bat.obj.position.y = bat.target.y + Math.sin(now / 400) * .08;
+  renderer.render(scene, camera);
+  updateMarkers();
+  updateWheel(now);
+});
+</script>
+</body>
+</html>
