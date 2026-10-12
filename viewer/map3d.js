@@ -529,6 +529,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (!g || !lastState || !cells || cells.length < 2) return Promise.resolve();
     const pts = cells.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(lastState, p.x, p.y) * FT, p.y + 0.5); });
     if (glides.has(id)) glides.get(id)();
+    if (follow && !followYielded) focusOn(id, cells[cells.length - 1]); // track whoever is actually moving
     g.position.copy(pts[0]); g.userData.applied = null; g.userData.path = pts.slice(1);
     clearTrail();
     const geometry = new THREE.BufferGeometry().setFromPoints(pts.map((p) => p.clone().setY(p.y + 0.06)));
@@ -700,21 +701,23 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
 
   // ---------- camera ----------
   let defDist = 30, ease = null;
-  function focusOn(id) {
+  function focusOn(id, at) {
     const c = lastState && lastState.creatures[id];
     if (!c || !c.pos || c.hidden) return;
-    const p = cellOf(c.pos);
-    const to = new THREE.Vector3(p.x + 0.5, (c.elev || 0) * FT + 0.5, p.y + 0.5);
+    const p = cellOf(at || c.pos);
+    const to = new THREE.Vector3(p.x + 0.5, (at ? cellElev(lastState, p.x, p.y) : c.elev || 0) * FT + 0.5, p.y + 0.5);
     const off = camera.position.clone().sub(controls.target), d = off.length();
     if (d > defDist * 2.5) off.setLength(defDist);
     ease = { t0: performance.now(), fromT: controls.target.clone(), toT: to, fromO: camera.position.clone().sub(controls.target), toO: off };
   }
   function followTurn(v) {
+    // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
+    // turn has started on screen (v.current may already be ahead of it while the queue plays out).
     const turns = (v.log || []).filter((e) => e.type === 'turn'), latest = turns[turns.length - 1];
-    const key = JSON.stringify([v.round, v.current, latest || null, latest ? turns.filter((e) => logKey(e) === logKey(latest)).length : 0]);
+    const key = JSON.stringify([v.name, v.round, latest ? latest.n : v.current]);
     if (key === turnKey) return;
     turnKey = key; followYielded = false;
-    if (follow) focusOn(v.current);
+    if (follow) focusOn((latest && latest.data && latest.data.id) || v.current);
   }
   // Yield to the player's own camera moves (press, drag, zoom), not to a pointer just passing over the map.
   const stopEase = () => { ease = null; followYielded = true; };
