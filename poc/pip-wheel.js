@@ -10,9 +10,9 @@
 //
 // While open the wheel owns its clicks, keys 1-6, Esc/Backspace and right-click, in the capture phase. It never
 // stops a pointerup (camera controls must see every button release); a click it used is marked `ev.pwHandled`.
-// The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds at once without
-// closing: it greys, shrinks to 0.6 and fades out. While folded it fades back in (still small) as the pointer comes
-// near, and re-entering the ring springs it back to full. Keys still work and clicks pass through while folded.
+// The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds without closing.
+// How folded it looks is spatial, not timed: farther away it greys, shrinks toward 0.85 and fades out; coming back it
+// grows and brightens, and is full again on the full-size ring or any full-size icon or caption. Keys still work and clicks pass through while folded.
 // A click inside the ring goes to onInnerClick(ev) first; if that returns true (the host picked something else
 // there) the wheel leaves it, otherwise it backs out.
 
@@ -55,7 +55,7 @@ const ease = (t) => 1 - Math.pow(1 - t, 3);
 const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang just under them.
-const D = 34, GAP = 6, NEAR = 140, GRACE = 10;   // NEAR: px out where a folded wheel starts fading back in; GRACE: see pointermove
+const D = 34, GAP = 6, NEAR = 140, GRACE = 10;   // NEAR: px beyond the open area where a folded wheel is fully gone; GRACE: see pointermove
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // The caption: the slot's `short` if it has one, else its title, cut to the first word when long ("Approach & strike"
@@ -82,7 +82,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function open(menu, anchor) {
     close(true);
-    S = { stack: [menu], anchor, folded: false, fold: 0, near: 0, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
+    S = { stack: [menu], anchor, folded: false, vis: 1, near: 1, hot: 0, offset: 0, spin: null, grow: { t0: performance.now(), dur: 120 }, x: 0, y: 0, R: 80 };
     el.hidden = false;
     build();
     spin(+1, .5);
@@ -127,12 +127,14 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     S.R = Math.max(70, Math.min(120, (a.r || 30) + D / 2 + GAP));   // 70: the least that keeps neighbouring captions apart
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
-    S.fold += ((S.folded ? 1 : 0) - S.fold) * .35;
+    // How open it looks is spatial: `near` (1 at the open area's edge, 0 at NEAR px beyond it) drives size .85→1,
+    // opacity and colour; the easing below only smooths frame to frame.
+    S.vis += ((S.folded ? S.near : 1) - S.vis) * .35;
     S.r = S.R;
-    S.scale = (.6 + .4 * ease(g)) * (1 - .4 * S.fold);
-    const op = 1 - S.fold + S.fold * .5 * S.near;
+    S.scale = (.6 + .4 * ease(g)) * (.85 + .15 * S.vis);
+    const op = S.vis ** 1.5;
     el.style.opacity = op;
-    el.style.filter = S.fold > .01 ? `grayscale(${S.fold.toFixed(2)})` : '';
+    el.style.filter = S.vis < .99 ? `grayscale(${(1 - S.vis).toFixed(2)})` : '';
     el.style.visibility = op < .02 ? 'hidden' : '';
     // keep the ring (not every label) on screen, so it stays centred on the target as long as possible
     const padX = S.R + 52, padY = S.R + 40;
@@ -183,6 +185,17 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }
     return 0;
   }
+  // px from (mx, my) to the open area: the full-size ring and every full-size icon and caption, grown by GRACE
+  function gap(mx, my) {
+    let d = away(mx, my);
+    for (const b of S.btns) {
+      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t);
+      const c = b.querySelector('.c'), cw = c.offsetWidth / 2, cy = iy + D / 2 + 2;
+      d = Math.min(d, Math.hypot(mx - ix, my - iy) - D / 2,
+        Math.hypot(Math.max(0, Math.abs(mx - ix) - cw), Math.max(0, cy - my, my - cy - c.offsetHeight)));
+    }
+    return Math.max(0, d - GRACE);
+  }
   const away = (mx, my) => Math.hypot(mx - S.x, my - S.y) - S.R;   // px beyond the ring
   function setHot(k) {
     if (S.hot === k) return;
@@ -220,7 +233,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       const out = away(ev.clientX, ev.clientY), g = GRACE + (S.folded ? 0 : 4);
       S.folded = out > g && !hit(ev.clientX, ev.clientY, g);
       const k = S.folded ? 0 : hit(ev.clientX, ev.clientY);
-      S.near = Math.max(0, Math.min(1, 1 - out / NEAR));
+      S.near = S.folded ? Math.max(0, 1 - gap(ev.clientX, ev.clientY) / NEAR) : 1;
       setHot(k);
     }],
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
