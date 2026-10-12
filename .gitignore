@@ -13,3 +13,9 @@ listening.json
 # player profiles (sign-in codes) and their characters
 players.json
 characters/
+
+# scratch game for side sessions and tests (node tools/sandbox.js ...)
+.sandbox/
+
+# local backups of live games
+saves/

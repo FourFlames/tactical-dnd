@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "viewer",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 5173
+    },
+    {
+      "name": "viewer-sandbox",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.env.PORT='5174'; process.env.TDND_DATA='.sandbox'; require('./server.js')"],
+      "port": 5174
+    }
+  ]
+}

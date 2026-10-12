@@ -1,6 +1,8 @@
 // Smoke tests for the engine. Run: node test.js
-// Uses a scratch copy of state so it won't clobber a game in progress.
+// Uses a scratch data folder (and backs up whatever is in it) so it won't clobber a game in progress.
 'use strict';
+// Runs against a scratch data folder (TDND_DATA) unless one is given, so a game in progress is never touched.
+if (!process.env.TDND_DATA) process.env.TDND_DATA = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'tdnd-test-'));
 
 const { spawnSync } = require('child_process');
 const fs = require('fs');

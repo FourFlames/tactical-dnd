@@ -1,6 +1,8 @@
 // Tests for NPC minds (lib/minds.js): the scenarios and invariants from docs/stealth.md.
 // Run: node test-minds.js   (backs up and restores any game in progress, like test.js)
 'use strict';
+// Runs against a scratch data folder (TDND_DATA) unless one is given, so a game in progress is never touched.
+if (!process.env.TDND_DATA) process.env.TDND_DATA = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'tdnd-test-'));
 
 const { spawnSync } = require('child_process');
 const fs = require('fs');
