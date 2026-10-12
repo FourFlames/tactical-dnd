@@ -914,7 +914,7 @@ function pointCell(x, y) {
 }
 function clearCursor() { cursor.id = null; cursor.cell = null; cursor.z = null; cursorChanged(); }
 function setZ(z) { if (!cursor.cell) return; cursor.z = z === null || Number.isNaN(z) ? null : Math.round(z / 5) * 5; cursorChanged(); }
-function cursorChanged() { selected = cursor.id; render(); fetchLook(); }
+function cursorChanged() { actionConfirm = null; selected = cursor.id; render(); fetchLook(); }
 
 function fetchLook() {
   const key = JSON.stringify([cursor.id, cursor.cell, cursor.z]);
@@ -1028,9 +1028,24 @@ const myTurn = () => (canTalk() && me.turn) || null;
 const nameOf = (id) => (state && state.creatures[id] ? state.creatures[id].name : 'Someone');
 const SKILL_LIST = ['perception', 'investigation', 'insight', 'athletics', 'acrobatics', 'stealth', 'arcana', 'history', 'nature', 'religion', 'medicine', 'survival', 'sleight-of-hand', 'animal-handling', 'intimidation', 'persuasion', 'deception', 'performance'];
 let turnMsg = { text: '', err: false };
+let actionConfirm = null;
+function confirmKey(kind, extra = {}) {
+  return JSON.stringify([kind, state && state.round, state && state.turnIdx, myTurn(), state && state.creatures, extra]);
+}
+function confirmation(kind, extra = {}) {
+  const key = confirmKey(kind, extra);
+  return actionConfirm && actionConfirm.key === key ? actionConfirm : null;
+}
+function secondClick(kind, extra, text) {
+  if (confirmation(kind, extra)) { actionConfirm = null; return true; }
+  actionConfirm = { kind, key: confirmKey(kind, extra), text };
+  drawTurn(); drawLook();
+  return false;
+}
 function setTurnMsg(text, err) { turnMsg = { text, err: !!err }; drawTurn(); }
 
 async function act(action, extra = {}) {
+  actionConfirm = null;
   setTurnMsg('…');
   try {
     const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action }, extra)) });
@@ -1062,9 +1077,9 @@ function drawTurn() {
     + b('Dodge', 'dodge', { disabled: t.action })
     + b('Hide', 'hide', bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action })
     + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
-    + b('End turn', 'end', { cls: 'gold' })
+    + b(confirmation('end') ? 'Click again to end turn' : 'End turn', 'end', { cls: 'gold' })
     + '</div>'
-    + `<div class="tmsg ${turnMsg.err ? 'err' : ''}">${esc(turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.'))}</div>`;
+    + `<div class="tmsg ${turnMsg.err ? 'err' : ''}">${esc((confirmation('end') || {}).text || turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.'))}</div>`;
 }
 document.getElementById('turnSec').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
@@ -1072,7 +1087,7 @@ document.getElementById('turnSec').addEventListener('click', (e) => {
   const action = btn.dataset.act;
   if (action === 'end') {
     const t = myTurn();
-    if (t && !t.action && !confirm('End your turn without using your action?')) return;
+    if (t && !t.action && !secondClick('end', {}, 'Your action is unused. Click again to end your turn.')) return;
   }
   act(action, btn.dataset.as ? { as: btn.dataset.as } : {});
 });
@@ -1092,6 +1107,7 @@ function updatePath() {
   const key = JSON.stringify([cell, moveOpts, t && t.used, t && state.creatures[t.id] && state.creatures[t.id].pos, t && t.dash]);
   if (key === pathKey) return;
   pathKey = key;
+  if (actionConfirm && actionConfirm.kind === 'move') actionConfirm = null;
   clearTimeout(pathTimer);
   if (!cell) { pathData = null; drawPath(); return; }
   pathTimer = setTimeout(async () => {
@@ -1135,10 +1151,12 @@ function lookActions() {
       const dashAs = !t.action ? 'action' : bonusDash ? 'bonus' : null;
       const dashFits = !p.ok && dashAs && p.dashLeft && p.cost <= p.dashLeft;
       const what = { jump: 'jump', leap: 'leap up', grab: 'haul yourself up', climb: 'climb fast' };
+      const warning = confirmation('move', { path: p, options: moveOpts, dashAs: p.ok ? null : dashAs });
       html += '<div class="movebox">'
         + `<label><input type="checkbox" id="mvJump"${moveOpts.jump ? ' checked' : ''}> jump</label><label><input type="checkbox" id="mvFast"${moveOpts.fastClimb ? ' checked' : ''}> climb fast</label>`
         + (p.checks.length ? `<div class="dcs">On the way: ${p.checks.map((c) => `Athletics DC ${c.dc} to ${what[c.kind] || c.kind} at ${c.to}`).join('; ')}</div>` : '')
         + (p.provokers.length ? `<div class="warn">Leaving ${esc(p.provokers.join(', '))}'s reach: opportunity attack.</div>` : '')
+        + (warning ? `<div class="warn" role="status">${esc(warning.text)}</div>` : '')
         + '<div class="btns">'
         + (p.ok ? `<button class="btn gold" id="mvGo">Move here<small>${p.cost} ft</small></button>`
           : dashFits ? `<button class="btn gold" id="mvDash" data-as="${dashAs}">Dash${dashAs === 'bonus' ? ' (bonus)' : ''} &amp; move<small>${p.cost} ft</small></button>`
@@ -1164,7 +1182,8 @@ function wireLookActions() {
   on('mvFast', 'change', (e) => { moveOpts.fastClimb = e.target.checked; updatePath(); });
   const go = async (dashAs) => {
     const p = pathData;
-    if (p.provokers.length && !confirm(`Moving out of ${p.provokers.join(', ')}'s reach provokes an opportunity attack. Move anyway?`)) return;
+    if (!p || !look || p.cell !== look.cell) return;
+    if (p.provokers.length && !secondClick('move', { path: p, options: moveOpts, dashAs }, `Provokes ${p.provokers.join(', ')}. Click again to ${dashAs ? 'dash and move' : 'move'}.`)) return;
     if (dashAs && !(await act('dash', dashAs === 'bonus' ? { as: 'bonus' } : {}))) return;
     await act('move', { cell: p.cell, jump: moveOpts.jump, fastClimb: moveOpts.fastClimb });
   };
