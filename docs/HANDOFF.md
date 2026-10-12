@@ -32,7 +32,7 @@ The baton for short sessions. **Read this file and nothing else up front.** Then
 8. [ ] **One Warren map + 3D looks**: bridge + new entryway + caves in one `goblin-warren.json` (old ones go to `encounters/old/`); pad ragged rows with rock; in 3D, rock masses for wall cells with no floor neighbour, a backdrop past the map edge, chasm depth. Ref: plan Phase 3.
 
 ## Log
-- 2026-10-11: Pip wheel fold is spatial: size .85→1, opacity and colour follow the distance to the open area (ring + icons + captions), no timed pop.
+- 2026-10-11: Pip wheel fold is spatial: size .85→1, opacity and colour follow the unsigned distance to the nearest grey line (ring or icon edge), gone by 96 px.
 - 2026-10-11: Pip wheel folds instantly (grey, 0.6×, fades) and fades back in small on approach; pops to full on the full-size ring or any full-size icon/caption (+10 px). Inside an open wheel you can hover and click a square-mate to switch.
 - 2026-10-11: Pip wheel: icon + short title caption underneath, details in one tooltip; the grey ring is the fold cutoff (icons/captions hold it open, 140 ms grace).
 - 2026-10-11: Pip wheel icons on a true hexagon with attached, balanced label chips (Sonnet); selection ring/halo sized from the model, capped at its square.

@@ -55,7 +55,7 @@ const ease = (t) => 1 - Math.pow(1 - t, 3);
 const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang just under them.
-const D = 34, GAP = 6, NEAR = 140, GRACE = 10;   // NEAR: px beyond the open area where a folded wheel is fully gone; GRACE: see pointermove
+const D = 34, GAP = 6, NEAR = 96, GRACE = 10;   // NEAR: px past the ring or an icon where the wheel has faded out; GRACE: see pointermove
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // The caption: the slot's `short` if it has one, else its title, cut to the first word when long ("Approach & strike"
@@ -127,9 +127,9 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     S.R = Math.max(70, Math.min(120, (a.r || 30) + D / 2 + GAP));   // 70: the least that keeps neighbouring captions apart
     const g = S.grow ? Math.min(1, (now - S.grow.t0) / S.grow.dur) : 1;
     if (g >= 1) S.grow = null;
-    // How open it looks is spatial: `near` (1 at the open area's edge, 0 at NEAR px beyond it) drives size .85→1,
+    // How open it looks is spatial: `near` (1 on or inside the ring or an icon, 0 at NEAR px past the nearest one) drives size .85→1,
     // opacity and colour; the easing below only smooths frame to frame.
-    S.vis += ((S.folded ? S.near : 1) - S.vis) * .35;
+    S.vis += ((S.hot ? 1 : S.near) - S.vis) * .35;   // on a button (even its caption) it is always full
     S.r = S.R;
     S.scale = (.6 + .4 * ease(g)) * (.85 + .15 * S.vis);
     const op = S.vis ** 1.5;
@@ -185,16 +185,14 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }
     return 0;
   }
-  // px from (mx, my) to the open area: the full-size ring and every full-size icon and caption, grown by GRACE
+  // Unsigned distance (px) from (mx, my) to the nearest grey line: the ring, or any icon's edge at full size. 0 inside.
   function gap(mx, my) {
     let d = away(mx, my);
     for (const b of S.btns) {
-      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t);
-      const c = b.querySelector('.c'), cw = c.offsetWidth / 2, cy = iy + D / 2 + 2;
-      d = Math.min(d, Math.hypot(mx - ix, my - iy) - D / 2,
-        Math.hypot(Math.max(0, Math.abs(mx - ix) - cw), Math.max(0, cy - my, my - cy - c.offsetHeight)));
+      const t = rad(slotAngle(+b.dataset.k) + S.offset);
+      d = Math.min(d, Math.hypot(mx - S.x - S.R * Math.cos(t), my - S.y - S.R * Math.sin(t)) - D / 2);
     }
-    return Math.max(0, d - GRACE);
+    return Math.max(0, d);
   }
   const away = (mx, my) => Math.hypot(mx - S.x, my - S.y) - S.R;   // px beyond the ring
   function setHot(k) {
@@ -233,7 +231,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       const out = away(ev.clientX, ev.clientY), g = GRACE + (S.folded ? 0 : 4);
       S.folded = out > g && !hit(ev.clientX, ev.clientY, g);
       const k = S.folded ? 0 : hit(ev.clientX, ev.clientY);
-      S.near = S.folded ? Math.max(0, 1 - gap(ev.clientX, ev.clientY) / NEAR) : 1;
+      S.near = Math.max(0, 1 - gap(ev.clientX, ev.clientY) / NEAR);
       setHot(k);
     }],
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
