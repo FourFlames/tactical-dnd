@@ -27,8 +27,9 @@
   #stems line.hot { stroke: var(--gold); }
 
   body.dragging .mk, body.dragging .arr, body.dragging #bar { pointer-events: none !important; filter: grayscale(.8) brightness(.7); }
-  .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 2px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
-  .mk .ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
+  .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 22px; min-width: 22px; padding: 0 8px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
+  /* the icon is a badge sitting on the pill's top edge (4px overlap); the layout reserves its height (BADGE) */
+  .mk .ic { position: absolute; left: 50%; top: -14px; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
   .mk.party .ic { border-color: var(--party); color: var(--party); }
   .mk.enemy .ic { border-color: var(--enemy); color: var(--enemy); }
   .mk.object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
@@ -64,7 +65,8 @@
   .seg button.on { background: var(--gold); color: #14130f; font-weight: 600; }
 
   /* Bar mode: icon-only markers, and the action bar under the selected square */
-  body.barmode .mk:not(.square) { padding: 0 2px; }
+  body.barmode .mk:not(.square), .mk.square { padding: 0; justify-content: center; }
+  body.barmode .mk:not(.square) .ic, .mk.square .ic { position: static; margin: 0; }
   body.barmode .mk:not(.square) > span:last-child { display: none; }
   #bar { position: absolute; left: 0; top: 0; z-index: 20; display: flex; align-items: center; gap: 7px; padding: 6px; height: 66px; background: #1c1b16f2; border: 1px solid var(--gold); border-radius: 12px; pointer-events: auto; box-shadow: 0 6px 18px #0009; will-change: transform; }
   .bside { overflow: hidden; display: flex; height: 100%; align-items: center; flex: none; }
@@ -320,13 +322,16 @@ function inView(e) {
   return false;
 }
 
-// Pills whose stem tops are close on screen share one row: one baseline, packed, in the order of their stems' x, the
-// whole row centred (least squares) over its stems. A row wider than ~60% of the window shows a window of its pills,
-// with an arrow at each end; hovering an arrow slides the window along (one pill per ROW_STEP ms).
-const ROW_GAP = 4, ARR_W = 20, ROW_STEP = 220, MAX_PILLS = 5;
+// Pills whose stem tops are close on screen form a group, ordered by their stems' x. A group that fits side by side on
+// one row stays one row. Otherwise it is laid out as two interleaved rows (every other pill up): a unit is the pill plus
+// its badge, a neighbour sits on the other row so it may overlap in x, and the rows are spaced by the badge's height, so
+// no badge or pill can touch another pill's text. Same-row neighbours are kept a gap apart, and x never inverts, so the
+// kinks never cross. A group wider than the window shows a window of its pills with an arrow at each end; hovering an
+// arrow slides the window along (one pill per ROW_STEP ms).
+const ROW_GAP = 4, ARR_W = 20, ROW_STEP = 220, MAX_PILLS = 5, BADGE = 14;
 const rows = [];
 function makeRow() {
-  const r = { t: 0, off: 0, hot: 0, stepAt: 0, a: 0, amax: 0, n: 0, cap: 0, used: false, lx: 0, rx: 0, y: 0 };
+  const r = { t: 0, off: 0, hot: 0, stepAt: 0, a: 0, amax: 0, n: 0, cap: 0, used: false, lx: 0, rx: 0, y: 0, two: false };
   for (const d of [-1, 1]) {
     const el = document.createElement('div');
     el.className = 'arr tipped';
@@ -344,19 +349,42 @@ function groupPills(act) {
   const par = act.map((_, i) => i), find = (i) => (par[i] === i ? i : (par[i] = find(par[i])));
   for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
     const a = act[i], b = act[j], k = a.row && a.row === b.row ? 1.5 : 1;
-    if (Math.abs(a.ta.x - b.ta.x) <= 110 * k && Math.abs(a.ta.y - b.ta.y) <= 30 * k) par[find(i)] = find(j);
+    // pills that could end up over each other (x-overlapping, within a two-row stack in y) must be laid out together
+    const dx = Math.abs(a.ta.x - b.ta.x), near = dx <= ((a.w || 80) + (b.w || 80)) / 2 + 20;
+    if (dx <= 110 * k && Math.abs(a.ta.y - b.ta.y) <= (near ? 30 + 24 + BADGE : 30) * k) par[find(i)] = find(j);
   }
   const g = new Map();
   act.forEach((m, i) => { const r = find(i); if (!g.has(r)) g.set(r, []); g.get(r).push(m); });
   return [...g.values()];
 }
+// x for each unit (in stem order): as near its stem as the separations allow, least-squares by relaxation.
+// One row: every neighbour a gap apart. Two rows: neighbours (other row) just stay in order, pill i and i+2 a gap apart.
+function solveX(list, two) {
+  const c = list.length, d = list.map((m) => m.ta.x), x = d.slice();
+  const sep = (a, b) => (list[a].w + list[b].w) / 2 + ROW_GAP, s1 = (j) => (two ? 3 : sep(j, j + 1));
+  for (let it = 0; it < 60; it++) for (let j = 0; j + 1 < c; j++) for (const k of two ? [j + 1, j + 2] : [j + 1]) {
+    if (k >= c) continue;
+    const v = x[j] + (k === j + 1 ? s1(j) : sep(j, k)) - x[k];
+    if (v > 0) { x[j] -= v / 2; x[k] += v / 2; }
+  }
+  for (let k = 1; k < c; k++) {   // exact feasibility, then back to the stems' mean
+    x[k] = Math.max(x[k], x[k - 1] + s1(k - 1));
+    if (two && k > 1) x[k] = Math.max(x[k], x[k - 2] + sep(k - 2, k));
+  }
+  const sh = x.reduce((t, v, i) => t + v - d[i], 0) / c;
+  return x.map((v) => v - sh);
+}
 function layoutRow(r, mem, now) {
-  const n = mem.length;
+  const n = mem.length, lift = mode === 'bar' ? 0 : BADGE;
   // order by the stems' screen x; near-ties keep last frame's order so it never flickers
   mem.sort((a, b) => (Math.abs(a.ta.x - b.ta.x) < 2 ? (a.ord|0) - (b.ord|0) : a.ta.x - b.ta.x));
   mem.forEach((m, i) => { m.ord = i; m.row = r; });
-  const avg = mem.reduce((t, m) => t + m.w, 0) / n;
-  let cap = Math.min(MAX_PILLS, Math.max(2, Math.floor((innerWidth * .6 - 2 * (ARR_W + ROW_GAP) + ROW_GAP) / (avg + ROW_GAP))));
+  const avg = mem.reduce((t, m) => t + m.w, 0) / n, avail = innerWidth * .6 - 2 * (ARR_W + ROW_GAP) + ROW_GAP;
+  const capOne = Math.min(MAX_PILLS, Math.max(2, Math.floor(avail / (avg + ROW_GAP)))), capTwo = Math.min(2 * MAX_PILLS, Math.max(2, Math.floor(2 * avail / (avg + ROW_GAP))));
+  // two rows only when one row would have to move pills off their stems (hysteresis: no flicker between the two)
+  const x1 = n > 1 && n <= capOne ? solveX(mem, false) : null, moved = x1 ? Math.max(...x1.map((v, i) => Math.abs(v - mem[i].ta.x))) : 1e9;
+  r.two = n > 1 && (r.two ? moved > 3 : moved > 10);
+  let cap = r.two ? capTwo : capOne;
   if (n <= cap) cap = n;
   const arrows = n > cap, last = n - cap;
   r.n = n; r.cap = cap; r.t = Math.max(0, Math.min(last, r.t));
@@ -364,23 +392,16 @@ function layoutRow(r, mem, now) {
   if (r.hot && now - r.stepAt >= ROW_STEP) { r.t += r.hot; r.stepAt = now; }
   r.off += (r.t - r.off) * .25;
   if (Math.abs(r.t - r.off) < .003) r.off = r.t;
-  const cum = [0];
-  for (const m of mem) cum.push(cum[cum.length - 1] + m.w + ROW_GAP);
-  const at = (x) => { if (x >= n) return cum[n]; if (x <= 0) return 0; const f = Math.floor(x); return cum[f] + (x - f) * (cum[f + 1] - cum[f]); };
-  const S = at(r.off), Wd = at(r.off + cap) - S - ROW_GAP;
-  let sw = 0, sx = 0;
-  const rel = mem.map((m, i) => {
-    m.v = Math.max(0, Math.min(1, 1 - Math.max(0, r.off - i, i - (r.off + cap - 1))));
-    const x = cum[i] - S + m.w / 2;
-    sw += m.v; sx += m.v * (m.ta.x - x);
-    return x;
-  });
-  let L0 = sx / sw;
+  mem.forEach((m, i) => { m.v = Math.max(0, Math.min(1, 1 - Math.max(0, r.off - i, i - (r.off + cap - 1)))); });
+  const vis = mem.filter((m) => m.v > 0), x = solveX(vis, r.two);
   const pad = 4 + (arrows ? ARR_W + ROW_GAP : 0);
-  if (innerWidth - pad >= pad + Wd) L0 = Math.max(pad, Math.min(innerWidth - pad - Wd, L0));
-  const ty = Math.min(...mem.map((m) => m.ta.y)) - 13;
-  mem.forEach((m, i) => { m.tx = L0 + rel[i]; m.ty = ty; r.amax = Math.max(r.amax, m.wantA); m.wantA *= m.v; });
-  r.tlx = L0 - ROW_GAP - ARR_W; r.trx = L0 + Wd + ROW_GAP; r.ty = ty;
+  let lo = Math.min(...vis.map((m, i) => x[i] - m.w / 2)), hi = Math.max(...vis.map((m, i) => x[i] + m.w / 2));
+  const sh = innerWidth - pad >= pad + hi - lo ? Math.max(pad - lo, Math.min(innerWidth - pad - hi, 0)) : 0;
+  lo += sh; hi += sh;
+  const step = 24 + lift, base = Math.min(...mem.map((m) => m.ta.y)) - 13;
+  vis.forEach((m, i) => { m.tx = x[i] + sh; m.ty = base - (r.two && m.ord & 1 ? step : 0); });
+  for (const m of mem) { r.amax = Math.max(r.amax, m.wantA); m.wantA *= m.v; }
+  r.tlx = lo - ROW_GAP - ARR_W; r.trx = hi + ROW_GAP; r.ty = base - (r.two ? step / 2 : 0);
   r.arrows = arrows;
 }
 
@@ -431,7 +452,7 @@ function updateMarkers() {
     const votes = new Map();
     for (const m of mem) if (m.row && !m.row.used) votes.set(m.row, (votes.get(m.row) || 0) + 1);
     let r = [...votes].sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (!r) { r = rows.find((x) => !x.used && x.a < .02) || makeRow(); r.t = r.off = r.hot = 0; r.fresh = true; }
+    if (!r) { r = rows.find((x) => !x.used && x.a < .02) || makeRow(); r.t = r.off = r.hot = 0; r.two = false; r.fresh = true; }
     r.used = true;
     layoutRow(r, mem, now);
   }
