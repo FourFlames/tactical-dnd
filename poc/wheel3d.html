@@ -23,26 +23,17 @@
   canvas { display: block; position: fixed; inset: 0; }
   #overlay { position: fixed; inset: 0; pointer-events: none; user-select: none; }
   #stems { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #stems line { stroke: #e9e3d3; stroke-width: 1.2; opacity: 0; }
-  #stems line.hot { stroke: var(--gold); }
-
-  body.dragging .mk, body.dragging .arr, body.dragging #bar { pointer-events: none !important; filter: grayscale(.8) brightness(.7); }
-  .mk { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 22px; min-width: 22px; padding: 0 8px; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; cursor: pointer; will-change: transform, opacity; }
-  /* the icon is a badge sitting on the pill's top edge (4px overlap); the layout reserves its height (BADGE) */
-  .mk .ic { position: absolute; left: 50%; top: -14px; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1.5px solid; background: #14130f; }
-  .mk.bb .ic { top: auto; bottom: -14px; }   /* lower row of two: the badge hangs off the bottom edge */
-  .mk.party .ic { border-color: var(--party); color: var(--party); }
-  .mk.enemy .ic { border-color: var(--enemy); color: var(--enemy); }
-  .mk.object .ic { border-color: var(--neutral); color: var(--neutral); border-radius: 4px; }
-  .mk.square .ic { border-color: var(--gold); color: var(--gold); border-radius: 3px; }
-  .mk small { color: var(--ink-faint); }
-  .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1ef0; }
-  /* row scroll arrows: the count of hidden pills sits above */
-  .arr { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; width: 20px; height: 22px; display: grid; place-items: center; border-radius: 11px; background: #1c1b16e8; border: 1px solid var(--line); color: var(--ink); font-size: 15px; line-height: 1; cursor: pointer; will-change: transform, opacity; }
-  .arr b { font-weight: 400; margin-top: -2px; }
-  .arr i { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 1px; font: normal 600 10px/12px system-ui, sans-serif; color: var(--gold); }
-  .arr.off { cursor: default; color: var(--ink-faint); }
-  .arr:not(.off):hover, .arr.hot { border-color: var(--gold); background: #2e2a1ef0; color: var(--gold); }
+  body.dragging .mk, body.dragging .lb, body.dragging #bar { pointer-events: none !important; filter: grayscale(.8) brightness(.7); }
+  /* the icon is the marker: centred on the top of its stem and the click target. The label hangs off it (overlapping 4px), never clickable. */
+  .mk { opacity: 0; pointer-events: none; position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; border: 2px solid; background: #14130f; cursor: pointer; will-change: transform, opacity; }
+  .mk.party { border-color: var(--party); color: var(--party); }
+  .mk.enemy { border-color: var(--enemy); color: var(--enemy); }
+  .mk.object { border-color: var(--neutral); color: var(--neutral); border-radius: 5px; }
+  .mk:hover, .mk.hot { border-color: var(--gold); background: #2e2a1e; }
+  .lb { opacity: 0; pointer-events: none; position: absolute; left: 0; top: 0; display: flex; align-items: center; height: 18px; padding: 0 8px; border-radius: 9px; background: #1c1b16e8; border: 1px solid var(--line); white-space: nowrap; font-size: 11px; will-change: transform, opacity, clip-path; }
+  .lb small { color: var(--ink-faint); margin-left: 4px; }
+  .lb.hot { border-color: var(--gold); background: #2e2a1ef0; }
+  body.barmode .lb { display: none; }
 
   /* the wheel (same as poc/wheel.html) */
 
@@ -93,9 +84,6 @@
   .seg button.on { background: var(--gold); color: #14130f; font-weight: 600; }
 
   /* Bar mode: icon-only markers, and the action bar under the selected square */
-  body.barmode .mk:not(.square), .mk.square { padding: 0; justify-content: center; }
-  body.barmode .mk:not(.square) .ic, .mk.square .ic { position: static; margin: 0; }
-  body.barmode .mk:not(.square) > span:last-child { display: none; }
   #bar { position: absolute; left: 0; top: 0; z-index: 20; display: flex; align-items: center; gap: 7px; padding: 6px; height: 66px; background: #1c1b16f2; border: 1px solid var(--gold); border-radius: 12px; pointer-events: auto; box-shadow: 0 6px 18px #0009; will-change: transform; }
   .bside { overflow: hidden; display: flex; height: 100%; align-items: center; flex: none; }
   .bside.L { justify-content: flex-end; }
@@ -146,6 +134,9 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { createPipWheel } from './pip-wheel.js';
 
 const COLS = 12, ROWS = 9, FT = 1 / 5;
@@ -357,40 +348,58 @@ function glow(e, on) {
   e.obj.traverse((o) => { if (o.isMesh) { o.material.emissive.set(k ? '#d8b45a' : '#000000'); o.material.emissiveIntensity = k; } });
 }
 
-// ---------- markers: stem + icon + name ----------
+// ---------- markers: a world stem, an icon at its top, a name label hanging off the icon ----------
 const overlay = document.getElementById('overlay');
 const stems = document.getElementById('stems');
 const SVGNS = 'http://www.w3.org/2000/svg';
-function makeMarker(cls, icon, label) {
-  const el = document.createElement('div');
-  el.className = 'mk ' + cls;
-  el.innerHTML = `<span class="ic">${icon}</span><span>${label}</span>`;
-  overlay.appendChild(el);
-  const kink = document.createElementNS(SVGNS, 'line');   // screen-space bit from the stem's top to a pill that was pushed aside
-  stems.appendChild(kink);
-  return { el, kink, stem: makeStem(), w: 0, alpha: 0, x: null, y: null, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
-}
-// The stem is a real line in the world: solid where it is in front, dashed and dimmer where something hides it.
-const STEM_W = .9;   // world length above the top of the body
+const lbLayer = document.createElement('div'), icLayer = document.createElement('div');   // labels sit under every icon, so none can cover one
+overlay.append(lbLayer, icLayer);
+const STEM_W = .9;   // a lone stem's world length above the top of the body
+// The stem is a real line in the world: solid where it is in front, dashed and dimmer where something hides it. It is two
+// pieces so the part up to the cursor can be gold while tracing: lo (gold, body up to the trace point) and hi (the rest).
+const stemGeo = new LineGeometry().setPositions([0, 0, 0, 0, 1, 0]);   // unit length, scaled per frame
+const lineMats = [];   // fat lines need the viewport size
 function makeStem() {
-  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, STEM_W, 0)]);
-  const solid = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#e9e3d3', transparent: true, opacity: 0 }));
-  const dash = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: '#e9e3d3', dashSize: .05, gapSize: .05, transparent: true, opacity: 0, depthFunc: THREE.GreaterDepth, depthWrite: false }));
-  dash.computeLineDistances();
-  for (const l of [solid, dash]) { l.visible = false; l.frustumCulled = false; scene.add(l); }
-  return { solid, dash };
+  const piece = (w) => {
+    const mk = (o) => { const m = new LineMaterial({ linewidth: w, transparent: true, opacity: 0, ...o }); lineMats.push(m); m.resolution.set(innerWidth, innerHeight); return m; };
+    const solid = new Line2(stemGeo, mk({})), dash = new Line2(stemGeo, mk({ dashed: true, dashSize: .05, gapSize: .05, depthFunc: THREE.GreaterDepth, depthWrite: false }));
+    dash.computeLineDistances();
+    for (const l of [solid, dash]) { l.visible = false; l.frustumCulled = false; scene.add(l); }
+    return { solid, dash };
+  };
+  return { lo: piece(2.6), hi: piece(1.4) };
 }
-for (const e of ents) {
+addEventListener('resize', () => lineMats.forEach((m) => m.resolution.set(innerWidth, innerHeight)));
+const cLo = new THREE.Color('#ffbf2e'), cHi = new THREE.Color('#e9e3d3');
+const qd = new THREE.Vector3();
+function setPiece(p, A, B, col, op) {   // a piece of stem from A to B: the unit line, placed, turned and stretched
+  const len = A.distanceTo(B), vis = op > .01 && len > .004;
+  for (const [l, k] of [[p.solid, 1], [p.dash, .55]]) {
+    l.visible = vis;
+    if (!vis) continue;
+    l.position.copy(A); l.scale.y = len; l.quaternion.setFromUnitVectors(Y, qd.subVectors(B, A).normalize());
+    l.material.opacity = op * k; l.material.color.copy(col);
+    if (k < 1) l.material.dashSize = l.material.gapSize = .05 / len;   // dashes keep their world size at any length
+  }
+}
+function makeMarker(cls, glyph, label) {
+  const lb = document.createElement('div');
+  lb.className = 'lb'; lb.innerHTML = label; lbLayer.appendChild(lb);
+  const el = document.createElement('div');
+  el.className = 'mk tipped ' + cls; el.textContent = glyph; icLayer.appendChild(el);
+  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, side: 'up', ox: 0, oy: 0, w: 0, x: 0, y: 0,
+    shown: false, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
+}
+ents.forEach((e, i) => {
+  e.i = i;
   const icon = e.item ? '⚔' : e.kind === 'object' ? '▯' : e.name[0];
   const sub = e.me ? '<small>you</small>' : e.alt ? `<small>${e.alt} ft up</small>` : e.hp === 0 ? '<small>down</small>' : '';
   e.mk = makeMarker(e.kind, icon, e.name + ' ' + sub);
   e.mk.el.onclick = (ev) => { ev.stopPropagation(); pickEntity(e); };
   e.mk.el.onmouseenter = () => { mkHover = e; };
   e.mk.el.onmouseleave = () => { if (mkHover === e) mkHover = null; };
-  e.mk.el.classList.add('tipped');
   e.mk.el._tip = `<b>${e.name}</b>${e.alt ? ' · ' + e.alt + ' ft up' : e.hp === 0 ? ' · down' : ''}<br>Click to select`;
-}
-const sqMk = makeMarker('square', '▢', '');
+});
 let hoverEnt = null, mkHover = null;
 let mode = 'wheel';   // 'wheel' | 'bar'
 let B = null;         // the action bar: { square, ent, L: menu stack, R: menu stack, scroll }
@@ -407,7 +416,8 @@ function toScreen(v) {
 }
 // In view = some part of the body or of its stem (middle, top, or along the stem) has a clear line from the camera.
 function inView(e) {
-  for (const h of [e.top, e.top / 2, e.top + STEM_W * .5, e.top + STEM_W]) {
+  const L = STEM_W;
+  for (const h of [e.top, e.top / 2, e.top + L * .5, e.top + L]) {
     const p = e.obj.position.clone().setY(e.obj.position.y + h + .02);
     const d = p.distanceTo(camera.position);
     ray.set(camera.position, p.sub(camera.position).normalize()); ray.far = d - .05;
@@ -416,121 +426,64 @@ function inView(e) {
   return false;
 }
 
-// Pills whose stem tops are close on screen form a group, ordered by their stems' x. A group that fits side by side on
-// one row stays one row. Otherwise it is laid out as two interleaved rows (every other pill up): a unit is the pill plus
-// its badge, a neighbour sits on the other row so it may overlap in x, and the rows are spaced by the badge's height, so
-// no badge or pill can touch another pill's text. Same-row neighbours are kept a gap apart, and x never inverts, so the
-// kinks never cross. A group wider than the window shows a window of its pills with an arrow at each end; hovering an
-// arrow slides the window along (one pill per ROW_STEP ms).
-const ROW_GAP = 4, ARR_W = 20, ROW_STEP = 220, MAX_PILLS = 5, BADGE = 14;
-const rows = [];
-function makeRow() {
-  const r = { t: 0, off: 0, hot: 0, stepAt: 0, a: 0, amax: 0, n: 0, cap: 0, used: false, lx: 0, rx: 0, y: 0, two: false };
-  for (const d of [-1, 1]) {
-    const el = document.createElement('div');
-    el.className = 'arr tipped';
-    el.innerHTML = `<i></i><b>${d < 0 ? '‹' : '›'}</b>`;
-    el.onpointerenter = () => { if (!el.classList.contains('off')) { r.hot = d; r.stepAt = 0; } };
-    el.onpointerleave = () => { if (r.hot === d) r.hot = 0; };
-    overlay.appendChild(el);
-    r[d < 0 ? 'aL' : 'aR'] = el;
+// Icon mode: hovering an icon, or tracing a stem to its top, spreads the icons of everything in that square a little. A fixed
+// number of relaxation passes from the stem tops each frame (no running simulation), so it is stable while orbiting. Each
+// icon's offset is turned back into world space at its stem top's depth, so the stem leans to it: no screen-space lines.
+let iconMode = null, escHold = false;   // { c, r, list } or null (graphic mode)
+const SPREAD_D = 26, SPREAD_EXIT = 50;
+function spreadLayout(list) {
+  const home = list.map((e) => e.mk.ta), p = home.map((h) => ({ x: h.x, y: h.y }));
+  for (let it = 0; it < 24; it++) {
+    for (let i = 0; i < p.length; i++) for (let j = i + 1; j < p.length; j++) {
+      let dx = p[j].x - p[i].x, dy = p[j].y - p[i].y, d = Math.hypot(dx, dy);
+      if (d >= SPREAD_D) continue;
+      if (d < .01) { const a = (i * 2.4 + j) % 6.283; dx = Math.cos(a); dy = Math.sin(a); d = 1; }   // coincident: a fixed, index-based direction
+      const k = (SPREAD_D - d) / 2 / d;
+      p[i].x -= dx * k; p[i].y -= dy * k; p[j].x += dx * k; p[j].y += dy * k;
+    }
+    for (let i = 0; i < p.length; i++) { p[i].x += (home[i].x - p[i].x) * .1; p[i].y += (home[i].y - p[i].y) * .1; }
   }
-  rows.push(r);
-  return r;
+  return p.map((q, i) => ({ x: q.x - home[i].x, y: q.y - home[i].y }));
 }
-// Group the active pills by stem-top proximity on screen (a pair already in the same row links a bit further: no flicker).
-function groupPills(act) {
-  const par = act.map((_, i) => i), find = (i) => (par[i] === i ? i : (par[i] = find(par[i])));
-  for (let i = 0; i < act.length; i++) for (let j = i + 1; j < act.length; j++) {
-    const a = act[i], b = act[j], k = a.row && a.row === b.row ? 1.5 : 1;
-    // pills that could end up over each other (x-overlapping, within a two-row stack in y) must be laid out together
-    const dx = Math.abs(a.ta.x - b.ta.x), near = dx <= ((a.w || 80) + (b.w || 80)) / 2 + 20;
-    if (dx <= 110 * k && Math.abs(a.ta.y - b.ta.y) <= (near ? 30 + 24 + BADGE : 30) * k) par[find(i)] = find(j);
-  }
-  const g = new Map();
-  act.forEach((m, i) => { const r = find(i); if (!g.has(r)) g.set(r, []); g.get(r).push(m); });
-  return [...g.values()];
+const camF = new THREE.Vector3(), rayD = new THREE.Vector3();
+function worldAt(x, y, ref) {   // the point under screen (x, y) on the camera-facing plane through ref
+  rayD.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1, .5).unproject(camera).sub(camera.position).normalize();
+  camera.getWorldDirection(camF);
+  return rayD.clone().multiplyScalar(tmp.copy(ref).sub(camera.position).dot(camF) / rayD.dot(camF)).add(camera.position);
 }
-// x for each unit (in stem order): as near its stem as the separations allow, least-squares by relaxation.
-// One row: every neighbour a gap apart. Two rows: neighbours (other row) just stay in order, pill i and i+2 a gap apart.
-function solveX(list, two) {
-  const c = list.length, d = list.map((m) => m.ta.x), x = d.slice();
-  const sep = (a, b) => (list[a].w + list[b].w) / 2 + ROW_GAP, s1 = (j) => (two ? 3 : sep(j, j + 1));
-  for (let it = 0; it < 60; it++) for (let j = 0; j + 1 < c; j++) for (const k of two ? [j + 1, j + 2] : [j + 1]) {
-    if (k >= c) continue;
-    const v = x[j] + (k === j + 1 ? s1(j) : sep(j, k)) - x[k];
-    if (v > 0) { x[j] -= v / 2; x[k] += v / 2; }
-  }
-  for (let k = 1; k < c; k++) {   // exact feasibility, then back to the stems' mean
-    x[k] = Math.max(x[k], x[k - 1] + s1(k - 1));
-    if (two && k > 1) x[k] = Math.max(x[k], x[k - 2] + sep(k - 2, k));
-  }
-  const sh = x.reduce((t, v, i) => t + v - d[i], 0) / c;
-  return x.map((v) => v - sh);
+function enterSpread(e) {
+  const list = ents.filter((o) => o.c === e.c && o.r === e.r);
+  if (list.length > 1) iconMode = { c: e.c, r: e.r, list };
 }
-function layoutRow(r, mem, now) {
-  const n = mem.length, lift = mode === 'bar' ? 0 : BADGE;
-  // order by the stems' screen x; near-ties keep last frame's order so it never flickers
-  mem.sort((a, b) => (Math.abs(a.ta.x - b.ta.x) < 2 ? (a.ord|0) - (b.ord|0) : a.ta.x - b.ta.x));
-  mem.forEach((m, i) => { m.ord = i; m.row = r; });
-  const avg = mem.reduce((t, m) => t + m.w, 0) / n, avail = innerWidth * .6 - 2 * (ARR_W + ROW_GAP) + ROW_GAP;
-  const capOne = Math.min(MAX_PILLS, Math.max(2, Math.floor(avail / (avg + ROW_GAP)))), capTwo = Math.min(2 * MAX_PILLS, Math.max(2, Math.floor(2 * avail / (avg + ROW_GAP))));
-  // two rows only when one row would have to move pills off their stems (hysteresis: no flicker between the two)
-  const x1 = n > 1 && n <= capOne ? solveX(mem, false) : null, moved = x1 ? Math.max(...x1.map((v, i) => Math.abs(v - mem[i].ta.x))) : 1e9;
-  r.two = n > 1 && (r.two ? moved > 3 : moved > 10);
-  let cap = r.two ? capTwo : capOne;
-  if (n <= cap) cap = n;
-  const arrows = n > cap, last = n - cap;
-  r.n = n; r.cap = cap; r.t = Math.max(0, Math.min(last, r.t));
-  if (r.hot && !(r.hot < 0 ? r.t > 0 : r.t < last)) r.hot = 0;
-  if (r.hot && now - r.stepAt >= ROW_STEP) { r.t += r.hot; r.stepAt = now; }
-  r.off += (r.t - r.off) * .25;
-  if (Math.abs(r.t - r.off) < .003) r.off = r.t;
-  mem.forEach((m, i) => { m.v = Math.max(0, Math.min(1, 1 - Math.max(0, r.off - i, i - (r.off + cap - 1)))); });
-  const vis = mem.filter((m) => m.v > 0), x = solveX(vis, r.two);
-  const pad = 4 + (arrows ? ARR_W + ROW_GAP : 0);
-  let lo = Math.min(...vis.map((m, i) => x[i] - m.w / 2)), hi = Math.max(...vis.map((m, i) => x[i] + m.w / 2));
-  const sh = innerWidth - pad >= pad + hi - lo ? Math.max(pad - lo, Math.min(innerWidth - pad - hi, 0)) : 0;
-  lo += sh; hi += sh;
-  // two rows: the lower row's badges hang below their pills (mirrored), so the lower row rises by a badge to keep them off the stems
-  // and the rows sit just a pill apart
-  const base = Math.min(...mem.map((m) => m.ta.y)) - 13;
-  mem.forEach((m) => { m.bb = r.two && lift > 0 && !(m.ord & 1); });
-  vis.forEach((m, i) => { m.tx = x[i] + sh; m.ty = base - (r.two ? (m.ord & 1 ? 24 + lift : lift) : 0); });
-  for (const m of mem) { r.amax = Math.max(r.amax, m.wantA); m.wantA *= m.v; }
-  r.tlx = lo - ROW_GAP - ARR_W; r.trx = hi + ROW_GAP; r.ty = base - (r.two ? 12 + lift : 0);
-  r.arrows = arrows;
-}
+const inSpread = (e) => iconMode?.list.includes(e);
+
+const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: hlTex(64, (g, n) => {
+  const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+  r.addColorStop(0, 'rgba(255,250,225,1)'); r.addColorStop(.25, 'rgba(255,205,90,.8)'); r.addColorStop(1, 'rgba(255,190,50,0)');
+  g.fillStyle = r; g.fillRect(0, 0, n, n); }), blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, transparent: true, sizeAttenuation: false }));
+spark.visible = false; spark.renderOrder = 5; scene.add(spark);
+const pA = new THREE.Vector3(), pB = new THREE.Vector3(), pC = new THREE.Vector3(), pD = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
 
 function updateMarkers() {
-  const bar = mode === 'bar';
-  const busy = wheelUp();
-  const now = performance.now();
-  // 1. which bodies are on screen, in view, and near the cursor
+  const bar = mode === 'bar', busy = wheelUp();
+  const now = performance.now(), dt = Math.min(50, now - (updateMarkers.t ?? now)); updateMarkers.t = now;
+  // 1. bodies: where each stem starts, how far its marker should have grown, and the approach for the highlight
   for (const e of ents) {
-    if (!e.mk) continue;
-    const s = toScreen(e.obj.position.clone().setY(e.obj.position.y + e.top));
-    e.anchor = s;
-    e.mk.base.copy(e.obj.position).y += e.top;
-    e.mk.ta = toScreen(tmp.copy(e.mk.base).setY(e.mk.base.y + STEM_W));
-    const pillD = e.mk.alpha > .1 ? Math.hypot(mouse.x - e.mk.x, mouse.y - e.mk.y) : 1e9;
-    let want = 0;
-    if (bar) {
-      // direct hover shows the icon at full; "near" fades it in (only while nothing is selected)
-      const ramp = Math.min(1, Math.max(0, (60 - pillD) / 30));   // the pill itself only shows once picked; this keeps it while the cursor travels to it
-      if (B?.ent === e) want = 0;   // its icon is in the bar
-      else if (B && !B.ent && B.square.c === e.c && B.square.r === e.r) want = 1;
-      else if (s.front && (hoverEnt === e || (!B && ramp > 0)) && inView(e)) want = hoverEnt === e ? 1 : ramp;
-      e.gate = B?.ent !== e && s.front && !(B && !B.ent);
-    } else {
-      const ramp = Math.min(1, Math.max(0, (60 - pillD) / 30));
-      if (W?.ent === e) want = busy ? 0 : 1;   // folded wheel: its pill stays as the selection display
-      else if (busy) want = 0;   // re-aiming inside an open wheel: the floor highlight shows it; a pill would sit on the wheel
-      else if (s.front && inView(e)) want = hoverEnt === e ? 1 : ramp;
-      e.gate = !busy && s.front;
+    const m = e.mk, s = e.anchor = toScreen(tmp.copy(e.obj.position).setY(e.obj.position.y + e.top));
+    m.base.copy(e.obj.position).y += e.top;
+    m.ta = toScreen(tmp.copy(m.base).setY(m.base.y + STEM_W));
+    m.front = s.front;
+    const mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
+    let tp = 0;   // growth target: the approach while the cursor nears, 1 when picked, hovered, or the selection
+    if (s.front && !busy) {
+      if (iconMode) tp = inSpread(e) ? 1 : 0;
+      else if (W?.ent === e || mate) tp = 1;
+      else if (bar && B?.ent === e) tp = 0;   // its icon is in the bar
+      else if (inView(e)) tp = hoverEnt === e ? 1 : bar && B ? 0 : e.apL;
+      if (e.me && !iconMode && !(bar && B?.ent === e)) tp = 1;   // you are always on the map, dimmer from afar
     }
-    if (e.me && s.front && !busy && B?.ent !== e) want = Math.max(want, .55);   // you are always on the map, dimmer from afar
-    e.want = want;
+    m.gp += (tp - m.gp) * .3; if (m.gp < .002) m.gp = 0;
     // approach: 0 far .. 1 when picked (or at the `full` score); not while a wheel or the bar is up
     let ap = 0;
     if (!busy && !(bar && B) && s.front) {
@@ -539,94 +492,62 @@ function updateMarkers() {
     }
     e.apL += (ap - e.apL) * .35; if (e.apL < .002) e.apL = 0;
   }
-  // 1b. a row stays whole: its pills scrolled out of view (or far from the cursor) follow the row's strongest one
-  const keep = new Map();
-  for (const e of ents) if (e.mk?.row?.used) keep.set(e.mk.row, Math.max(keep.get(e.mk.row) || 0, e.want, e.mk.row.hot ? 1 : 0));
-  for (const e of ents) if (e.mk?.row?.used && e.gate && e.want < keep.get(e.mk.row)) e.want = keep.get(e.mk.row);
-  // the square marker exists only while its wheel is open
-  sqMk.want = 0;
-
-  // 2. each pill starts straight above its stem's top; pills with nearby stem tops share a row
-  const items = [...ents.filter((e) => e.mk).map((e) => Object.assign(e.mk, { ent: e, wantA: e.want })), Object.assign(sqMk, { wantA: sqMk.want })]
-    .filter((m) => m.wantA > 0 || m.alpha > .02);
-  for (const m of items) {
-    if (!m.w) m.w = m.el.offsetWidth || 80;
-    if (m.tx === undefined || m.wantA > 0 || m === sqMk) { m.tx = m.ta.x; m.ty = m.ta.y - 13; }   // fading ones stay where they were
+  // 2. icon mode: spread targets (functional), and the way out
+  if (iconMode) {
+    const xs = iconMode.list.map((e) => e.mk.x), ys = iconMode.list.map((e) => e.mk.y);
+    const x0 = Math.min(...xs) - SPREAD_EXIT, x1 = Math.max(...xs) + SPREAD_EXIT, y0 = Math.min(...ys) - SPREAD_EXIT - 20, y1 = Math.max(...ys) + SPREAD_EXIT + 20;
+    if (busy || mouse.x < x0 || mouse.x > x1 || mouse.y < y0 || mouse.y > y1) iconMode = null;
   }
-  for (const r of rows) { r.used = false; r.amax = 0; }
-  for (const mem of groupPills(items.filter((m) => m.ent && m.wantA > 0))) {
-    const votes = new Map();
-    for (const m of mem) if (m.row && !m.row.used) votes.set(m.row, (votes.get(m.row) || 0) + 1);
-    let r = [...votes].sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (!r) { r = rows.find((x) => !x.used && x.a < .02) || makeRow(); r.t = r.off = r.hot = 0; r.two = false; r.fresh = true; }
-    r.used = true;
-    layoutRow(r, mem, now);
-  }
-  for (const m of items) if (m.ent) m.ent.want = m.wantA;   // pills scrolled out of the window stop glowing their bodies
-  // 3. draw
-  for (const m of items) {
-    m.alpha += (m.wantA - m.alpha) * .25;
-    if (m.x === null || m.alpha < .05) { m.x = m.tx; m.y = m.ty; }
-    m.x += (m.tx - m.x) * .35; m.y += (m.ty - m.y) * .35;
-    const a = m.alpha < .02 ? 0 : m.alpha;
-    m.el.style.opacity = a;
-    m.el.style.pointerEvents = a > .4 && !wheelUp() ? 'auto' : 'none';
-    m.el.style.transform = `translate(${m.x - m.w / 2}px, ${m.y - 11}px)`;
-    // the world stem: placed at the base, faded with the pill
-    const hot = m.el.classList.contains('hot');
-    if (!m.ent) for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
-      l.visible = a > 0; l.position.copy(m.base);
-      l.material.opacity = a * k; l.material.color.set(hot ? '#d8b45a' : '#e9e3d3');
+  const offs = iconMode ? spreadLayout(iconMode.list) : null;
+  const cy = iconMode ? iconMode.list.reduce((t, e, i) => t + e.mk.ta.y + offs[i].y, 0) / iconMode.list.length : 0;
+  // 3. draw: the stem grows with the approach, the icon rides its top from 40% growth, the label grows out of the icon near the end
+  for (const e of ents) {
+    const m = e.mk, sel = W?.ent === e || B?.ent === e, mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
+    const k = iconMode ? iconMode.list.indexOf(e) : -1, o = k >= 0 ? offs[k] : { x: 0, y: 0 };
+    m.ox += (o.x - m.ox) * .3; m.oy += (o.y - m.oy) * .3;
+    if (Math.abs(m.ox) + Math.abs(m.oy) < .05) m.ox = m.oy = 0;
+    m.dim += ((e.me && hoverEnt !== e && !sel ? .6 : 1) - m.dim) * .2;
+    const r = m.gp > 0 ? Math.pow(m.gp, S.growCurve) : 0, gS = S.grow ? r : r > .02 ? 1 : 0, Lg = STEM_W * gS;
+    pA.copy(m.base); pB.copy(m.base).y += Lg;   // the stem's top, upright
+    const top = toScreen(pB);
+    m.x = top.x + m.ox; m.y = top.y + m.oy;
+    if (m.ox || m.oy) pB.copy(worldAt(m.x, m.y, pB));   // leaning toward its spread icon
+    const ik = sstep(.35, .7, r), op = m.op = ik * m.dim;
+    m.el.style.opacity = op < .02 ? 0 : op;
+    m.el.style.pointerEvents = ik > .6 && !busy && m.front ? 'auto' : 'none';
+    m.el.style.transform = `translate(${m.x}px, ${m.y}px) scale(${.6 + .4 * ik})`;
+    m.el.classList.toggle('hot', hoverEnt === e); m.lb.classList.toggle('hot', hoverEnt === e);
+    // the label: above its icon; in icon mode on the outside, away from the cluster's middle. It flips side only while hidden
+    const side = k >= 0 && m.ta.y + o.y > cy + 2 ? 'down' : 'up';
+    if (side !== m.side && m.lab < .05) m.side = side;
+    // in a crowd of icons (graphic mode) only the hovered one is named
+    const crowd = !iconMode && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
+    m.lab += (((!bar && !crowd && side === m.side) ? sstep(.65, 1, r) : 0) - m.lab) * .3; if (m.lab < .01) m.lab = 0;
+    if (!m.w) m.w = m.lb.offsetWidth;
+    m.lb.style.opacity = m.lab * m.dim;
+    m.lb.style.clipPath = `inset(0 ${50 * (1 - m.lab)}% round 9px)`;
+    m.lb.style.transform = `translate(${m.x - m.w / 2}px, ${m.y + (m.side === 'up' ? -25 : 7)}px)`;
+    m.el._lab = m.lab;
+    // the stem: gold and wider from the body up to the trace point (all of it for the icon and the selection)
+    const tracing = trace.e === e && !iconMode;
+    m.tu += ((mkHover === e || sel || (iconMode && hoverEnt === e) ? 1 : tracing ? trace.t : 0) - m.tu) * .35;
+    const sop = Math.min(1, r * 4) * (.55 + .45 * ik) * m.dim;
+    pD.lerpVectors(pA, pB, m.tu);
+    setPiece(m.stem.lo, pA, pD, cLo, sop);
+    setPiece(m.stem.hi, pD, pB, cHi, sop);
+    m.shown = sop > .05 && r > .3 && !busy && m.front && !(bar && B?.ent === e);
+    if (tracing && m.shown) {   // the spark rides the gold's tip
+      spark.visible = true; spark.position.copy(pD);
+      spark.scale.setScalar(.05 * (1 + .25 * Math.sin(now / 45) + .15 * Math.sin(now / 17)));
+      spark.material.opacity = .85 + .15 * Math.sin(now / 31);
     }
-    // the kink: from the stem's top to the pill, only when the pill was pushed off it
-    const bt = m.bb ? 11 + BADGE : 11;   // where the kink meets the pill (or its hanging badge)
-    m.el.classList.toggle('bb', !!m.bb);
-    const off = Math.hypot(m.x - m.ta.x, m.y + bt + 2 - m.ta.y);
-    m.kink.style.opacity = a > 0 && off > 4 ? a : 0;
-    m.kink.setAttribute('x1', m.ta.x); m.kink.setAttribute('y1', m.ta.y);
-    m.kink.setAttribute('x2', m.x); m.kink.setAttribute('y2', m.y + bt);
-    m.kink.classList.toggle('hot', hot);
-  }
-  // the arrows at a row's ends, each with the count of pills hidden on that side
-  for (const r of rows) {
-    if (r.used) {
-      if (r.fresh || r.a < .05) { r.lx = r.tlx; r.rx = r.trx; r.y = r.ty; }
-      r.fresh = false;
-      r.lx += (r.tlx - r.lx) * .35; r.rx += (r.trx - r.rx) * .35; r.y += (r.ty - r.y) * .35;
-    } else r.hot = 0;
-    r.a += ((r.used && r.arrows ? r.amax : 0) - r.a) * .25;
-    const a = r.a < .02 ? 0 : r.a;
-    for (const [el, d, x] of [[r.aL, -1, r.lx], [r.aR, 1, r.rx]]) {
-      const cnt = d < 0 ? r.t : r.n - r.cap - r.t, en = cnt > 0;
-      el.style.opacity = a * (en ? 1 : .4);
-      el.style.pointerEvents = en && a > .4 && !wheelUp() ? 'auto' : 'none';
-      el.style.transform = `translate(${x}px, ${r.y - 11}px)`;
-      el.classList.toggle('off', !en);
-      el.classList.toggle('hot', r.hot === d);
-      el.firstChild.textContent = en ? cnt : '';
-      el._tip = en ? `<b>${cnt} more</b> to the ${d < 0 ? 'left' : 'right'}<br>Hover to scroll` : '';
-    }
-  }
-  const dt = Math.min(50, now - (updateMarkers.t ?? now)); updateMarkers.t = now;
-  for (const e of ents) if (e.mk) {
-    const mate = bar && B && !B.ent && B.square.c === e.c && B.square.r === e.r;
-    const sel = W?.ent === e || B?.ent === e;
+    e.want = m.gp;
     hlStep(e, hoverEnt === e || sel ? 1 : mate ? .55 : 0, dt);
     // legacy flat emissive, same strengths as before
-    if (S.old) glow(e, bar ? (hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * e.want) : (W?.ent === e ? .45 : hoverEnt === e ? .55 : wheelUp() ? 0 : .16 * e.want));
+    if (S.old) glow(e, bar ? (hoverEnt === e ? .55 : B?.ent === e ? .4 : mate ? .26 : B ? 0 : .16 * m.gp) : (W?.ent === e ? .45 : hoverEnt === e ? .55 : busy ? 0 : .16 * m.gp));
     else glow(e, 0);
-    // the world stem grows with the approach; it is full once the pill is there
-    const m = e.mk, a = m.alpha < .02 ? 0 : m.alpha;
-    const len = Math.max(S.grow ? Math.pow(e.apL, S.growCurve) : 1, Math.min(1, a * 2));
-    const op = Math.max(a, .55 * Math.min(1, e.apL * (S.grow ? 4 : 1)));
-    const vis = op > .01 && len > .01;
-    cB.set('#e9e3d3').lerp(cA.set(S.pkC), Math.min(e.pk, 1));
-    for (const [l, k] of [[m.stem.solid, 1], [m.stem.dash, .55]]) {
-      l.visible = vis;
-      if (vis) { l.position.copy(m.base); l.scale.y = len; l.material.opacity = op * k; l.material.color.copy(cB); }
-    }
-    m.el.classList.toggle('hot', hoverEnt === e);
   }
+  if (!trace.e || iconMode) spark.visible = false;
 }
 
 // ---------- menus (same as the 2D mockup) ----------
@@ -791,14 +712,14 @@ const HINTS = {
   bar: 'Hover or click a body, or click the floor · bar opens under the square · mouse to its far ends scrolls · <kbd>Esc</kbd> backs out',
 };
 function setMode(m) {
-  closeAll(); mode = m; mkHover = null; hoverEnt = null;
+  closeAll(); mode = m; mkHover = null; hoverEnt = null; trace.e = null; iconMode = null;
   document.body.classList.toggle('barmode', m === 'bar');
   document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   document.getElementById('hint').innerHTML = HINTS[m];
-  for (const k of [...ents.map((e) => e.mk), sqMk]) if (k) k.w = 0;   // pills change width
+  for (const e of ents) e.mk.w = 0;   // labels change width
   try { localStorage.setItem('wheel3d.mode', m); } catch (e) { /* ignore */ }
 }
-const pickEntity = (e) => (mode === 'bar' ? barSelectEnt(e) : openWheelOn(e));
+const pickEntity = (e) => { iconMode = null; return mode === 'bar' ? barSelectEnt(e) : openWheelOn(e); };
 const goBack = () => (mode === 'bar' ? barBack() : W ? pw.back() : null);
 
 // Hover, worked out on the fly in screen space: each body is an ellipse (its projected half-height and half-width,
@@ -843,17 +764,40 @@ function cellAt(x, y) {
   const cell = ray.intersectObjects(occluders, false)[0]?.object.userData.cell;
   return cell && !walls.has(cellName(cell.c, cell.r)) ? cell : null;
 }
+// Tracing: the cursor within TRACE_R px of a shown stem (body top to icon) holds that entity, wherever it moves along the stem,
+// and beats the ellipse scoring; `t` is how far up the stem the cursor is. Off while the wheel is unfolded. The current one holds on a bit.
+const TRACE_R = 11, trace = { e: null, t: 0 };
+function traceAt(x, y) {
+  let best = null, bd = TRACE_R, bt = 0;
+  const cur = trace.e || lastBody;
+  if (!wheelUp()) for (const e of ents) {
+    const m = e.mk, x0 = e.anchor.x, y0 = e.anchor.y, dx = m.x - x0, dy = m.y - y0, l2 = dx * dx + dy * dy;
+    if (!m.shown || l2 < 64) continue;
+    if (e !== cur && ents.some((o) => o !== e && o.hv.s < 1)) continue;   // a stem doesn't steal the cursor from a body it is over, unless it is the one being followed
+    const t = Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / l2));
+    const d = Math.hypot(x - x0 - t * dx, y - y0 - t * dy) * (e === cur ? .7 : 1);
+    if (d < bd) { bd = d; best = e; bt = t; }
+  }
+  trace.e = best; trace.t = bt;
+  return best;
+}
+const pickAt = (x, y) => traceAt(x, y) || bodyAt(x, y, lastBody);
 let lastBody = null;
 function updateHover() {
   // hover keeps working while a wheel is open, except over its icons, so you can re-aim within the selected square
   const free = !(wheelUp() && pw.hot) && !mouse.ui && !mouse.btn && mouse.x > -1e3;
-  if (free) lastBody = bodyAt(mouse.x, mouse.y, lastBody); else { hoverScores(mouse.x, mouse.y); lastBody = null; }
+  if (free && !iconMode) {
+    const b = bodyAt(mouse.x, mouse.y, lastBody); traceAt(mouse.x, mouse.y); lastBody = trace.e || b;
+  } else { hoverScores(mouse.x, mouse.y); trace.e = lastBody = null; }
+  // icon mode starts when a trace reaches the top of its stem, or the pointer is on an icon (Esc holds it off until the pointer leaves)
+  const top = !iconMode && !wheelUp() && (mkHover || (trace.e && trace.t > .93 ? trace.e : null));
+  if (!top) escHold = false; else if (!escHold) enterSpread(top);
   hoverEnt = mkHover || lastBody;
   renderer.domElement.style.cursor = hoverEnt ? 'pointer' : '';
   drawHits();
 }
 function barClick(x, y) {
-  const e = bodyAt(x, y, lastBody);
+  const e = pickAt(x, y);
   if (e) return barSelectEnt(e);
   const cell = cellAt(x, y);
   if (cell) return barSelectSquare(cell.c, cell.r);
@@ -932,7 +876,7 @@ function buildBar(sides = 'LR') {
   icSq.onclick = closeBar;
   if (e) {
     icEn.className = `bic en tipped ${e.kind}`;
-    icEn.innerHTML = `<span class="ic">${e.mk.el.firstChild.textContent}</span><small>${e.name}</small>`;
+    icEn.innerHTML = `<span class="ic">${e.mk.el.textContent}</span><small>${e.name}</small>`;
     icEn._tip = `<b>${e.name}</b><br>Click to deselect (back to ${n})`;
     icEn.onclick = () => { B.ent = null; B.R = null; buildBar('R'); };
   }
@@ -945,7 +889,7 @@ function barSelectSquare(c, r) {
 }
 function barSelectEnt(e) {
   const sameSq = B && B.square.c === e.c && B.square.r === e.r;
-  const from = e.mk.alpha > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.mk.ta.x, y: e.mk.ta.y - 13 };
+  const from = e.mk.op > .15 ? { x: e.mk.x, y: e.mk.y } : { x: e.anchor.x, y: e.anchor.y };
   if (!sameSq) B = { square: { c: e.c, r: e.r }, L: [squareRoot({ c: e.c, r: e.r })], scroll: 0, nL: 0, nR: 0 };
   B.ent = e; B.R = [rootFor(e)]; B.fly = from;
   buildBar(sameSq ? 'R' : 'LR');
@@ -976,7 +920,7 @@ function startFly(from, e) {
   const to = { x: t.left + t.width / 2, y: t.top + t.height / 2 };
   const f = document.createElement('div');
   f.className = 'fly ' + e.kind;
-  f.innerHTML = `<span class="ic">${e.mk.el.firstChild.textContent}</span>`;
+  f.innerHTML = `<span class="ic">${e.mk.el.textContent}</span>`;
   document.body.appendChild(f);
   icEn.style.visibility = 'hidden';
   const a = f.animate([{ transform: `translate(${from.x - 13}px, ${from.y - 13}px) scale(.7)` }, { transform: `translate(${to.x - 13}px, ${to.y - 13}px) scale(1)` }], { duration: 300, easing: 'cubic-bezier(.2,.9,.25,1)' });
@@ -1024,7 +968,7 @@ tipEl.id = 'tip'; tipEl.hidden = true;
 document.body.appendChild(tipEl);
 let tipOwner = null;
 function setTip(el) {
-  if (el && el.closest('.mk') && mode !== 'bar') el = null;
+  if (el?.classList.contains('mk') && mode !== 'bar' && el._lab > .9) el = null;   // the label already names it
   if (el === tipOwner) return;
   tipOwner = el; tipEl.hidden = !el;
   if (el) { tipEl.innerHTML = el._tip || ''; placeTip(); }
@@ -1039,7 +983,7 @@ function placeTip() {
 }
 function tickTip() {
   if (!tipOwner) return;
-  if (!tipOwner.isConnected || ((tipOwner.classList.contains('mk') || tipOwner.classList.contains('arr') || tipOwner.classList.contains('rk')) && +tipOwner.style.opacity < .3) || tipOwner.classList.contains('off')) setTip(null);
+  if (!tipOwner.isConnected || ((tipOwner.classList.contains('mk') || tipOwner.classList.contains('rk')) && +tipOwner.style.opacity < .3) || tipOwner.classList.contains('off') || (tipOwner._lab > .9 && mode !== 'bar')) setTip(null);
   else placeTip();
 }
 document.addEventListener('pointerover', (ev) => setTip(ev.target.closest?.('.tipped') || null));
@@ -1072,8 +1016,9 @@ addEventListener('pointermove', (ev) => {
 addEventListener('pointerup', () => { grab = null; document.body.classList.remove('dragging'); }, true);
 renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!down || ev.button !== 0 || ev.pwHandled || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+  if (iconMode) { iconMode = null; return; }   // icons are the targets here; a click elsewhere just leaves
   if (mode === 'bar') return barClick(ev.clientX, ev.clientY);
-  const e = bodyAt(ev.clientX, ev.clientY, lastBody);
+  const e = pickAt(ev.clientX, ev.clientY);
   if (e) return openWheelOn(e);
   const cell = cellAt(ev.clientX, ev.clientY);
   if (cell) openWheelOnSquare(cell.c, cell.r); else closeAll();
@@ -1084,7 +1029,7 @@ addEventListener('contextmenu', (ev) => {
   if (!dragged) goBack();
 });
 addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); goBack(); }
+  if (ev.key === 'Escape' || ev.key === 'Backspace') { ev.preventDefault(); if (ev.key === 'Escape' && iconMode) { iconMode = null; escHold = true; } else goBack(); }
 });
 
 // ---------- side panels ----------
@@ -1186,10 +1131,10 @@ function updateDoc() {
   rk._tip = `<b>${P.name}</b> · HP ${P.hp}/${P.maxHp} · ${P.move} ft left<br>${P.cond.concat(P.buffs.map((b) => b.n + ' ' + b.r)).join(', ') || 'no conditions or buffs'}<br>Dots: action, bonus, reaction (hollow = used)`;
   m.el._tip = `<b>${P.name}</b> · you<br>Click to select`;
   if (!rk._w) rk._w = rk.offsetWidth || 120;
-  const a = m.alpha < .02 ? 0 : m.alpha;
+  const a = m.op < .02 ? 0 : m.op;
   rk.style.opacity = a;
   rk.style.pointerEvents = a > .4 && !wheelUp() ? 'auto' : 'none';
-  rk.style.transform = `translate(${m.x - rk._w / 2}px, ${m.y + 14}px)`;
+  rk.style.transform = `translate(${m.x - rk._w / 2}px, ${m.y + (m.side === 'down' && m.lab > .05 ? 31 : 15)}px)`;
   // the card: the doc while hovered, selected or inspected, otherwise what a click last put there
   const card = (cardDoc || hoverEnt?.me || W?.ent?.me || B?.ent?.me) ? docHtml() : cardBase;
   if (card !== cardShown) { cardShown = card; document.getElementById('card').innerHTML = card; }
@@ -1220,7 +1165,7 @@ function updateTint() {
     ['Approach'], ['apC', 'Colour'], ['apInt', 'Max intensity', 0, 1, .01], ['gamma', 'Curve (γ)', .5, 5, .1], ['range', 'Starts at', 1.5, 6, .1], ['full', 'Full at', .6, 1.2, .05],
     ['Picked'], ['pkC', 'Colour'], ['pkInt', 'Intensity', .2, 3, .05], ['snap', 'Snap (ms)', 30, 400, 5], ['over', 'Overshoot'],
     ['Fresnel'], ['frePow', 'Power (theta)', .5, 6, .1], ['freBias', 'Bias', 0, .8, .02],
-    ['Stem'], ['grow', 'Grows with approach'], ['growCurve', 'Grow curve', .5, 3, .1]];
+    ['Stem, icon, label'], ['grow', 'Stem grows with approach'], ['growCurve', 'Growth curve', .5, 3, .1]];
   const el = document.getElementById('hl'), ins = [];
   const put = (v, k) => { for (const [i, o] of ins) if (k === undefined || i.dataset.k === k) { if (i.type === 'checkbox') i.checked = S[i.dataset.k]; else i.value = S[i.dataset.k]; if (o) o.value = (+S[i.dataset.k]).toFixed(2).replace(/\.?0+$/, ''); } };
   for (const [k, label, min, max, step] of spec) {
