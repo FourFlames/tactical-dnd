@@ -366,6 +366,7 @@ const icLayer = document.createElement('div');
 icLayer.style.cssText = 'position: absolute; inset: 0; z-index: 0;';   // its own stacking context, so the z-indexes stay inside it
 overlay.append(icLayer);
 const STEM_W = .9;   // a lone stem's world length above the top of the body
+const LOW = .55;     // how much shorter the other stems get while a wheel is out of an icon
 // The stem is a real line in the world: solid where it is in front, dashed and dimmer where something hides it. It is two
 // pieces so the part up to the cursor can be gold while tracing: lo (gold, body up to the trace point) and hi (the rest).
 const stemGeo = new LineGeometry().setPositions([0, 0, 0, 0, 1, 0]);   // unit length, scaled per frame
@@ -398,7 +399,7 @@ function makeMarker(cls, glyph, label) {
   lb.className = 'lb'; lb.innerHTML = label; icLayer.appendChild(lb);
   const el = document.createElement('div');
   el.className = 'mk tipped ' + cls; el.textContent = glyph; icLayer.appendChild(el);
-  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, big: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
+  return { el, lb, stem: makeStem(), gp: 0, tu: 0, lab: 0, dim: 1, op: 0, big: 0, low: 0, ox: 0, oy: 0, w: 0, x: 0, y: 0,
     shown: false, base: new THREE.Vector3(), ta: { x: 0, y: 0 } };
 }
 ents.forEach((e, i) => {
@@ -499,6 +500,8 @@ function updateMarkers() {
       else if (inView(e)) tp = hoverEnt === e ? 1 : bar && B ? 0 : e.apL;
       if (e.me && !iconMode && !(bar && B?.ent === e)) tp = 1;   // you are always on the map, dimmer from afar
       if (pre && !iconMode) tp = pre.list.includes(e) ? Math.max(tp, pre.k) : tp * (1 - pre.k);
+    } else if (s.front && busy && W?.ent) {   // the wheel is out of an icon: that one, its square-mates and you stay (the others lowered)
+      tp = e === W.ent || e.me || (e.c === W.ent.c && e.r === W.ent.r) ? 1 : 0;
     }
     m.gp += (tp - m.gp) * .3; if (m.gp < .002) m.gp = 0;
     // approach: 0 far .. 1 when picked (or at the `full` score); not while a wheel or the bar is up
@@ -525,7 +528,9 @@ function updateMarkers() {
     m.ox += (o.x - m.ox) * .3; m.oy += (o.y - m.oy) * .3;
     if (Math.abs(m.ox) + Math.abs(m.oy) < .05) m.ox = m.oy = 0;
     m.dim += ((e.me && hoverEnt !== e && !sel ? .6 : 1) - m.dim) * .2;
-    const r = m.gp > 0 ? Math.pow(m.gp, S.growCurve) : 0, gS = S.grow ? r : r > .02 ? 1 : 0, Lg = STEM_W * gS;
+    // while a wheel is out of an icon, every other icon drops to a lower plane (shorter stem) and behind the wheel
+    m.low += ((busy && W?.ent && W.ent !== e ? 1 : 0) - m.low) * .25; if (m.low < .002) m.low = 0;
+    const r = m.gp > 0 ? Math.pow(m.gp, S.growCurve) : 0, gS = S.grow ? r : r > .02 ? 1 : 0, Lg = STEM_W * gS * (1 - LOW * m.low);
     pA.copy(m.base); pB.copy(m.base).y += Lg;   // the stem's top, upright
     const top = toScreen(pB);
     m.x = top.x + m.ox; m.y = top.y + m.oy;
@@ -540,7 +545,7 @@ function updateMarkers() {
     m.el.classList.toggle('hot', hoverEnt === e); m.lb.classList.toggle('hot', hoverEnt === e);
     // the label: always above its icon
     // in a crowd of icons only the hovered one is named (icon mode too, unless it spreads them)
-    const crowd = !(iconMode && SPREAD) && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
+    const crowd = (busy && W?.ent && !sel) || !(iconMode && SPREAD) && !sel && hoverEnt !== e && ents.some((o) => o !== e && o.mk.op > .3 && Math.hypot(o.mk.x - m.x, o.mk.y - m.y) < 30);
     m.lab += (((!bar && !crowd) ? sstep(.65, 1, r) : 0) - m.lab) * .3; if (m.lab < .01) m.lab = 0;
     if (!m.w) m.w = m.lb.offsetWidth;
     m.lb.style.opacity = m.lab * m.dim;
@@ -569,10 +574,13 @@ function updateMarkers() {
   if (!trace.e || iconMode) spark.visible = false;
   // 4. stacking: nearest to the cursor on top, each label one step above its icon
   const order = ents.filter((e) => e.mk.op > .02 || e.mk.lab > 0).sort((a, b) => Math.hypot(mouse.x - b.mk.x, mouse.y - b.mk.y) - Math.hypot(mouse.x - a.mk.x, mouse.y - a.mk.y));
+  // with a wheel out of an icon: everything else, then the wheel, then that icon and its label (the pips fold under it)
+  if (W?.ent) { order.splice(order.indexOf(W.ent) >>> 0, 1); order.push(W.ent); }
   order.forEach((e, i) => {
-    const z = String(2 * i + 1);
-    if (e.mk.el.style.zIndex !== z) { e.mk.el.style.zIndex = z; e.mk.lb.style.zIndex = String(2 * i + 2); }
+    const z = String(2 * i + 1 + (W?.ent === e ? 1 : 0));
+    if (e.mk.el.style.zIndex !== z) { e.mk.el.style.zIndex = z; e.mk.lb.style.zIndex = String(+z + 1); }
   });
+  if (W) pw.el.style.zIndex = String(W.ent ? 2 * order.length - 1 : 2 * order.length + 1);
 }
 
 // ---------- menus (same as the 2D mockup) ----------
@@ -678,24 +686,20 @@ function squareRoot(s) {
   };
 }
 
-// ---------- Wheel mode: a pip wheel around the body (poc/pip-wheel.js) ----------
-// The ring is centred on what was picked and sized from its on-screen footprint, so the body stays visible inside it.
+// ---------- Wheel mode: a pip wheel out of the icon (poc/pip-wheel.js) ----------
+// The wheel unfolds out of the picked entity's icon (a square's wheel: around the square).
 let W = null;   // { ent } or { square }
+const WHEEL_S = .8;   // the wheel's size around an icon
 const wheelUp = () => !!W && !pw.folded;   // open and unfolded: it owns the pointer
-const pw = createPipWheel(document.body, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel(),
-  // inside the ring, a click on another body (a square-mate, a flier above) switches the wheel to it
-  onInnerClick: (ev) => { const e = bodyAt(ev.clientX, ev.clientY, lastBody); if (!e || e === W?.ent) return false; openWheelOn(e); return true; } });
+// It lives in the icon layer so it can stack between the other icons and the one it came out of.
+const pw = createPipWheel(icLayer, { spinMs: SPIN, onLeaf: (s) => { closeWheel(); runSlot(s); }, onClose: () => closeWheel(),
+  // inside the ring: a click on the icon it came out of deselects; on another body (a square-mate, a flier above) switches to it
+  onInnerClick: (ev) => {
+    const m = W?.ent?.mk;
+    if (m && Math.hypot(ev.clientX - m.x, ev.clientY - m.y) < 11 * (m.sc || 1) + 4) { closeWheel(); return true; }
+    const e = bodyAt(ev.clientX, ev.clientY, lastBody); if (!e || e === W?.ent) return false; openWheelOn(e); return true;
+  } });
 const camRight = new THREE.Vector3();
-// The wheel sits at a fixed spot relative to the gold selection ring: its centre, raised a quarter of the model's
-// height (fliers: their own middle). It scales a little with the ring's size on screen, .85-1.15, never all the way.
-function bodyAnchor(e) {
-  const p = e.obj.position, foot = e.alt ? p.y + e.top / 2 : floorTop(e.c, e.r) + Math.min(e.top * .25, .35);
-  const c = toScreen(tmp.set(p.x, foot, p.z));
-  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
-  const edge = toScreen(tmp.set(p.x, foot, p.z).addScaledVector(camRight, Math.min(.48, e.half * 1.35 + .04)));
-  const ringPx = Math.hypot(edge.x - c.x, edge.y - c.y);
-  return { x: c.x, y: c.y, r: 0, s: Math.max(.85, Math.min(1.15, (ringPx / 17) ** .35)) };
-}
 function squareAnchor(c, r) {
   const y = floorTop(c, r), m = toScreen(new THREE.Vector3(c + .5, y, r + .5));
   const a = toScreen(new THREE.Vector3(c, y, r)), b = toScreen(new THREE.Vector3(c + 1, y, r + 1));
@@ -706,7 +710,7 @@ function openWheelOn(e) {
   closeAll();
   W = { ent: e };
   showSel(e.c, e.r);
-  pw.open(rootFor(e), () => bodyAnchor(e));
+  pw.open(rootFor(e), () => ({ x: e.mk.x, y: e.mk.y, r: 0, s: WHEEL_S }));   // out of its icon
 }
 function openWheelOnSquare(c, r) {
   closeAll();
