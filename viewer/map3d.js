@@ -281,9 +281,58 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
     }
     for (const w of v.walls || []) buildWall(v, w, add, geo);
-    // coordinate labels along the north and west edges
-    for (let x = 0; x < v.width; x++) addLabel(String.fromCharCode(65 + x), x + 0.5, Math.max(0, colTops[0][x]) + 0.02, -0.4, geo);
-    for (let y = 0; y < v.height; y++) addLabel(String(y + 1), -0.4, Math.max(0, colTops[y][0]) + 0.02, y + 0.5, geo);
+    buildUncharted(v);
+    // coordinate labels in a straight line along the north and west edges of what's known
+    const known = (x, y) => v.cells[y][x].fog !== 'unknown';
+    let x0 = v.width, y0 = v.height;
+    for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) if (known(x, y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); }
+    const lh = (x, y) => (known(x, y) ? Math.max(0, colTops[y][x]) : 0) + 0.02;
+    for (let x = 0; x < v.width; x++) if (v.cells.some((r, y) => known(x, y))) addLabel(String.fromCharCode(65 + x), x + 0.5, lh(x, y0), y0 - 0.4, geo);
+    for (let y = 0; y < v.height; y++) if (v.cells[y].some((c, x) => known(x, y))) addLabel(String(y + 1), x0 - 0.4, lh(x0, y), y + 0.5, geo);
+  }
+
+  // Ground you can't make out: one merged mesh under every unknown cell plus a margin round the map. Vertices are shared so the
+  // frontier fades (known-adjacent corners are mostly transparent, tinted toward the neighbouring floor) and the margin dissolves outward.
+  const UNCHARTED = '#26221c', UNCH_MARGIN = 3;
+  function buildUncharted(v) {
+    const M = UNCH_MARGIN, W = v.width, H = v.height, nx = W + 2 * M + 1, ny = H + 2 * M + 1;
+    const cellAt = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? v.cells[y][x] : null);
+    const base = new THREE.Color(UNCHARTED), tmp = new THREE.Color();
+    const pos = new Float32Array(nx * ny * 3), col = new Float32Array(nx * ny * 4), idx = [];
+    const dimTone = (c) => { // the neighbouring known floor, dimmed like remembered ground
+      const t = c.tags.includes('wall') ? WALL_TONES[0] : FLOOR_TONES[TX.surfaceFor(c) === 'water' ? 'water' : TX.surfaceFor(c)] || FLOOR_TONES.flagstone;
+      return tmp.set(typeof t === 'string' ? t : t[0]).multiplyScalar(0.38);
+    };
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const vx = i - M, vy = j - M, k = j * nx + i;
+      pos.set([vx, 0, vy], k * 3);
+      const r = TX.rng(TX.hash(vx + 100, vy + 100, 31)), tone = 1 + (r() - 0.5) * 0.12;
+      const c = new THREE.Color().copy(base).multiplyScalar(tone);
+      let a = 1, nb = null;
+      for (const [cx, cy] of [[vx - 1, vy - 1], [vx, vy - 1], [vx - 1, vy], [vx, vy]]) {
+        const n = cellAt(cx, cy);
+        if (n && n.fog !== 'unknown') { nb = n; break; }
+      }
+      if (nb) { a = 0.35; c.lerp(dimTone(nb), 0.5); }
+      else { const d = Math.max(0, -vx, vx - W, -vy, vy - H); a = 1 - d / M; }
+      col.set([c.r, c.g, c.b, a], k * 4);
+    }
+    for (let y = -M; y < H + M; y++) for (let x = -M; x < W + M; x++) {
+      const c = cellAt(x, y);
+      if (c && c.fog !== 'unknown') continue;
+      const a = (y + M) * nx + x + M, b = a + 1, d = a + nx, e = d + 1;
+      idx.push(a, d, b, b, d, e);
+    }
+    if (!idx.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+    g.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from({ length: nx * ny * 3 }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false }));
+    m.receiveShadow = true; m.renderOrder = -1;
+    m.userData.dispose = g; // also keeps it out of picking and wall-fade occlusion (see occluders)
+    terrain.add(m);
   }
 
   // Stairs climb from the lower neighbour to the higher one in four steps across the square,

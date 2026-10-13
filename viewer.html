@@ -1009,8 +1009,14 @@ let hudSel = null;
 const hudId = () => {
   if (!canTalk()) return null;
   if (state && me.creatures.includes(state.current)) return state.current;
-  return me.creatures.includes(hudSel) ? hudSel : me.creatures[0];
+  const pick = me.creatures.includes(hudSel) ? hudSel : me.creatures[0], ex = me.explore || {};
+  return (!me.turn && !ex[pick] && Object.keys(ex)[0]) || pick;
 };
+// Out of combat, picking one of your own creatures (token, portrait, model) makes it the one that acts.
+function pickActor(id) {
+  if (!canTalk() || !me.creatures.includes(id) || hudSel === id) return;
+  hudSel = id; drawAct(); drawTurn(); drawSheet(); updatePath();
+}
 const ordinal = (n) => n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
 function resLabel(k) {
   const m = /^slots(\d)$/i.exec(k);
@@ -1046,7 +1052,8 @@ function drawAct() {
   const tabs = document.getElementById('hudTabs');
   tabs.hidden = me.creatures.length < 2;
   tabs.innerHTML = me.creatures.length < 2 ? '' : me.creatures.map((cid) => `<button data-hud="${esc(cid)}" class="${cid === id ? 'on' : ''}">${esc(nameOf(cid))}</button>`).join('');
-  document.getElementById('hudWait').textContent = mine ? '' : state && state.round ? `${nameOf(state.current)}'s turn` : 'Waiting for initiative';
+  const xt = myTurn();
+  document.getElementById('hudWait').textContent = mine ? '' : xt && xt.explore ? 'Exploring' : state && state.round ? `${nameOf(state.current)}'s turn` : 'Waiting for initiative';
   document.getElementById('hudRes').innerHTML = resHtml(c && c.resources);
   document.getElementById('hudAtks').innerHTML = c && (c.attacks || []).length
     ? (c.attacks || []).map((a) => `<span>${attackLine(a)}</span>`).join('') + (myTurn() ? '<em>click a target to attack</em>' : '') : '';
@@ -1169,6 +1176,7 @@ function pointCreature(id, fromList) {
   if (cursor.mode === 'square' && !fromList) { pointSquare(c.pos); return; }
   if (cursor.id === id) return clearCursor();
   cursor.mode = 'entity'; cursor.id = id; cursor.cell = null; cursor.z = null;
+  pickActor(id);
   cursorChanged();
 }
 function pointSquare(id, keepZ) {
@@ -1370,7 +1378,9 @@ function drawCursor2D() {
 // Buttons run engine commands through /api/act for the creature whose turn it is. Plain moves,
 // dashes and the like are filed quietly for the DM; rolls and End turn wake the DM.
 const canTalk = () => !!(me && !me.error && me.creatures && me.creatures.length);
-const myTurn = () => (canTalk() && me.turn) || null;
+// In combat, the seat's creature whose turn it is; out of combat, the selected creature (it gets a round of movement per DM tick).
+const myTurn = () => (canTalk() && (me.turn || (me.explore || {})[hudId()])) || null;
+const noTurnWhy = () => (state && state.round ? 'not your turn' : "can't act now");
 const nameOf = (id) => (state && state.creatures[id] ? state.creatures[id].name : 'Someone');
 const SKILL_LIST = ['perception', 'investigation', 'insight', 'athletics', 'acrobatics', 'stealth', 'arcana', 'history', 'nature', 'religion', 'medicine', 'survival', 'sleight-of-hand', 'animal-handling', 'intimidation', 'persuasion', 'deception', 'performance'];
 let turnMsg = { text: '', err: false };
@@ -1394,7 +1404,7 @@ async function act(action, extra = {}) {
   actionConfirm = null;
   setTurnMsg('…');
   try {
-    const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action }, extra)) });
+    const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action, id: (myTurn() || {}).id }, extra)) });
     const out = await r.json();
     if (!r.ok) setTurnMsg(out.error || 'Refused.', true);
     else setTurnMsg(out.quiet ? out.text : `${out.text} (DM notified)`);
@@ -1410,6 +1420,7 @@ function drawTurn() {
   if (!t) { turnMsg = { text: '', err: false }; return; }
   const f = t.features, bonusMoves = f.cunningAction || f.nimbleEscape;
   const pips = document.getElementById('tPips');
+  pips.parentNode.style.display = t.explore ? 'none' : '';
   if (pips.children.length !== 3) pips.innerHTML = ['Action', 'Bonus', 'Reaction'].map((l) => `<span class="hp1"><i></i>${l}</span>`).join('');
   [t.action, t.bonus, t.reaction].forEach((spent, i) => pips.children[i].classList.toggle('spent', !!spent));
   document.getElementById('tAtk').textContent = t.attacksPerAction > 1 && !t.action ? `${t.attacksPerAction - t.attacks} attacks left` : '';
@@ -1421,8 +1432,14 @@ function drawTurn() {
   sq.style.setProperty('--sq', (n <= 16 ? 12 : Math.max(4, Math.floor((250 - 3 * (n - 1)) / n))) + 'px');
   [...sq.children].forEach((el, i) => el.classList.toggle('spent', i >= filled));
   document.getElementById('tMv').textContent = `${t.left} ft${t.dash ? ' · dashing' : ''}${t.disengage ? ' · disengaged' : ''}`;
-  const b = (label, action, { as, disabled, cls = '', small = '' } = {}) =>
-    `<button class="btn ${cls}" data-act="${action}"${as ? ` data-as="${as}"` : ''}${disabled ? ' disabled' : ''}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
+  const b = (label, action, { as, disabled, cls = '', small = '', title = '' } = {}) =>
+    `<button class="btn ${cls}" data-act="${action}"${as ? ` data-as="${as}"` : ''}${disabled ? ' disabled' : ''}${title ? ` title="${title}"` : ''}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
+  if (t.explore) {
+    document.getElementById('tBtns').innerHTML =
+      b('Dash', 'dash', { disabled: t.dash }) + b('Disengage', 'disengage', { disabled: true, small: 'in a fight' }) + b('Dodge', 'dodge', { disabled: true, small: 'in a fight' })
+      + b('Hide', 'hide', { small: 'sneak' }) + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
+      + b('Ready', 'end', { cls: 'gold', title: 'Let a round pass' });
+  } else
   document.getElementById('tBtns').innerHTML =
     b('Dash', 'dash', { disabled: t.action || t.dash }) + (bonusMoves ? b('Dash', 'dash', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.dash }) : '')
     + b('Disengage', 'disengage', { disabled: t.action || t.disengage }) + (bonusMoves ? b('Disengage', 'disengage', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.disengage }) : '')
@@ -1440,7 +1457,7 @@ document.getElementById('turnSec').addEventListener('click', (e) => {
   const action = btn.dataset.act;
   if (action === 'end') {
     const t = myTurn();
-    if (t && !t.action && !secondClick('end', {}, 'Your action is unused. Click again to end your turn.')) return;
+    if (t && !t.explore && !t.action && !secondClick('end', {}, 'Your action is unused. Click again to end your turn.')) return;
   }
   act(action, btn.dataset.as ? { as: btn.dataset.as } : {});
 });
@@ -1457,7 +1474,7 @@ function hoverPath(x, y) {
 const pathTarget = () => pathHover || (myTurn() && cursor.mode === 'square' && cursor.cell) || null;
 function updatePath() {
   const cell = pathTarget(), t = myTurn();
-  const key = JSON.stringify([cell, moveOpts, t && t.used, t && state.creatures[t.id] && state.creatures[t.id].pos, t && t.dash]);
+  const key = JSON.stringify([cell, moveOpts, t && t.id, t && t.used, t && state.creatures[t.id] && state.creatures[t.id].pos, t && t.dash]);
   if (key === pathKey) return;
   pathKey = key;
   if (actionConfirm && actionConfirm.kind === 'move') actionConfirm = null;
@@ -1465,6 +1482,7 @@ function updatePath() {
   if (!cell) { pathData = null; drawPath(); return; }
   pathTimer = setTimeout(async () => {
     const q = new URLSearchParams({ token: TOKEN, cell });
+    if (t) q.set('id', t.id);
     if (moveOpts.jump) q.set('jump', '1');
     if (moveOpts.fastClimb) q.set('fastClimb', '1');
     try {
@@ -1523,7 +1541,7 @@ function lookActions() {
       + look.attacks.filter((a) => a.ok).map((a) => `<button class="btn gold" data-atk="${esc(a.name)}"${t.action ? ' disabled' : ''}>${esc(a.name)}<small>${a.mode === 'adv' ? 'adv · ' : a.mode === 'dis' ? 'dis · ' : ''}${esc(a.damage || '')}</small></button>`).join('')
       + '</div>'
       + (sneak ? `<label style="display:block;margin-top:6px"><input type="checkbox" id="atkSneak" checked> Sneak Attack (+${esc(sneak.sneak)})</label>` : '')
-      + (t.action ? '<div class="warn">Your action is spent.</div>' : '')
+      + (t.action ? '<div class="warn">Your action is spent.</div>' : t.explore ? '<div class="warn">Attacking starts a fight; the DM will roll initiative.</div>' : '')
       + '</div>';
   }
   html += `<div class="movebox"><select id="chkSkill">${SKILL_LIST.map((k) => `<option value="${k}">${k.replace(/-/g, ' ')}</option>`).join('')}</select> <button class="btn" id="chkGo">Roll check</button></div>`;
@@ -1639,6 +1657,7 @@ function selectOnly(ref) { // the click may have toggled the selection off; the 
 
 async function openWheelAt(ref) {
   if (!wheelOk()) return;
+  if (!me.turn) pickActor(ref);
   const v = wheelView(), c = v.creatures[ref], cell = c ? c.pos : ref;
   const here = Object.values(v.creatures).filter((x) => x.pos === cell), actor = wheelActor();
   if (!actor || !state.creatures[actor]) return;
@@ -1661,6 +1680,7 @@ async function openWheelAt(ref) {
   if (mk) { const p = parseCell(cell); W.sq = cell; map3d.showSquare({ x: p.x, y: p.y }, true); wheel3d(null); }
 }
 async function openEntity(id, seq = ++wheelSeq) {
+  if (!me.turn) pickActor(id);
   const c = state.creatures[id], actor = wheelActor();
   if (!c || !actor) return;
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
@@ -1677,13 +1697,14 @@ async function openEntity(id, seq = ++wheelSeq) {
 // ---- reasons a leaf is greyed ----
 function whyNot(kind) {
   const t = myTurn();
-  if (!t) return 'not your turn';
+  if (!t) return noTurnWhy();
   if (kind === 'action' && t.action) return 'action spent';
   if (kind === 'bonus' && !(t.features.cunningAction || t.features.nimbleEscape)) return 'no bonus-action option';
   if (kind === 'bonus' && t.bonus) return 'bonus action spent';
   return '';
 }
 const gated = (kind, s) => { const w = whyNot(kind); return w ? Object.assign({}, s, { off: true, odds: w, go: undefined }) : s; };
+const fightOnly = (kind, s) => { const t = myTurn(); return t && t.explore ? Object.assign({}, s, { off: true, odds: 'in a fight', go: undefined }) : gated(kind, s); };
 const actLeaf = (action, extra, s) => Object.assign({}, s, { go: () => { act(action, extra); } });
 async function sendIntent(cx, text, at) {
   const err = document.getElementById('actErr');
@@ -1702,6 +1723,8 @@ async function getLook(id, from) {
 }
 async function fetchPath(cell, opts = {}) {
   const q = new URLSearchParams({ token: TOKEN, cell });
+  const t = myTurn();
+  if (t) q.set('id', t.id);
   if (opts.jump) q.set('jump', '1');
   if (opts.fastClimb) q.set('fastClimb', '1');
   try { const r = await fetch('/api/path?' + q); return r.ok ? await r.json() : null; } catch { return null; }
@@ -1721,7 +1744,7 @@ async function routeTo(cell) {
 // wheel stays open (the same two-step as the Move button on the card).
 function moveFields(cell, p, { dash = false, jump = false, fast = false, then = null } = {}) {
   const t = myTurn();
-  if (!t) return { off: true, odds: 'not your turn' };
+  if (!t) return { off: true, odds: noTurnWhy() };
   if (!p || p.reason === 'no route') return { off: true, odds: 'no way there' };
   if (p.reason === 'here') return { off: true, odds: 'already here' };
   if (p.reason === 'occupied') return { off: true, odds: 'occupied' };
@@ -1767,7 +1790,8 @@ const inspectLeaf = (cx, T) => ({ role: 'Inspect', what: 'Inspect', go: () => {
 
 function strikeLeaf(cx, T, L) {
   const atk = (L && L.attacks) || [], ok = atk.filter((a) => a.ok), best = ok.find((a) => a.mode !== 'dis') || ok[0], why = whyNot('action');
-  const desc = (a) => shortVerdict(a.verdict) + (a.damage ? ' · ' + a.damage : '') + (a.sneak ? ` · sneak +${a.sneak}` : '');
+  const fight = (myTurn() || {}).explore ? 'starts a fight · ' : '';
+  const desc = (a) => fight + shortVerdict(a.verdict) + (a.damage ? ' · ' + a.damage : '') + (a.sneak ? ` · sneak +${a.sneak}` : '');
   const hit = (a) => ({ what: a.name, go: () => { act('attack', { target: T.id, weapon: a.name, sneak: !!a.sneak }); } });
   const s = { role: 'Strike' };
   if (!L) Object.assign(s, { what: 'Strike', off: true, odds: 'no read on that' });
@@ -1797,7 +1821,7 @@ function approachLeaf(cx, T, appr, L, s) {
   const w = whyNot('action');
   if (w) return Object.assign({}, s, { off: true, odds: w });
   if (appr && appr.here) return Object.assign({}, s, { odds: 'adjacent: ' + melee.name, go: () => { strike(melee); } });
-  if (!appr) return Object.assign({}, s, { off: true, odds: myTurn() ? 'no way there' : 'not your turn' });
+  if (!appr) return Object.assign({}, s, { off: true, odds: myTurn() ? 'no way there' : noTurnWhy() });
   const f = moveFields(appr.cell, appr.p, { then: () => strike(melee) });
   return Object.assign({}, s, f, f.off ? {} : { odds: `${appr.p.cost} ft, then ${melee.name}` });
 }
@@ -1864,13 +1888,13 @@ function sigKit(cx, T, appr, L) {
 async function enemyMenu(cx, T) {
   const L = await getLook(T.id, cx.actor), appr = await approachFor(cx, T, L), n = T.name;
   const it = (what, text, o) => intentLeaf(cx, T, Object.assign({ what }, o), `${cx.aName} ${text} ${n}`);
-  const approach = appr && appr.here ? { what: 'Approach', off: true, odds: 'already adjacent' } : appr ? Object.assign({ what: 'Approach', odds: '' }, moveFields(appr.cell, appr.p)) : { what: 'Approach', off: true, odds: myTurn() ? 'no way there' : 'not your turn' };
+  const approach = appr && appr.here ? { what: 'Approach', off: true, odds: 'already adjacent' } : appr ? Object.assign({ what: 'Approach', odds: '' }, moveFields(appr.cell, appr.p)) : { what: 'Approach', off: true, odds: myTurn() ? 'no way there' : noTurnWhy() };
   return { title: n, slots: Object.assign({
     1: strikeLeaf(cx, T, L),
     4: subOf('Tactics', 'Tactics', 'Tactics', [it('Shove', 'tries to shove'), it('Grapple', 'tries to grapple'), it('Disarm', 'tries to disarm'),
-      it('Help', 'helps an ally against', { short: 'Help ally' }), it('Ready', 'readies an attack against'), gated('action', actLeaf('dodge', {}, { what: 'Dodge' }))]),
+      it('Help', 'helps an ally against', { short: 'Help ally' }), it('Ready', 'readies an attack against'), fightOnly('action', actLeaf('dodge', {}, { what: 'Dodge' }))]),
     5: inspectLeaf(cx, T),
-    6: subOf('Move', 'Move', 'Move', [approach, gated('action', actLeaf('disengage', {}, { what: 'Disengage' })), gated('action', actLeaf('dash', {}, { what: 'Dash' }))]),
+    6: subOf('Move', 'Move', 'Move', [approach, fightOnly('action', actLeaf('disengage', {}, { what: 'Disengage' })), gated('action', actLeaf('dash', {}, { what: 'Dash' }))]),
   }, sigKit(cx, T, appr, L)) };
 }
 
@@ -1895,19 +1919,19 @@ function allyMenu(cx, T) {
 function selfMenu(cx) {
   const t = myTurn(), me1 = { id: cx.actor, name: cx.aName };
   const bonusHide = t && (t.features.cunningAction || t.features.nimbleEscape);
-  const end = { role: 'Self', what: 'End turn', icon: '⏹', go(s) {
+  const end = { role: 'Self', what: t && t.explore ? 'Ready' : 'End turn', icon: '⏹', odds: t && t.explore ? 'let a round pass' : undefined, go(s) {
     const t2 = myTurn();
-    if (t2 && !t2.action && !secondClick('end', {}, 'Your action is unused. Choose again to end your turn.')) {
+    if (t2 && !t2.explore && !t2.action && !secondClick('end', {}, 'Your action is unused. Choose again to end your turn.')) {
       Object.assign(s, { warn: true, short: 'Action unused', odds: 'Your action is unused. Choose again to end your turn.' });
       return 'keep';
     }
     act('end');
   } };
   return { title: cx.aName, slots: Object.assign({
-    1: gated('action', actLeaf('dodge', {}, { role: 'Self', what: 'Dodge' })),
-    4: bonusHide ? gated('bonus', actLeaf('hide', { as: 'bonus' }, { role: 'Self', what: 'Hide', odds: 'bonus action' })) : gated('action', actLeaf('hide', {}, { role: 'Self', what: 'Hide' })),
+    1: fightOnly('action', actLeaf('dodge', {}, { role: 'Self', what: 'Dodge' })),
+    4: t && t.explore ? actLeaf('hide', {}, { role: 'Self', what: 'Hide', odds: 'sneak' }) : bonusHide ? gated('bonus', actLeaf('hide', { as: 'bonus' }, { role: 'Self', what: 'Hide', odds: 'bonus action' })) : gated('action', actLeaf('hide', {}, { role: 'Self', what: 'Hide' })),
     5: { role: 'Inspect', what: 'Inspect', odds: 'Character tab', go: () => { setSideView('sheet'); } },
-    6: t ? end : { role: 'Self', what: 'End turn', icon: '⏹', off: true, odds: 'not your turn' },
+    6: t ? end : { role: 'Self', what: 'End turn', icon: '⏹', off: true, odds: noTurnWhy() },
   }, sigKit(cx, me1, null, null)) };
 }
 
@@ -1936,8 +1960,8 @@ async function squareMenu(cx, cell) {
     2: Object.assign({ role: 'Dash', what: 'Dash here', short: 'Dash' }, dash),
     3: subOf('Aim here', 'Aim here', 'Aim at ' + cell, aim.map(aimLeaf)),
     4: subOf('Tricks', 'Tricks', 'Tricks', [
-      t ? actLeaf('move', { cell, jump: true }, { what: 'Jump' }) : { what: 'Jump', off: true, odds: 'not your turn' },
-      t ? actLeaf('move', { cell, fastClimb: true }, { what: 'Climb fast' }) : { what: 'Climb fast', off: true, odds: 'not your turn' },
+      t ? actLeaf('move', { cell, jump: true }, { what: 'Jump' }) : { what: 'Jump', off: true, odds: noTurnWhy() },
+      t ? actLeaf('move', { cell, fastClimb: true }, { what: 'Climb fast' }) : { what: 'Climb fast', off: true, odds: noTurnWhy() },
       intentLeaf(cx, T, { what: 'Drop prone' }, `${cx.aName} drops prone`),
       intentLeaf(cx, T, { what: 'Sneak there' }, `${cx.aName} sneaks to ${cell}`)]),
     5: Object.assign(inspectLeaf(cx, T), { what: 'Inspect square', short: 'Inspect' }),

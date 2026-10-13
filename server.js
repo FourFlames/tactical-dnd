@@ -29,6 +29,29 @@ function myTurn(seat, s = C.loadState()) {
   const canUndo = !!(u && u.id === id && u.round === s.round && u.turnIdx === s.turnIdx && !u.rolled);
   return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), canUndo }, C.turnInfo(s, id));
 }
+// Out of combat (an encounter is loaded, no turn order) each of the seat's creatures that is on the map
+// and standing can act, one round's worth at a time: { id: turn-like info with explore: true }.
+function exploreOf(seat, s = C.loadState()) {
+  const out = {};
+  if (!s || (s.turnOrder && s.turnOrder.length)) return out;
+  for (const id of seat.creatures) {
+    const c = s.creatures[id];
+    if (!c || !c.pos || !(c.hp > 0)) continue;
+    const ti = C.turnInfo(s, id), u = s.undo;
+    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), canUndo: !!(u && u.id === id && !u.rolled && ti.used > 0), explore: true }, ti);
+  }
+  return out;
+}
+// Who an /api/act or /api/path request is for: in combat the creature whose turn it is (id absent or equal),
+// out of combat one of the seat's explore creatures (id absent only if there is just one).
+function actorFor(seat, s, id) {
+  if (s && s.turnOrder && s.turnOrder.length) {
+    const t = myTurn(seat, s);
+    return t && (!id || id === t.id) ? t : null;
+  }
+  const ex = exploreOf(seat, s), ids = Object.keys(ex);
+  return id ? ex[id] || null : ids.length === 1 ? ex[ids[0]] : null;
+}
 async function answerOffer(res, seat, msg) {
   const o = C.readOffers().find((x) => x.offer === msg.offer && x.player === seat.player);
   if (!o) return json(res, 404, { error: 'That offer is gone.' });
@@ -108,6 +131,18 @@ const ACTS = {
   check: ({ id, msg }) => (/^[a-z-]{2,20}$/.test(msg.skill || '') ? { args: ['check', id, msg.skill, '--about', String(msg.about || 'look closer').slice(0, 120)] } : { error: 'Pick a skill.' }),
   undo: ({ id }) => ({ args: ['undo', id], quiet: true }),
   end: ({ id }) => ({ args: ['next'], label: 'ends the turn' }),
+};
+// Out of combat: what differs. `file` = no engine command, just tell the DM (who starts the fight or ticks a round).
+const EXPLORE_ACTS = {
+  hide: ({ id }) => ({ args: ['sneak', id] }),
+  dodge: () => ({ error: 'Only in a fight.' }),
+  disengage: () => ({ error: 'Only in a fight.' }),
+  attack: ({ id, msg, s }) => {
+    const t = s.creatures[String(msg.target || '')];
+    if (!t || !C.partyKnows(s).creature(t)) return { error: 'Pick a target.' };
+    return { file: `${s.creatures[id].name} attacks ${t.name} (starts a fight).`, text: 'The DM will roll initiative.' };
+  },
+  end: ({ id, s }) => ({ file: `${s.creatures[id].name} is ready for time to pass.`, text: 'Waiting for the DM to let a round pass.' }),
 };
 function econ(ti, f, as, args, quiet) {
   if (as === 'bonus') {
@@ -291,19 +326,20 @@ const server = http.createServer((req, res) => {
     const seat = seatOf(req, url.searchParams.get('token'));
     if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes, then check the code with the DM.' });
     if (!seat) return json(res, 404, { error: 'This link is not (or no longer) a seat at the table. Ask the DM for a new one.' });
+    const s0 = C.loadState();
     const intents = C.readIntents().filter((e) => e.player === seat.player && ((e.kind !== 'auto' && e.kind !== 'answer') || e.replies.length)).slice(-8)
       .map(({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }) => ({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }));
     const offers = C.readOffers().filter((o) => o.player === seat.player && !o.answer).slice(-3)
       .map(({ offer, t, creature, text, ruling }) => ({ offer, t, creature, text, ruling: ruling ? { skill: ruling.skill, dc: ruling.dc } : null }));
-    return json(res, 200, { player: seat.player, creatures: seat.creatures, intents, offers, turn: myTurn(seat), dm: C.dmPresence() });
+    return json(res, 200, { player: seat.player, creatures: seat.creatures, intents, offers, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
   }
   // Route preview for click-to-move: the path the engine would take, its cost, the rolls on the
   // way (with their DCs) and any opportunity attacks. Read-only.
   if (url.pathname === '/api/path') {
     const seat = seatOf(req, url.searchParams.get('token'));
     const s = C.loadState();
-    const turn = seat && !seat.locked && myTurn(seat, s);
-    if (!turn) return json(res, 403, { error: 'Not your turn.' });
+    const turn = seat && !seat.locked && actorFor(seat, s, url.searchParams.get('id'));
+    if (!turn) return json(res, 403, { error: s && s.turnOrder && s.turnOrder.length ? 'Not your turn.' : 'Pick one of your characters on the map.' });
     const cell = String(url.searchParams.get('cell') || '').toUpperCase();
     const p = C.parseCell(cell);
     if (!/^[A-Z]\d{1,2}$/.test(cell) || !C.inBounds(s, p.x, p.y)) return json(res, 400, { error: 'Off the map.' });
@@ -329,12 +365,16 @@ const server = http.createServer((req, res) => {
       lastAct.set(seat.player, Date.now());
       if (msg.action === 'answer') return answerOffer(res, seat, msg);
       const s = C.loadState();
-      const turn = myTurn(seat, s);
-      if (!turn) return json(res, 403, { error: 'It isn\'t your turn.' });
-      const make = ACTS[msg.action];
+      const turn = actorFor(seat, s, msg.id);
+      if (!turn) return json(res, 403, { error: s && s.turnOrder && s.turnOrder.length ? "It isn't your turn." : 'Pick one of your characters on the map.' });
+      const make = (turn.explore && EXPLORE_ACTS[msg.action]) || ACTS[msg.action];
       if (!make) return json(res, 400, { error: 'Unknown action.' });
-      const plan = make({ id: turn.id, msg, ti: turn, f: C.featuresOf(s.creatures[turn.id]) });
+      const plan = make({ id: turn.id, msg, ti: turn, f: C.featuresOf(s.creatures[turn.id]), s });
       if (plan.error) return json(res, 400, { error: plan.error });
+      if (plan.file) {
+        C.appendIntent({ id: crypto.randomBytes(6).toString('hex'), t: Date.now(), player: seat.player, creature: turn.id, kind: 'auto', quiet: false, text: plan.file });
+        return json(res, 200, { ok: true, text: plan.text, quiet: true });
+      }
       if (plan.pre) { const r = await runEngine(plan.pre); if (!r.ok) return json(res, 400, { error: r.out }); }
       const r = await runEngine(plan.args);
       if (!r.ok) return json(res, 400, { error: r.out });
