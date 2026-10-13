@@ -67,7 +67,7 @@ const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang under them, tucked 4 px behind the circle's bottom.
 const D = 34, GAP = 6, GRACE = 10;   // GRACE: see pointermove
-const TIGHT = 62;   // px: the ring's least layout radius at full size (see frame)
+const TIGHT = 50;   // px: the ring's least layout radius at full size (see frame)
 const UNFOLD_MS = 190, FOLD_MS = 150;
 const angTo = (a, b) => ((b - a) % 360 + 540) % 360 - 180;   // shortest turn from a to b, degrees
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };

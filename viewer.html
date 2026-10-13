@@ -1672,11 +1672,13 @@ function wheelAnchor(ref) {
 // The wheel opens at once on a map click (clickRef calls this); a double never gets here, it closes the wheel instead.
 function wheelTap(ref) { if (wheelOk()) openWheelAt(ref); }
 // A click the wheel used must not also select what is under it.
-addEventListener('pointerdown', () => { eatClick = false; }, true);
+let downSeq = 0;
+addEventListener('pointerdown', () => { eatClick = false; downSeq = wheelSeq; }, true);
 addEventListener('pointerup', (e) => {
   eatClick = !!e.pwHandled;
   if (e.pwClosed && lastTap.ref && performance.now() - lastTap.t < 400) { const r = lastTap.ref; lastTap = {}; focusRef(r); } // the wheel itself folded on click 2: the double adds the glide
-  if (!eatClick && pw && pw.isOpen && pw.folded) closeWheel(); // a click away from a folded wheel dismisses it
+  // a click away from a folded wheel dismisses it, unless that click is already opening another (closing would cancel the open)
+  if (!eatClick && wheelSeq === downSeq && pw && pw.isOpen && pw.folded) closeWheel();
 });
 document.addEventListener('focusin', (e) => { if (pw && pw.isOpen && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) closeWheel(); }); // keys 1-6 are for the wheel
 
