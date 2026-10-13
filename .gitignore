@@ -10,6 +10,9 @@ seats.json
 intents.jsonl
 listening.json
 
+# per-command state snapshots for `rewind`
+snapshots/
+
 # player profiles (sign-in codes) and their characters
 players.json
 characters/
