@@ -183,6 +183,19 @@ function send(res, code, type, body) {
 }
 const json = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
 const isLocal = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+// Version stamp (Card 13c). The viewer sends the last log line it has seen (`n`, the state's `seq`) and the game id with
+// every action; if anything since then moved a creature, passed the turn or changed a creature or the board, what its
+// wheel offered may be wrong, so the action is refused with 409 { stale } and the viewer rebuilds instead. Talk, dice for
+// checks and the DM's private notes don't count, except a door the party may not have seen move. No `n`: no check.
+const STALE_TYPES = new Set(['move', 'turn', 'spawn', 'terrain', 'condition', 'damage', 'heal', 'attack', 'action']);
+const logSeq = () => { const l = C.readLog(1); return l.length ? l[0].n : 0; };
+function staleSince(s, n, game) {
+  if (n === undefined || n === null || n === '' || !Number.isFinite(Number(n))) return false;
+  if (game && s && (s.game || null) !== game) return true;
+  const seen = Number(n), log = C.readLog(200), newer = log.filter((e) => e.n > seen);
+  if (newer.length === 200 || seen > (log.length ? log[log.length - 1].n : 0)) return true; // too far behind to tell, or a rewound log
+  return newer.some((e) => STALE_TYPES.has(e.type) || (e.type === 'secret' && e.data && e.data.door));
+}
 
 function readBody(req, limit, cb) {
   let body = '';
@@ -265,8 +278,8 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/play') return page(res, 'viewer.html');
   if (url.pathname === '/build') return page(res, 'builder.html');
-  // The rules and power modules run in the builder too.
-  const libMod = /^\/lib\/(rules|power)\.js$/.exec(url.pathname);
+  // The rules and power modules run in the builder too; the grid (pathing) in the viewer's wheel.
+  const libMod = /^\/lib\/(rules|power|grid)\.js$/.exec(url.pathname);
   if (libMod) return send(res, 200, 'text/javascript; charset=utf-8', fs.readFileSync(path.join(__dirname, 'lib', libMod[1] + '.js')));
   if (url.pathname === '/api/login' && req.method === 'POST') {
     return readBody(req, 1024, (body) => {
@@ -335,9 +348,11 @@ const server = http.createServer((req, res) => {
     const wantDm = url.searchParams.get('view') === 'dm';
     if (wantDm && !isLocal(req)) return json(res, 403, { error: 'The DM view is only available on the DM\'s machine.' });
     try {
+      const seq = logSeq(); // read first, so it never runs ahead of the state below (a stamp too old only costs a rebuild)
       const s = C.loadState();
       if (!s) return json(res, 200, { empty: true });
       const v = C.view(s, wantDm ? 'dm' : 'player');
+      v.seq = seq;
       const wheels = wheelsFor(v.creatures);
       for (const id of Object.keys(wheels)) v.creatures[id].wheel = wheels[id];
       // Doors: the party's own keys, and whether a door is locked only once someone holds its key (otherwise they learn it by trying).
@@ -404,6 +419,7 @@ const server = http.createServer((req, res) => {
     const s = C.loadState();
     const turn = seat && !seat.locked && actorFor(seat, s, url.searchParams.get('id'));
     if (!turn) return json(res, 403, { error: s && s.turnOrder && s.turnOrder.length ? 'Not your turn.' : 'Pick one of your characters on the map.' });
+    if (staleSince(s, url.searchParams.get('n'), url.searchParams.get('game'))) return json(res, 409, { stale: true, error: 'The game moved on.' });
     const cell = String(url.searchParams.get('cell') || '').toUpperCase();
     const p = C.parseCell(cell);
     if (!/^[A-Z]\d{1,2}$/.test(cell) || !C.inBounds(s, p.x, p.y)) return json(res, 400, { error: 'Off the map.' });
@@ -431,6 +447,7 @@ const server = http.createServer((req, res) => {
       const s = C.loadState();
       const turn = actorFor(seat, s, msg.id);
       if (!turn) return json(res, 403, { error: s && s.turnOrder && s.turnOrder.length ? "It isn't your turn." : 'Pick one of your characters on the map.' });
+      if (staleSince(s, msg.n, msg.game)) return json(res, 409, { stale: true, error: 'The game moved on. Take another look.' });
       const make = (turn.explore && EXPLORE_ACTS[msg.action]) || ACTS[msg.action];
       if (!make) return json(res, 400, { error: 'Unknown action.' });
       const plan = make({ id: turn.id, msg, ti: turn, f: C.featuresOf(s.creatures[turn.id]), s });

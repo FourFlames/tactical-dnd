@@ -6,7 +6,8 @@
 // Slot 1 is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes,
 // unless onLeaf returns 'keep': then it stays open and redraws that slot (the host may have changed the leaf's `what`,
 // `short`, `odds` or `warn` fields: a red ring, for "this will hurt, choose again to confirm"). `sug` is a gold ring
-// (the suggested move). The host may also open another wheel from inside onLeaf.
+// (the suggested move). The host may also open another wheel from inside onLeaf. `wait`: the slot's details are still
+// coming (an hourglass on its caption; it can't be chosen yet); the host then calls pw.replace(menu) with the filled copy.
 //
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
 //   pw.open(menu, () => ({ x, y, r, s }));   // anchor in client px, polled every frame; r = target's screen radius,
@@ -36,6 +37,8 @@ const CSS = `
   white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: #14130fd9; color: var(--ink, #e9e3d3); font-size: 11px; font-weight: 600; }
 .pw .b.off { opacity: .5; }
 .pw .b.off .i { color: var(--ink-faint, #6b6557); }
+.pw .b.wait .i { opacity: .6; }
+.pw .b.wait .c::after { content: ' ⌛'; font-weight: 400; }
 .pw .b .seen-badge { position: absolute; left: -6px; bottom: -4px; width: 23px; height: 16px; display: flex; align-items: center; gap: 1px;
   border: 1px solid #9b6749; border-radius: 5px; background: #201a13; color: #e5b27c; font: 800 11px/1 system-ui; }
 .pw .b .seen-badge svg { position: static; width: 15px; height: 11px; }
@@ -90,7 +93,7 @@ function tipHtml(s, root) {
   if (s.back) return '<div class="w">Back</div><div class="n">Esc, right-click or the target also go back</div>';
   const role = root && s.role && s.role !== s.what ? `<div class="r">${esc(s.role)}</div>` : '';
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
-    + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
+    + (s.odds ? `<div class="${s.off || s.wait ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
     + (s.info && !s.off ? `<div class="n">${esc(s.info)}</div>` : '')
     + ((s.watchers || []).length ? `<div class="watchers"><div class="r">Line of sight</div>${s.watchers.map((w) => `<div class="watcher"><span class="face" aria-hidden="true">${esc((w.name || '?').slice(0, 1))}</span><span>${esc(w.name)} · ${w.plainSight ? 'clear view' : w.los ? 'cover or dim light' : 'view blocked'}</span></div>`).join('')}</div>` : '')
     + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '')
@@ -109,7 +112,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function open(menu, anchor) {
     close(true);
-    S = { stack: [menu], anchor, folded: false, u: 0, a0: -90, goal: 1, hot: 0, offset: 0, spin: null, x: 0, y: 0, R: 80 };
+    S = { stack: [menu], path: [], anchor, folded: false, u: 0, a0: -90, goal: 1, hot: 0, offset: 0, spin: null, x: 0, y: 0, R: 80 };
     el.hidden = false;
     build();
     for (const [t, f] of listeners) addEventListener(t, f, true);
@@ -131,7 +134,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       const s = slotOf(k);
       if (!s) continue;
       const badge = s.badge === 'seen' ? '<span class="seen-badge" aria-label="In view"><svg viewBox="0 0 20 12" aria-hidden="true"><path d="M1 6Q10-3 19 6Q10 15 1 6Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6" r="2" fill="currentColor"/></svg>!</span>' : '';
-      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"${s.off ? ' aria-disabled="true"' : ''}><span class="i">${iconOf(s, k)}${badge}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
+      html += `<div class="b${s.off ? ' off' : ''}${s.wait ? ' wait' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"${s.off ? ' aria-disabled="true"' : ''}><span class="i">${iconOf(s, k)}${badge}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
     }
     el.innerHTML = html;
     S.btns = [...el.querySelectorAll('.b')];
@@ -271,19 +274,34 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
 
   function choose(k, shift) {
     const s = slotOf(k);
-    if (!s || s.off) return;
+    if (!s || s.off || s.wait) return;
     if (s.back) return back();
-    if (shift && s.full && S.stack.length === 1) return drill(s.full());
-    if (s.sub) return drill(s.sub());
+    if (shift && s.full && S.stack.length === 1) return drill(s.full(), k, 'full');
+    if (s.sub) return drill(s.sub(), k, 'sub');
     const was = S, r = onLeaf(s);
     if (S !== was) return;   // the host closed or replaced the wheel itself
     if (r === 'keep') build(); else close(true);
   }
-  function drill(menu) { S.folded = false; S.stack.push(menu); build(); spin(+1); }
+  // path: how each submenu on the stack was reached ({ k, how: 'sub' | 'full' | 'alt' }), so replace() can rebuild it.
+  function drill(menu, k, how) { S.folded = false; S.stack.push(menu); S.path.push({ k, how }); build(); spin(+1); }
   function back() {
     if (!S) return;
     if (S.stack.length === 1) return close();
-    S.stack.pop(); build(); spin(-1);
+    S.stack.pop(); S.path.pop(); build(); spin(-1);
+  }
+  // The host's fresher copy of the open menu (slot details that arrived late, or the game moved on): swapped in place,
+  // no unfold or spin, the same submenus re-derived from it as far as they still exist, the pointer's slot kept hot.
+  function replace(menu) {
+    if (!S) return;
+    const stack = [menu];
+    for (const p of S.path) {
+      const s = stack[stack.length - 1].slots[p.k], m = s && typeof s[p.how] === 'function' && s[p.how]();
+      if (!m) break;
+      stack.push(m);
+    }
+    S.stack = stack; S.path.length = stack.length - 1;
+    if (S.altFrom > stack.length) S.altFrom = 0;
+    build();
   }
 
   let down = null, last = null;
@@ -317,10 +335,10 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       // On a slot, right-click is its contextual alternate: `alt()` drills into a menu of alternatives; in that menu `swap()`
       // puts the option into the slot it came from ({ k, leaf }) and goes back. Anywhere else (or a slot with neither) it's Back.
       const s = slotOf(hit(ev.clientX, ev.clientY));
-      if (s && s.alt) { const d = S.stack.length; drill(s.alt()); S.altFrom = d; return; }
+      if (s && s.alt) { const d = S.stack.length; drill(s.alt(), hit(ev.clientX, ev.clientY), 'alt'); S.altFrom = d; return; }
       if (s && s.swap) {
         const r = s.swap();
-        S.stack.length = S.altFrom || S.stack.length - 1;
+        S.stack.length = S.altFrom || S.stack.length - 1; S.path.length = S.stack.length - 1;
         if (r && r.leaf) cur().slots[r.k] = r.leaf;
         build(); spin(-1);
         return;
@@ -333,5 +351,5 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }],
   ];
 
-  return { el, open, close: () => close(), back, get isOpen() { return !!S; }, get folded() { return !!S?.folded; }, get hot() { return S?.hot || 0; } };
+  return { el, open, replace, close: () => close(), back, get isOpen() { return !!S; }, get folded() { return !!S?.folded; }, get hot() { return S?.hot || 0; } };
 }

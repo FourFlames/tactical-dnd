@@ -626,6 +626,70 @@ try {
   edit((s) => { s.creatures.gob1.pos = 'L2'; });
   run('move', 'gob1', 'L3');
   expect('wet stone takes prints at a higher DC', ((C.loadState().trails || {}).L3 || [])[0] && C.loadState().trails.L3[0].base === 14, JSON.stringify(C.loadState().trails));
+  {
+    // Equal-cost routes hug the straight line: A1 to E3 interleaves its diagonals, and still costs 20 ft.
+    const G = require('./lib/grid');
+    const open = { width: 6, height: 4, rows: Array(4).fill('......'), legend: { '.': { tags: [] } }, creatures: { a: { pos: 'A1', side: 'party', hp: 1 } } };
+    const p = G.findPath(open, 'a', 'E3'), off = p.cells.map(C.parseCell).map((q) => Math.abs(4 * q.y - 2 * q.x) / Math.hypot(4, 2));
+    expect('findPath prefers the straight-looking route among equal costs', p.cost === 20 && off.every((d) => d <= 0.5), p.cells.join(' ') + ' ' + p.cost);
+  }
+  {
+    // lib/grid.js is the engine's pathing, and the browser runs it on a view: on the DM view (everything known) fromView
+    // gives the engine's answers; on the player view hidden creatures and unseen ground stay out of it.
+    const G = require('./lib/grid');
+    run('load', 'goblin-warren-v2');
+    const s = C.loadState(), same = [], diff = [];
+    const dm = G.fromView(C.view(s, 'dm'), s.turn);
+    for (const id of ['rook', 'wren']) {
+      const p0 = C.parseCell(s.creatures[id].pos);
+      for (let dy = -9; dy <= 9; dy += 3) for (let dx = -9; dx <= 9; dx += 3) {
+        const x = p0.x + dx, y = p0.y + dy;
+        if (!C.inBounds(s, x, y) || (!dx && !dy)) continue;
+        for (const o of [{}, { jump: true }, { fastClimb: true }]) {
+          const a = C.findPath(s, id, C.cellId(x, y), o), b = G.findPath(dm, id, C.cellId(x, y), o);
+          const k = (r) => (r ? r.cost + ':' + r.cells.join(',') + ':' + r.steps.map((st) => st.kind + (st.dc || '')).join(',') : 'none');
+          (k(a) === k(b) ? same : diff).push(`${id}->${C.cellId(x, y)} ${JSON.stringify(o)} ${k(a)} vs ${k(b)}`);
+          if (a) { const w = a.cells; if (JSON.stringify(C.provokeDetail(s, id, w)) !== JSON.stringify(G.provokeDetail(dm, id, w))) diff.push('provokers ' + id + ' ' + w.join(',')); }
+        }
+      }
+    }
+    expect('browser pathing on the DM view matches the engine', same.length > 50 && !diff.length, diff.slice(0, 3).join(' | ') + ` (${same.length} same)`);
+    edit((st) => { st.creatures.gob4.pos = 'M45'; st.creatures.gob4.hidden = true; });
+    const s2 = C.loadState(), pv = G.fromView(C.view(s2, 'player'), s2.turn);
+    expect('player-view pathing never sees a hidden creature', !pv.creatures.gob4 && !!G.findPath(pv, 'rook', 'M45'), JSON.stringify(Object.keys(pv.creatures)));
+    const unknown = C.view(s2, 'player').cells.flatMap((row, y) => row.map((c, x) => (c.fog === 'unknown' ? C.cellId(x, y) : null))).filter(Boolean);
+    expect('...and never routes into ground the party has not seen', unknown.length && !G.findPath(pv, 'rook', unknown[0]) && G.tagsAt(pv, C.parseCell(unknown[0]).x, C.parseCell(unknown[0]).y).includes('impassable'), unknown[0]);
+  }
+  {
+    // Version stamp: /api/act with a log seq the game has since moved past (a move, an action) answers 409 stale; talk doesn't count.
+    run('load', 'rope-bridge'); run('initiative'); run('turn', 'rook');
+    const probe = `
+      const { spawn } = require('child_process');
+      const srv = spawn(process.execPath, ['server.js'], { env: Object.assign({}, process.env, { PORT: '5186', HOST: '127.0.0.1' }) });
+      const base = 'http://127.0.0.1:5186', out = {}, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const act = (b) => fetch(base + '/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: 'local', id: 'rook' }, b)) }).then(async (r) => ({ code: r.status, body: await r.json() }));
+      const eng = (...a) => require('child_process').spawnSync(process.execPath, ['engine.js', ...a], { cwd: process.cwd() });
+      srv.stdout.once('data', async () => {
+        try {
+          const st = await (await fetch(base + '/api/state')).json();
+          out.seq = st.seq; out.game = st.game;
+          eng('say', 'The wind howls.');
+          out.talk = await act({ action: 'dodge', n: st.seq, game: st.game }); await wait(200);
+          out.stale = await act({ action: 'dash', n: st.seq, game: st.game }); await wait(200);
+          out.otherGame = await act({ action: 'dash', n: 1e6, game: 'nope' }); await wait(200);
+          const st2 = await (await fetch(base + '/api/state')).json();
+          out.fresh = await act({ action: 'dash', n: st2.seq, game: st2.game });
+        } catch (e) { out.error = String(e); }
+        console.log(JSON.stringify(out)); srv.kill();
+      });`;
+    const pr = spawnSync(process.execPath, ['-e', probe], { cwd: __dirname, encoding: 'utf8', timeout: 20000 });
+    let o = {}; try { o = JSON.parse(pr.stdout.trim().split('\n').pop()); } catch { o = { error: pr.stdout + pr.stderr }; }
+    expect('/api/state carries the log seq', Number.isInteger(o.seq) && o.seq > 0, JSON.stringify(o));
+    expect('an action stamped before only talk goes through', o.talk && o.talk.code === 200, JSON.stringify(o.talk));
+    expect('an action stamped before an action answers 409 stale', o.stale && o.stale.code === 409 && o.stale.body.stale === true, JSON.stringify(o.stale));
+    expect('...as does another game\'s stamp', o.otherGame && o.otherGame.code === 409, JSON.stringify(o.otherGame));
+    expect('a fresh stamp is judged on its merits (action spent, not stale)', o.fresh && o.fresh.code === 400 && !o.fresh.body.stale, JSON.stringify(o.fresh));
+  }
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
