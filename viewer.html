@@ -65,6 +65,7 @@
   .net { display: inline-flex; align-items: center; gap: 5px; font: 11px var(--mono); color: var(--ink-faint); cursor: default; }
   .net i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint); }
   .net.ok i { background: #5fb36a; } .net.slow i { background: #e0a93b; } .net.bad i { background: #d9534f; }
+  .net[hidden] { display: none; }
   .net.lost { color: #d9534f; } .net.lost i { display: none; }
   .tools { display: flex; gap: 6px; }
   .tools button { background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-dim); font: 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; cursor: pointer; }
@@ -432,6 +433,7 @@
       <h1 class="title" id="title">Battlemap</h1>
       <span class="round" id="round"></span>
       <span class="spacer"></span>
+      <span class="net" id="fps" role="status" title="Frames per second (3D map)" hidden><i></i><b></b></span>
       <span class="net" id="net" role="status"><i></i><b></b></span>
       <div class="tools" id="tools3d" hidden>
         <button id="bFollow" class="on" aria-pressed="true" title="Follow the active visible creature">Follow turn</button>
@@ -2568,6 +2570,12 @@ function render() {
 }
 
 // The 3D map loads three.js from a CDN on first use; the 2D map never needs it.
+function drawFps(fps, perf) {
+  const box = document.getElementById('fps'); box.hidden = false;
+  box.className = 'net ' + (fps >= 55 ? 'ok' : fps >= 30 ? 'slow' : 'bad');
+  box.querySelector('b').textContent = fps + ' fps';
+  const p = perf(); box.title = `Frame ${p.frameMs.p50} ms (p95 ${p.frameMs.p95}) · ${p.drawCalls} draw calls · ${p.triangles} triangles`;
+}
 function render3d() {
   document.getElementById('tools3d').hidden = false;
   if (map3dError) return;
@@ -2576,7 +2584,7 @@ function render3d() {
       const wrap = document.getElementById('mapwrap');
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
-        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => clickRef(id, 'map'), onCell: (x, y) => clickRef(cellName(x, y), 'map', [x, y]), onHover: hoverCell });
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => clickRef(id, 'map'), onCell: (x, y) => clickRef(cellName(x, y), 'map', [x, y]), onHover: hoverCell, onFps: drawFps });
         map3d.setFollow(followTurn); map3d.setSpeed(pb.speed);
         render(); initialCamera();
       }).catch((e) => {

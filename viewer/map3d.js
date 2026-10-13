@@ -110,7 +110,7 @@ function box(w, h, d, v0 = 0) {
 
 const SIDE_FOR = { grass: 'dirt', dirt: 'dirt', flagstone: 'rock', oil: 'rock', water: 'rock', rock: 'rock', planks: 'planks', chasm: 'rock' };
 
-export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
+export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
@@ -1317,9 +1317,32 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   };
   const ro = new ResizeObserver(resize); ro.observe(container); resize();
 
+  // Perf: frame times (last 300), per-section {last, max, n} timings, and the renderer's own counters.
+  const frames = [], sections = {}, PERF_LOG = /[?&]perf/.test(location.search);
+  const timed = (name, fn) => {
+    const t0 = performance.now(), r = fn();
+    const e = sections[name] || (sections[name] = { last: 0, max: 0, n: 0 });
+    e.last = performance.now() - t0; e.n++; if (e.last > e.max) e.max = e.last;
+    return r;
+  };
+  const pct = (a, q) => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(b.length * q))]; };
+  function perf() {
+    const sum = frames.reduce((a, b) => a + b, 0), avg = frames.length ? sum / frames.length : 0, mx = frames.length ? Math.max(...frames) : 0;
+    const i = renderer.info, r = (n) => Math.round(n * 100) / 100;
+    return {
+      fps: { avg: avg ? r(1000 / avg) : 0, min: mx ? r(1000 / mx) : 0 },
+      frameMs: { p50: r(pct(frames, 0.5)), p95: r(pct(frames, 0.95)), max: r(mx) },
+      drawCalls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures,
+      sections: Object.fromEntries(Object.entries(sections).map(([k, e]) => [k, { last: r(e.last), max: r(e.max), n: e.n }])),
+    };
+  }
+  let fpsNow = 0, fpsAt = performance.now(), fpsN = 0;
+  if (PERF_LOG) setInterval(() => { const p = perf(); console.log('[perf] ' + JSON.stringify(p)); for (const e of Object.values(sections)) e.max = 0; }, 5000);
+
   let raf = 0, prev = performance.now();
   function tick(now) {
     raf = requestAnimationFrame(tick);
+    { const ms = now - prev; if (ms > 0 && ms < 2000) { frames.push(ms); if (frames.length > 300) frames.shift(); } fpsN++; if (now - fpsAt >= 500) { fpsNow = Math.round(fpsN * 1000 / (now - fpsAt)); fpsN = 0; fpsAt = now; if (onFps) onFps(fpsNow, perf); } }
     const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
     const t = now / 1000;
     for (const s of flames) {
@@ -1366,11 +1389,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     camera.updateMatrixWorld(); rect = renderer.domElement.getBoundingClientRect(); viewCache.clear();
     if (lastState) {
       bodyInfo(); updateHover(false);
-      marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect });
+      timed('marksStep', () => marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect }));
       stepHighlights(dt * 1000); drawHits();
     }
-    fadeOccludingWalls(dt);
-    renderer.render(scene, camera);
+    timed('wallFade', () => fadeOccludingWalls(dt));
+    timed('render', () => renderer.render(scene, camera));
   }
   raf = requestAnimationFrame(tick);
 
@@ -1385,16 +1408,16 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
       if (pickedCell && !sqHold && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
-      const sig = signature(v);
-      if (sig !== built) { buildTerrain(v); built = sig; }
+      const sig = timed('signature', () => signature(v));
+      if (sig !== built) { timed('terrainBuild', () => buildTerrain(v)); built = sig; }
       if (!framed) { frame(v); framed = true; }
-      updateTokens(v);
+      timed('tokens', () => updateTokens(v));
       updateSpectral(v);
-      marks.sync(v.creatures, you, alts(v));
+      timed('marksSync', () => marks.sync(v.creatures, you, alts(v)));
       followTurn(v);
       setCursor(v, cursor);
     },
-    ping: addPing,
+    ping: addPing, perf,
     setPath, shoot, bump, hit, glide, snap, showSquare,
     setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
