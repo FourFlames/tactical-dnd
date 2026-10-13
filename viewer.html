@@ -366,7 +366,7 @@
 
   /* initiative strip (top centre, Divinity-style): the current creature large, then the rest of the round */
   /* centred over the map, just under the top bar (--bar-h is measured) */
-  .initbar { position: fixed; top: calc(var(--bar-h, 56px) + 6px); left: calc((100vw - var(--side-off)) / 2); transform: translateX(-50%); z-index: 9; max-width: min(60vw, calc(100vw - var(--side-off) - 32px)); pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; }
+  .initbar { position: fixed; top: calc(var(--bar-h, 56px) + 6px); left: calc((100vw - var(--side-off)) / 2); transform: translateX(-50%); z-index: 9; max-width: min(60vw, calc(100vw - var(--side-off) - 32px), var(--init-max, 100vw)); pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; }
   .initbar > * { pointer-events: auto; }
   .initbar:empty { display: none; }
   .portraits { display: flex; align-items: flex-start; gap: 6px; max-width: 100%; overflow-x: auto; padding: 4px 6px 6px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -825,8 +825,19 @@ const hpColor = (f) => f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a';
 // marker, then round to the current creature again. A '?' is creatures acting out of sight.
 // The initiative strip hangs under the top bar, and the look card under whichever of the two is lower.
 { const tb = document.querySelector('.topbar'), ib = document.getElementById('initbar'), root = document.documentElement.style;
-  const topH = () => { root.setProperty('--bar-h', tb.getBoundingClientRect().bottom + 'px'); root.setProperty('--top-h', Math.max(tb.getBoundingClientRect().bottom, ib.getBoundingClientRect().bottom) + 'px'); };
-  new ResizeObserver(topH).observe(tb); new ResizeObserver(topH).observe(ib); addEventListener('resize', topH); }
+  // If the centred strip would sit over the status/speed rows under the bar, it hangs under the whole column instead.
+  const col = document.querySelector('.topcol'), rows = [...col.children].filter((x) => x !== tb);
+  const topH = () => {
+    const vw = innerWidth, off = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--side-off')) || 0;
+    const w = Math.min(ib.scrollWidth || 0, vw < 480 ? vw - 32 : vw * .6, vw - off - 32), cx = off ? (vw - off) / 2 : vw / 2;
+    root.setProperty('--init-max', vw < 480 ? vw - 32 + 'px' : '');
+    const left = cx - w / 2, hit = ib.childElementCount && rows.some((x) => !x.hidden && x.offsetHeight && x.getBoundingClientRect().right > left);
+    const barB = tb.getBoundingClientRect().bottom, colB = col.getBoundingClientRect().bottom;
+    root.setProperty('--bar-h', (hit ? colB : barB) + 'px');
+    root.setProperty('--top-h', Math.max(hit ? colB : barB, ib.getBoundingClientRect().bottom) + 'px');
+  };
+  const ro = new ResizeObserver(topH); for (const x of [tb, ib, col, ...rows]) ro.observe(x);
+  addEventListener('resize', topH); }
 let lastCurrent;
 function drawInit(v) {
   const bar = document.getElementById('initbar');
@@ -2348,7 +2359,7 @@ async function playFx(e, alive = () => true) {
 function drawResolving() {
   // A stale listening heartbeat alone says nothing about work. Only a declared
   // action acknowledged by the DM gives us evidence that resolution is underway.
-  const resolving = me && me.dm && !me.dm.listening && (me.intents || []).some((e) => e.handled && !e.done);
+  const resolving = me && me.dm && !me.dm.listening && (me.intents || []).some((e) => e.handled && !e.done && Date.now() - e.t < 180000 && !(e.creature && state && state.current && e.creature !== state.current)); // answers sent without --done linger: ignore old ones and ones whose turn has passed
   document.getElementById('dmResolving').hidden = !resolving;
 }
 
