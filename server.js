@@ -128,7 +128,8 @@ const ACTS = {
   dodge: ({ id, ti }) => (ti.action ? { error: 'Your action is already spent.' } : { args: ['dodge', id], quiet: true }),
   hide: ({ id, msg, ti, f }) => {
     const e = econ(ti, f, msg.as, null);
-    return e.error ? e : { pre: ['use', id, msg.as === 'bonus' ? 'bonus' : 'action'], args: ['check', id, 'stealth', '--about', 'hide'] };
+    // the engine rolls and judges it against every watcher; the action is spent only if hiding was possible at all
+    return e.error ? e : { args: ['hide', id, '--auto'], post: ['use', id, msg.as === 'bonus' ? 'bonus' : 'action'] };
   },
   attack: ({ id, msg, ti, s }) => {
     const w = C.findAttack(s.creatures[id], msg.weapon), as = w ? C.attackCost(w).as : 'action';
@@ -439,6 +440,7 @@ const server = http.createServer((req, res) => {
       if (plan.pre) { const r = await runEngine(plan.pre); if (!r.ok) return json(res, 400, { error: r.out }); }
       const r = await runEngine(plan.args);
       if (!r.ok) return json(res, 400, { error: r.out });
+      if (plan.post) await runEngine(plan.post);
       const quiet = plan.quietIf ? plan.quietIf(r.out) : !!plan.quiet;
       const first = r.out.split('\n')[0];
       C.appendIntent({ id: crypto.randomBytes(6).toString('hex'), t: Date.now(), player: seat.player, creature: turn.id, kind: 'auto', quiet, text: plan.label ? `${s.creatures[turn.id].name} ${plan.label}. ${first}` : first });
