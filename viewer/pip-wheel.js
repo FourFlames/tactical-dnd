@@ -26,6 +26,7 @@ const CSS = `
 .pw { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 20; pointer-events: none; font: 13px/1.15 system-ui, sans-serif; }
 .pw svg { position: absolute; overflow: visible; left: 0; top: 0; width: 1px; height: 1px; }
 .pw .halo { fill: none; stroke: #e9e3d33a; stroke-width: 1.2; }
+.pw .halo.ell { vector-effect: non-scaling-stroke; }
 .pw .b { position: absolute; width: 0; height: 0; transition: scale .08s; }
 .pw .b .i { position: absolute; left: -17px; top: -17px; width: 34px; height: 34px; box-sizing: border-box; border-radius: 50%; display: grid; place-items: center;
   z-index: 1; font-size: 17px; background: #14130f; border: 1.5px solid #5a5446; color: var(--gold, #d8b45a); box-shadow: 0 1px 5px #000a; transition: border-color .08s, background .08s; }
@@ -153,7 +154,9 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     // The buttons ring the target just clear of it, so the ring (the fold cutoff) follows the zoom. Down to TIGHT px the buttons
     // keep their size and captions; zoomed out past that the whole wheel shrinks with the square, captions only on the hot one.
     // (r 0: an icon anchor, which keeps its size on screen, so the wheel does too)
-    const rr = a.r ? a.r + D / 2 + GAP : 70, f = Math.max(.45, Math.min(1, rr / TIGHT)), k = (a.s || 1) * f;
+    // A floor ring (a.ex/a.ey: a square in 3D) lies on the ground as an ellipse; its major axis plays the circle's radius.
+    const M = a.ex ? Math.max(Math.hypot(a.ex.x, a.ex.y), Math.hypot(a.ey.x, a.ey.y), 1) : 0;
+    const rr = M || (a.r ? a.r + D / 2 + GAP : 70), f = Math.max(.45, Math.min(1, rr / TIGHT)), k = (a.s || 1) * f;
     S.k = (S.k || k) + (k - (S.k || k)) * .25;
     S.r = Math.max(TIGHT, Math.min(140, rr));
     el.classList.toggle('tight', f < 1);
@@ -169,10 +172,15 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     S.scale = S.k;
     el.style.visibility = S.u <= 0 ? 'hidden' : '';
     // keep the ring (not every label) on screen, so it stays centred on the target as long as possible
-    const padX = S.R + 52, padY = S.R + 40;
+    const hx = M ? Math.hypot(a.ex.x, a.ey.x) * S.r / M * S.k : S.R, hy = M ? Math.hypot(a.ex.y, a.ey.y) * S.r / M * S.k : S.R;   // the ring's half extents
+    const padX = hx + 52, padY = hy + 40;
     S.x = Math.max(padX, Math.min(innerWidth - padX, a.x));
     S.y = Math.max(padY, Math.min(innerHeight - padY, a.y));
     el.style.transform = `translate(${S.x}px, ${S.y}px) scale(${S.scale})`;
+    // The ellipse in the wheel's own (unscaled) px, and the swirl's origin relative to the centre.
+    const q = S.r / (M || 1);
+    S.ell = M ? { ex: { x: a.ex.x * q, y: a.ex.y * q }, ey: { x: a.ey.x * q, y: a.ey.y * q } } : null;
+    S.org = M && a.ox != null ? { x: (a.ox - S.x) / S.k, y: (a.oy - S.y) / S.k } : null;
     place();
     S.raf = requestAnimationFrame(frame);
   }
@@ -181,30 +189,52 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
   // then kept inside the window.
   // Unfolding: the first half they rush out together along the line a0, the second half they fan out to their slots
   // (each the short way round), captions fading in. Folding plays it backwards.
+  // Where slot angle t (degrees) sits, in the wheel's px: on the circle, or on the floor ellipse.
+  function ringAt(t, r = S.r || S.R) {
+    t = rad(t);
+    const e = S.ell, c = Math.cos(t), n = Math.sin(t);
+    return e ? { x: c * e.ex.x + n * e.ey.x, y: c * e.ex.y + n * e.ey.y } : { x: r * c, y: r * n };
+  }
+  // A floor ring with an origin swirls instead: every button starts at the origin and spirals out (radius 0 to 1, angle -120 to 0
+  // degrees, the origin sliding to the centre), captions fading in at the end. Folding plays it backwards.
+  const SWIRL_DEG = -120;
   function place() {
-    const r = S.r || S.R, u = S.u ?? 1;
+    const r = S.r || S.R, u = S.u ?? 1, org = S.ell && S.org;
     const out = ease(Math.min(1, u * 2)), fan = ease(Math.max(0, u * 2 - 1));
+    const sw = ease(u), ox = org ? org.x * (1 - sw) : 0, oy = org ? org.y * (1 - sw) : 0;
     for (const b of S.btns) {
-      const ta = slotAngle(+b.dataset.k) + S.offset, t = rad(S.a0 + angTo(S.a0, ta) * fan);
-      b.style.left = r * out * Math.cos(t) + 'px'; b.style.top = r * out * Math.sin(t) + 'px';
-      b.style.transform = out < 1 ? `scale(${.5 + .5 * out})` : '';
-      b.querySelector('.c').style.opacity = fan;
+      const ta = slotAngle(+b.dataset.k) + S.offset;
+      let p;
+      if (org) { p = ringAt(ta + SWIRL_DEG * (1 - sw)); p = { x: ox + p.x * sw, y: oy + p.y * sw }; }
+      else p = ringAt(S.a0 + angTo(S.a0, ta) * fan), p = { x: p.x * out, y: p.y * out };
+      b.style.left = p.x + 'px'; b.style.top = p.y + 'px';
+      const g = org ? sw : out;
+      b.style.transform = g < 1 ? `scale(${.5 + .5 * g})` : '';
+      b.querySelector('.c').style.opacity = org ? smooth(.7, 1, u) : fan;
     }
-    const crumb = el.querySelector('.crumb');
-    if (crumb) { crumb.style.left = '0px'; crumb.style.top = -(r + D / 2 + 6) + 'px'; crumb.style.opacity = fan; }
-    const halo = el.querySelector('.halo');
-    halo.setAttribute('r', r * out); halo.style.opacity = fan;
+    const e = S.ell, crumb = el.querySelector('.crumb');
+    if (crumb) {
+      const top = e ? Math.hypot(e.ex.y, e.ey.y) : r;   // the ellipse's highest point
+      crumb.style.left = '0px'; crumb.style.top = -(top + D / 2 + 6) + 'px'; crumb.style.opacity = org ? smooth(.7, 1, u) : fan;
+    }
+    const halo = el.querySelector('.halo'), hs = org ? sw : out;
+    halo.classList.toggle('ell', !!e);
+    if (e) {
+      halo.setAttribute('r', 1);
+      halo.setAttribute('transform', `matrix(${e.ex.x * hs} ${e.ex.y * hs} ${e.ey.x * hs} ${e.ey.y * hs} ${ox} ${oy})`);
+    } else { halo.removeAttribute('transform'); halo.setAttribute('r', r * out); }
+    halo.style.opacity = org ? smooth(.7, 1, u) : fan;
     placeTip();
   }
   function placeTip() {
     const tip = S.tip, b = S.hot && S.u > .98 && S.btns.find((x) => +x.dataset.k === S.hot);
     if (!b) { tip.style.display = 'none'; return; }
     tip.style.display = 'block';
-    const r = S.r || S.R, t = rad(slotAngle(S.hot) + S.offset), cx = Math.cos(t), cy = Math.sin(t);
+    const p = ringAt(slotAngle(S.hot) + S.offset), len = Math.hypot(p.x, p.y) || 1, cx = p.x / len, cy = p.y / len;   // the slot's screen direction
     const w = smooth(.15, .8, Math.abs(cx)), sx = cx < 0 ? -1 : 1, sy = cy < 0 ? -1 : 1;
     const c = b.querySelector('.c'), below = sy > 0 ? c.offsetHeight + 4 : 0;
     const outX = Math.max(D / 2, c.offsetWidth / 2) + 8, outY = D / 2 + 8;   // sideways it clears the caption too
-    let x = r * cx + outX * sx * w, y = r * cy + (outY + below) * sy * (1 - w);
+    let x = p.x + outX * sx * w, y = p.y + (outY + below) * sy * (1 - w);
     const tw = tip.offsetWidth, th = tip.offsetHeight;
     x -= tw / 2 - tw / 2 * sx * w; y -= th / 2 - th / 2 * sy * (1 - w);
     x = Math.max(6 - S.x, Math.min(innerWidth - 6 - S.x - tw, x));
@@ -216,14 +246,19 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
   // too): its icon circle or its caption, grown by `slack` px. Else 0.
   function hit(mx, my, slack = 4) {
     for (const b of S.btns) {
-      const t = rad(slotAngle(+b.dataset.k) + S.offset), ix = S.x + S.R * Math.cos(t), iy = S.y + S.R * Math.sin(t), k = S.k;
+      const p = ringAt(slotAngle(+b.dataset.k) + S.offset), k = S.k, ix = S.x + p.x * k, iy = S.y + p.y * k;
       const c = b.querySelector('.c'), cw = c.offsetWidth / 2 * k, cy = iy + (D / 2 - 4) * k;
       if (Math.hypot(mx - ix, my - iy) < D / 2 * k + slack
         || (Math.abs(mx - ix) < cw + slack && my > cy - slack && my < cy + c.offsetHeight * k + slack)) return +b.dataset.k;
     }
     return 0;
   }
-  const away = (mx, my) => Math.hypot(mx - S.x, my - S.y) - S.R;   // px beyond the ring
+  const away = (mx, my) => {   // px beyond the ring
+    const e = S.ell;
+    if (!e) return Math.hypot(mx - S.x, my - S.y) - S.R;
+    const px = (mx - S.x) / S.k, py = (my - S.y) / S.k, d = e.ex.x * e.ey.y - e.ex.y * e.ey.x || 1e-6;   // through the inverse basis
+    return (Math.hypot((px * e.ey.y - py * e.ey.x) / d, (e.ex.x * py - e.ex.y * px) / d) - 1) * S.R;
+  };
   function setHot(k) {
     if (S.hot === k) return;
     S.hot = k;
