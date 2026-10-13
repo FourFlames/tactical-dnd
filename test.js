@@ -541,6 +541,18 @@ try {
   edit((s) => { s.mtime = 70; });
   r = run('track', 'rook', '4', '--total', '30');
   expect('old tracks fade away entirely', /nothing readable/.test(r.out) && !/too faint/.test(r.out), r.out);
+  edit((s) => { s.creatures.rook.pos = 'E4'; s.mtime = 0; const e = { who: 'gob1', t: 0, seq: 1, from: 'E6', size: 'small', kind: 'humanoid', base: 12 }; s.trails = { E5: [e], E3: [e], G4: [e] }; });
+  r = run('track', 'rook', 'E5', '--total', '30');
+  expect('track <cell> reads only that cell, not a trail two squares away', r.ok && /passed this way/.test(r.out) && !/E3|G4/.test(r.out) && C.trackCells(C.loadState(), C.loadState().creatures.rook, 'e5').join() === 'E5', r.out);
+  expect('...whereas a radius takes in the neighbours', C.trackCells(C.loadState(), C.loadState().creatures.rook, '2').length > 1, '');
+  {
+    // readLog parses only what it returns: same entries and n values as parsing every line.
+    const lines = ['{"type":"a"}', '', '{"type":"b"}', '{"type":"c"}', '{"type":"d"}'];
+    require('fs').writeFileSync(C.LOG, lines.join('\n') + '\n');
+    const old = (n, before = Infinity) => { const o = []; lines.forEach((l, i) => { if (l.trim() && i + 1 < before) o.push(Object.assign(JSON.parse(l), { n: i + 1 })); }); return o.slice(-n); };
+    const same = (n, b) => JSON.stringify(C.readLog(n, b)) === JSON.stringify(old(n, b));
+    expect('readLog matches parse-everything output across a blank line, a limit and before', same(200) && same(2) && same(10, 4) && same(1, 5) && JSON.stringify(C.readLog(10, 4).map((e) => e.n)) === '[1,3]', JSON.stringify(C.readLog(10, 4)));
+  }
   edit((s) => { s.creatures.gob1.pos = 'H3'; s.mtime = 0; s.trails = {}; });
   run('terrain', 'D3:L4', 'remove', 'tracks');
   run('move', 'gob1', 'L4');
