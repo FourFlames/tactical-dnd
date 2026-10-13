@@ -864,9 +864,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
 
   // ---------- camera ----------
   let defDist = 30, ease = null;
+  // id: a creature, or a cell name (eases to that square).
   function focusOn(id, at) {
+    if (lastState && !lastState.creatures[id] && /^[A-Za-z]\d+$/.test(id || '')) at = id.toUpperCase();
     const c = lastState && lastState.creatures[id];
-    if (!c || !c.pos || c.hidden) return;
+    if (!at && (!c || !c.pos || c.hidden)) return;
     const p = cellOf(at || c.pos);
     const to = new THREE.Vector3(p.x + 0.5, (at ? cellElev(lastState, p.x, p.y) : c.elev || 0) * FT + 0.5, p.y + 0.5);
     const off = camera.position.clone().sub(controls.target), d = off.length();

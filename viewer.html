@@ -611,7 +611,7 @@ function setViewBox(vb) {
 let panAnim = 0;
 function focusRef(ref) {
   const c = state && state.creatures[ref];
-  if (THREE_D) { if (c && map3d && map3d.focus) map3d.focus(ref); return; } // map3d.focus only knows creatures
+  if (THREE_D) { if (map3d && map3d.focus && (c || /^[A-Z]\d+$/.test(ref))) map3d.focus(ref); return; }
   const cell = c ? c.pos : /^[A-Z]\d+$/.test(ref) ? ref : null;
   if (!cell || !svg || !view2d) return;
   const p = parseCell(cell), from = Object.assign({}, view2d.vb), cx = (p.x + .5) * CELL, cy = (p.y + .5) * CELL, t0 = performance.now();
