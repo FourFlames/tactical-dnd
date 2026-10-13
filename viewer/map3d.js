@@ -1054,17 +1054,27 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const b = to(p.clone().addScaledVector(projV.set(1, 0, 0).transformDirection(camera.matrixWorld), half));
     return { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) };
   }
-  // A square's screen centre and half its diagonal, in client px (the square wheel's anchor).
+  // A square's screen centre, half its diagonal and the floor-ring basis ex/ey, in client px (the square wheel's anchor).
   function squareAnchor(ref) {
     if (!lastState || !/^[A-Za-z]\d+$/.test(ref)) return null;
     const q = cellOf(ref.toUpperCase()), y = cellElev(lastState, q.x, q.y) * FT;
     camera.updateMatrixWorld();
     const rc = renderer.domElement.getBoundingClientRect();
-    const to = (x, z) => { projV.set(x, y, z).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
+    const to = (x, z, h = y) => { projV.set(x, h, z).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
     const m = to(q.x + 0.5, q.y + 0.5), a = to(q.x, q.y), b = to(q.x + 1, q.y + 1);
-    // Lifted a fifth of the ring: the tilted floor squashes the square, so a ring centred on it reads as sitting low.
     const r = Math.hypot(a.x - b.x, a.y - b.y) / 2;
-    return m.z > 1 ? null : { x: m.x, y: m.y - r * 0.2, r };
+    if (m.z > 1) return null;
+    // The ring lies on the floor: slot angle t sits at centre + cos t * ex + sin t * ey, so t = -90 (slot 1) is the camera's far side.
+    const fw = camera.getWorldDirection(new THREE.Vector3()).setY(0);
+    if (fw.lengthSq() < 1e-6) fw.set(0, 0, -1).transformDirection(camera.matrixWorld).setY(0);   // looking straight down: the screen's up
+    fw.normalize();
+    const RW = 1.0, cx = q.x + 0.5, cz = q.y + 0.5;
+    const pe = to(cx - fw.z * RW, cz + fw.x * RW), pn = to(cx - fw.x * RW, cz - fw.z * RW);
+    let ex = { x: pe.x - m.x, y: pe.y - m.y }, ey = { x: pn.x - m.x, y: pn.y - m.y };
+    const lx = Math.hypot(ex.x, ex.y), ly = Math.hypot(ey.x, ey.y);
+    if (ly < 0.5 * lx) { const k = ly > 1e-6 ? 0.5 * lx / ly : 0; ey = ly > 1e-6 ? { x: ey.x * k, y: ey.y * k } : { x: 0, y: -0.5 * lx }; }
+    const o = to(cx, cz, y + 0.5);   // the swirl starts half a cell above the square
+    return { x: m.x, y: m.y, r, ex, ey, ox: o.x, oy: o.y };
   }
   function followTurn(v) {
     // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
