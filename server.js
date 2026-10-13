@@ -139,6 +139,19 @@ const ACTS = {
   },
   check: ({ id, msg }) => (/^[a-z-]{2,20}$/.test(msg.skill || '') ? { args: ['check', id, msg.skill, '--about', String(msg.about || 'look closer').slice(0, 120)] } : { error: 'Pick a skill.' }),
   undo: ({ id }) => ({ args: ['undo', id], quiet: true }),
+  // A door the party can see and is standing beside; a free object interaction, so no action is spent. Loud: NPCs may hear it, the DM narrates.
+  door: ({ id, msg, s }) => {
+    const op = String(msg.op || '');
+    if (!['open', 'close', 'lock', 'unlock'].includes(op)) return { error: 'Open, close, lock or unlock?' };
+    const w = C.view(s, 'player').walls.find((x) => x.kind === 'door' && x.id && x.id === msg.door);
+    if (!w) return { error: 'You see no such door.' };
+    // beside = on either side of the line, within one square of its length (so the end squares count diagonally)
+    const me = C.parseCell(s.creatures[id].pos), v = w.x1 === w.x2;
+    const [across, along] = v ? [me.x, me.y] : [me.y, me.x], line = v ? w.x1 : w.y1;
+    const lo = v ? Math.min(w.y1, w.y2) : Math.min(w.x1, w.x2), hi = v ? Math.max(w.y1, w.y2) : Math.max(w.x1, w.x2);
+    if (!((across === line - 1 || across === line) && along >= lo - 1 && along <= hi)) return { error: 'Get next to the door first.' };
+    return { args: ['door', w.id, op, '--by', id] };
+  },
   end: ({ id }) => ({ args: ['next', '--by-player'], label: 'ends the turn' }),
 };
 // Out of combat: what differs. `file` = no engine command, just tell the DM (who starts the fight or ticks a round).
@@ -324,6 +337,11 @@ const server = http.createServer((req, res) => {
       const v = C.view(s, wantDm ? 'dm' : 'player');
       const wheels = wheelsFor(v.creatures);
       for (const id of Object.keys(wheels)) v.creatures[id].wheel = wheels[id];
+      // Doors: the party's own keys, and whether a door is locked only once someone holds its key (otherwise they learn it by trying).
+      const keyed = new Set();
+      for (const [id, c] of Object.entries(s.creatures)) if (c.side === 'party' && (c.keys || []).length && v.creatures[id]) { v.creatures[id].keys = c.keys; c.keys.forEach((k) => keyed.add(k)); }
+      const raw = new Map((s.walls || []).filter((w) => w && typeof w === 'object' && w.id).map((w) => [w.id, w]));
+      for (const w of v.walls) if (w.kind === 'door' && w.id && (wantDm || keyed.has(w.id)) && raw.has(w.id)) w.locked = !!raw.get(w.id).locked;
       return json(res, 200, v);
     } catch (e) {
       return json(res, 500, { error: e.message });

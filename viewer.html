@@ -2067,8 +2067,60 @@ function pickMenu(cx, cell, here) {
   return m;
 }
 
+// ---- doors ----
+// A door is a wall segment with an id; the squares beside it are the ones along either side of its line. Secret doors
+// the party hasn't found never reach the player view, so everything here is only what the state shows.
+const knownLocked = new Set();   // doors an Open attempt found locked (the state only says so once the party holds the key)
+function doorSides(w) {
+  const v = w.x1 === w.x2, lo = Math.min(v ? w.y1 : w.x1, v ? w.y2 : w.x2), hi = Math.max(v ? w.y1 : w.x1, v ? w.y2 : w.x2), out = [];
+  for (let i = lo; i < hi; i++) for (const k of [(v ? w.x1 : w.y1) - 1, v ? w.x1 : w.y1]) {
+    const x = v ? k : i, y = v ? i : k;
+    if (x >= 0 && y >= 0 && x < state.width && y < state.height) out.push(cellName(x, y));
+  }
+  return out;
+}
+const doorsBeside = (cell) => (wheelView().walls || []).filter((w) => w.kind === 'door' && w.id && !w.hidden && doorSides(w).includes(cell));
+function nearDoor(w, pos) {   // within a square of the door's length, on either side
+  const me = parseCell(pos), v = w.x1 === w.x2, across = v ? me.x : me.y, along = v ? me.y : me.x, line = v ? w.x1 : w.y1;
+  const lo = Math.min(v ? w.y1 : w.x1, v ? w.y2 : w.x2), hi = Math.max(v ? w.y1 : w.x1, v ? w.y2 : w.x2);
+  return (across === line - 1 || across === line) && along >= lo - 1 && along <= hi;
+}
+async function doorMenu(cx, w) {
+  const label = w.id.replace(/[-_]+/g, ' '), t = myTurn(), near = nearDoor(w, cx.a.pos);
+  const key = (cx.a.keys || []).includes(w.id), locked = !!w.locked || knownLocked.has(w.id);
+  const doIt = (op) => async () => {
+    const ok = await act('door', { door: w.id, op });
+    if (!ok && /locked/i.test((turnMsg || {}).text || '')) { knownLocked.add(w.id); refresh(); }
+  };
+  const op = w.open ? 'close' : 'open';
+  let main;
+  if (!t) main = { what: w.open ? 'Close' : 'Open', off: true, odds: noTurnWhy() };
+  else if (!w.open && locked && !key) main = { what: 'Locked', off: true, odds: 'no key' };
+  else if (near) main = { what: w.open ? 'Close' : 'Open', odds: w.open ? 'free' : locked ? 'unlocks with your key' : 'free', go: doIt(op) };
+  else {   // walk to the nearest free square beside it, then work it
+    const occ = Object.values(wheelView().creatures).map((c) => c.pos), free = [...new Set(doorSides(w))].filter((c) => !occ.includes(c));
+    const ps = await Promise.all(free.map(async (cell) => ({ cell, p: await fetchPath(cell) })));
+    const best = ps.filter((r) => r.p && r.p.path).sort((a, b) => a.p.cost - b.p.cost)[0];
+    const f = best ? moveFields(best.cell, best.p, { then: doIt(op) }) : { off: true, odds: 'no way there' };
+    main = Object.assign({ what: 'Approach & ' + op }, f, f.off ? {} : { odds: `${best.p.cost} ft, then ${op}` });
+  }
+  const items = [main];
+  if (!w.open && locked && !key) items.push(intentLeaf(cx, { cell: w.from }, { what: 'Force it', odds: 'asks the DM' }, `${cx.aName} tries to force the locked door ${w.id} at ${w.from}`));
+  if (key && t && near && !w.open) items.push({ what: locked ? 'Unlock' : 'Lock', odds: 'your key', go: doIt(locked ? 'unlock' : 'lock') });
+  return subOf('Door', `${w.open ? 'Close' : 'Open'} door`, label, items);
+}
+
 async function squareMenu(cx, cell) {
   const T = { cell }, t = myTurn(), { p, jump, fast } = t ? await routeTo(cell) : {};
+  const doors = await Promise.all(doorsBeside(cell).map((w) => doorMenu(cx, w)));
+  const cellInfo = (wheelView().cells[parseCell(cell).y] || [])[parseCell(cell).x] || {};
+  const tags = cellInfo.tags || [], thing = cellInfo.obj ? cellInfo.obj.name : cellInfo.terrain || 'the spot';
+  // Squares with something to play with: the free-text request is pre-filled for the player to finish.
+  const fun = cellInfo.obj || tags.some((g) => /^(can-topple|flammable|fire-source|climbable)$/.test(g)) ? { what: 'Try something', odds: tags.includes('can-topple') ? 'tip it, burn it…' : 'ask the DM', go: () => {
+    const box = document.getElementById('actText'), verb = tags.includes('can-topple') ? 'tips over' : tags.includes('flammable') ? 'sets fire to' : 'tries something with';
+    document.getElementById('actSec').classList.remove('closed');
+    box.value = `${cx.aName} ${verb} the ${thing.replace(/^the /i, '')} at ${cell}`; fitBox(); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+  } } : null;
   const mv = moveFields(cell, p, { jump, fast }), dash = moveFields(cell, p, { dash: true, jump, fast });
   const word = moveWord(p);
   const aim = [];
@@ -2077,17 +2129,23 @@ async function squareMenu(cx, cell) {
   for (const x of (d.kit && d.kit.what === 'Spells' ? d.kit.items : [])) aim.push(x);
   if (!aim.length) aim.push({ what: 'Throw something' });
   const aimLeaf = (x) => intentLeaf(cx, T, { what: x.what, odds: x.odds }, x.cast ? `${cx.aName} casts ${x.what} at ${cell}` : `${cx.aName} aims ${x.what} at ${cell}`);
+  const ping = { role: 'Ping', what: 'Ping', go: () => { if (cursor.cell !== cell) { cursor.id = null; cursor.cell = cell; cursor.z = null; } sendPing(); } };
+  const tricks = [
+    ...(fun ? [fun] : []),
+    t ? actLeaf('move', { cell, jump: true }, { what: 'Jump' }) : { what: 'Jump', off: true, odds: noTurnWhy() },
+    t ? actLeaf('move', { cell, fastClimb: true }, { what: 'Climb fast' }) : { what: 'Climb fast', off: true, odds: noTurnWhy() },
+    intentLeaf(cx, T, { what: 'Drop prone' }, `${cx.aName} drops prone`),
+    intentLeaf(cx, T, { what: 'Sneak there' }, `${cx.aName} sneaks to ${cell}`)];
+  // A door beside the square takes slot 6; Ping moves into Tricks.
+  const dw = doorsBeside(cell);
+  const doorSlot = doors.length === 1 ? doors[0] : subOf('Door', 'Doors', 'Doors here', doors.map((m, i) => Object.assign(m, { what: dw[i].id.replace(/[-_]+/g, ' ') })));
   return { title: cell, slots: {
     1: Object.assign({ role: 'Move here', what: word, short: mv.off ? 'Move' : p.checks.length ? word : p.cost + ' ft' }, mv),
     2: Object.assign({ role: 'Dash', what: 'Dash here', short: 'Dash' }, dash),
     3: subOf('Aim here', 'Aim here', 'Aim at ' + cell, aim.map(aimLeaf)),
-    4: subOf('Tricks', 'Tricks', 'Tricks', [
-      t ? actLeaf('move', { cell, jump: true }, { what: 'Jump' }) : { what: 'Jump', off: true, odds: noTurnWhy() },
-      t ? actLeaf('move', { cell, fastClimb: true }, { what: 'Climb fast' }) : { what: 'Climb fast', off: true, odds: noTurnWhy() },
-      intentLeaf(cx, T, { what: 'Drop prone' }, `${cx.aName} drops prone`),
-      intentLeaf(cx, T, { what: 'Sneak there' }, `${cx.aName} sneaks to ${cell}`)]),
+    4: subOf('Tricks', 'Tricks', 'Tricks', doors.length ? [...tricks, ping] : tricks),
     5: Object.assign(inspectLeaf(cx, T), { what: 'Inspect square', short: 'Inspect' }),
-    6: { role: 'Ping', what: 'Ping', go: () => { if (cursor.cell !== cell) { cursor.id = null; cursor.cell = cell; cursor.z = null; } sendPing(); } },
+    6: doors.length ? doorSlot : ping,
   } };
 }
 // ---------- the DM's offers ----------
