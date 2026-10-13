@@ -1653,6 +1653,11 @@ let pw = null, pwLoading = null, W = null, wheelSeq = 0, eatClick = false;
 const wheelOk = () => !DM && canTalk() && !!state && !state.empty;
 const wheelActor = () => { const t = myTurn(); return t ? t.id : hudId(); };
 const wheelView = () => disp || state;
+// Menus cache targets, routes and resource gates. Only compare public game data,
+// so a routine refresh or a new chat message does not dismiss an unchanged menu.
+const wheelContext = () => JSON.stringify([state && state.round, state && state.current,
+  state && state.currentUnseen, wheelActor(), myTurn(), state && state.creatures,
+  state && state.cells, state && state.walls]);
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
@@ -1754,29 +1759,32 @@ async function openWheelAt(ref) {
     return;
   }
   const seq = ++wheelSeq;
+  const context = wheelContext();
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
   await loadWheel();
-  if (seq !== wheelSeq) return; // a newer click got here first
+  if (seq !== wheelSeq || context !== wheelContext()) return; // a newer click or game change got here first
   if (here.length === 1) return openEntity(here[0].id, seq);
   const menu = here.length ? pickMenu(cx, cell, here) : await squareMenu(cx, cell);
-  if (seq !== wheelSeq) return;
+  if (seq !== wheelSeq || context !== wheelContext()) return;
   selectOnly(cell);
   pw.open(menu, wheelAnchor(cell));
-  W = { seq, turn: [state.round, state.turnIdx] };
+  W = { seq, context };
   if (mk) { const p = parseCell(cell); W.sq = cell; map3d.showSquare({ x: p.x, y: p.y }, true); wheel3d(null); }
 }
 async function openEntity(id, seq = ++wheelSeq) {
   if (!me.turn) pickActor(id);
   const c = state.creatures[id], actor = wheelActor();
   if (!c || !actor) return;
+  const context = wheelContext();
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
   const menu = id === actor ? selfMenu(cx) : c.side === 'enemy' ? await enemyMenu(cx, c) : allyMenu(cx, c);
-  if (seq !== wheelSeq) return;
+  if (seq !== wheelSeq || context !== wheelContext()) return;
   selectOnly(id);
   await loadWheel();
+  if (seq !== wheelSeq || context !== wheelContext()) return;
   if (W && W.sq && map3d) map3d.showSquare(null);
   pw.open(menu, wheelAnchor(id));
-  W = { seq, turn: [state.round, state.turnIdx], id };
+  W = { seq, context, id };
   if (THREE_D && map3d) wheel3d(id);
 }
 
@@ -2552,7 +2560,7 @@ async function refresh() {
     for (const k of Object.keys(hoverCache)) delete hoverCache[k];
     hoverEpoch++; clearTimeout(hover.timer);
     if (hover.id) hover.timer = setTimeout(() => fetchHover(hover.id), 120);
-    if (pw && pw.isOpen && W && (W.turn[0] !== state.round || W.turn[1] !== state.turnIdx)) closeWheel(); // the situation moved on
+    if (pw && pw.isOpen && W && W.context !== wheelContext()) closeWheel(); // cached targets or actions changed
     ingest();
     render();
     drawResolving();
