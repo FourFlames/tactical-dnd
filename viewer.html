@@ -1654,13 +1654,20 @@ const wheelView = () => disp || state;
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
-    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev), onHot: (s) => previewRoute(s && s.route) });
+    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev), onHot: (s) => previewRoute(s && s.route), yields: (ev) => wheelYields(ev) });
     return pw;
   }));
 }
 if (TOKEN) loadWheel(); // ready before the first click
 function closeWheel() {
   calm3d(); W = null; wheelSeq++; if (pw) pw.close();
+}
+// 3D: a traced stem or a marker icon under the pointer outranks the wheel's buttons and ring (they often overlap a square's wheel).
+function wheelYields(ev) {
+  const mk = THREE_D && map3d && map3d.marks();
+  if (!mk || !mk.active) return false;
+  const id = mk.pickAt(ev.clientX, ev.clientY);
+  return !!(id && state && state.creatures[id] && (!W || id !== W.id));
 }
 function calm3d() { // 3D: the other icons come back up and a square wheel's gold square goes (a leaf closes the wheel without onClose)
   previewRoute(null);

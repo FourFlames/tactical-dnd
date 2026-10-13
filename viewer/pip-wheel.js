@@ -86,7 +86,7 @@ function tipHtml(s, root) {
     + (s.alt ? '<div class="n">Right-click: alternatives</div>' : s.swap ? '<div class="n">Right-click: put in the slot</div>' : '');
 }
 
-export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, onHot = () => {}, spinMs = () => 150 } = {}) {
+export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, onHot = () => {}, yields = () => false, spinMs = () => 150 } = {}) {
   if (!document.getElementById('pw-css')) document.head.insertAdjacentHTML('beforeend', `<style id="pw-css">${CSS}</style>`);
   const el = document.createElement('div');
   el.className = 'pw'; el.hidden = true;
@@ -245,6 +245,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointermove', (ev) => {
       last = { x: ev.clientX, y: ev.clientY };
       if (ev.buttons) return;   // dragging the camera: leave the wheel as it is
+      if (yields(ev)) { S.folded = true; setHot(0); return; }   // the host has the pointer (a traced stem or its icon): step aside
       // The ring is the cutoff; an icon or caption holds it open past it. Folding is instant (the look animates).
       // Open = inside the full-size ring or on a full-size icon/caption, plus GRACE px (a few more to stay open, so
       // the edge doesn't flicker). A folded wheel pops back to full as soon as the pointer is there.
@@ -256,7 +257,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
     ['pointerup', (ev) => {
       // a drag (e.g. orbiting the camera) passes through; so does a click that isn't on a button or the target
-      if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+      if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5 || yields(ev)) return;
       const k = hit(ev.clientX, ev.clientY);
       if (k) { ev.pwHandled = true; return choose(k, ev.shiftKey); }
       if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; const r = onInnerClick(ev) || back(); if (!S) ev.pwClosed = true; return r; } // pwClosed: the click folded the wheel away
