@@ -67,6 +67,7 @@ const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang under them, tucked 4 px behind the circle's bottom.
 const D = 34, GAP = 6, GRACE = 10;   // GRACE: see pointermove
+const TIGHT = 62;   // px: the ring's least layout radius at full size (see frame)
 const UNFOLD_MS = 190, FOLD_MS = 150;
 const angTo = (a, b) => ((b - a) % 360 + 540) % 360 - 180;   // shortest turn from a to b, degrees
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -136,11 +137,13 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (t >= 1) S.spin = null;
     }
     const a = S.anchor();
-    S.k = (S.k || a.s || 1) + ((a.s || 1) - (S.k || a.s || 1)) * .25;
-    // layout radius: the buttons ring the target just clear of it, so the ring (the fold cutoff) follows the zoom; buttons keep their size.
-    // 44: the least that keeps neighbouring buttons apart; below 70 the captions would collide, so only the hot one shows.
-    S.r = Math.max(44, Math.min(140, (a.r || 0) + D / 2 + GAP));
-    el.classList.toggle('tight', S.r < 70);
+    // The buttons ring the target just clear of it, so the ring (the fold cutoff) follows the zoom. Down to TIGHT px the buttons
+    // keep their size and captions; zoomed out past that the whole wheel shrinks with the square, captions only on the hot one.
+    // (r 0: an icon anchor, which keeps its size on screen, so the wheel does too)
+    const rr = a.r ? a.r + D / 2 + GAP : 70, f = Math.max(.45, Math.min(1, rr / TIGHT)), k = (a.s || 1) * f;
+    S.k = (S.k || k) + (k - (S.k || k)) * .25;
+    S.r = Math.max(TIGHT, Math.min(140, rr));
+    el.classList.toggle('tight', f < 1);
     S.R = S.r * S.k;   // on screen
     // fold/unfold: u runs to 0 or 1. Each time it turns, the line they travel is re-aimed at the pointer (up if it's on the target)
     const goal = S.folded ? 0 : 1, dt = Math.min(50, now - (S.t ?? now)); S.t = now;
