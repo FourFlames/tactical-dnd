@@ -44,9 +44,8 @@
 
   /* map side */
   .stage { display: block; }
-  /* one row across the top: the bar and its status lines on the left, the initiative strip centred in the space that's left */
-  .topstack { position: fixed; top: 16px; left: 16px; width: calc(100vw - var(--side-off) - 32px); z-index: 10; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; pointer-events: none; }
-  .topcol { flex: none; max-width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .topstack { position: fixed; top: 16px; left: 16px; z-index: 10; max-width: calc(100vw - var(--side-off) - 32px); pointer-events: none; }
+  .topcol { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .topcol > * { pointer-events: auto; }
   .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 7px 12px; background: var(--panel-bg); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, .35); }
   .topbar .title { min-width: 0; }
@@ -363,7 +362,8 @@
   .sheet .shlink { display: inline-block; margin-top: 12px; font-size: 12px; color: var(--gold); }
 
   /* initiative strip (top centre, Divinity-style): the current creature large, then the rest of the round */
-  .initbar { flex: 1 1 320px; min-width: 0; margin-top: -4px; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; }
+  /* centred over the map, just under the top bar (--bar-h is measured) */
+  .initbar { position: fixed; top: calc(var(--bar-h, 56px) + 6px); left: calc((100vw - var(--side-off)) / 2); transform: translateX(-50%); z-index: 9; max-width: min(60vw, calc(100vw - var(--side-off) - 32px)); pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 0; }
   .initbar > * { pointer-events: auto; }
   .initbar:empty { display: none; }
   .portraits { display: flex; align-items: flex-start; gap: 6px; max-width: 100%; overflow-x: auto; padding: 4px 6px 6px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -434,8 +434,8 @@
     </div>
     <div class="pbctl" id="pbctl">Speed <span id="pbSpeeds"></span><button class="skip" id="pbSkip" hidden title="Finish the queued action and show where things are now">Skip to now</button></div>
     </div>
-    <div class="initbar" id="initbar"></div>
     </div>
+    <div class="initbar" id="initbar"></div>
     <div class="mapzone">
       <div class="mapwrap" id="mapwrap"></div>
       <div class="zoombox" id="zoombox" hidden>
@@ -813,9 +813,9 @@ const hpColor = (f) => f > .5 ? '#6fbf73' : f > .25 ? '#d8b45a' : '#d25b4a';
 
 // The initiative strip: starting from whoever is acting, through the end of the round, a round
 // marker, then round to the current creature again. A '?' is creatures acting out of sight.
-// The look card sits under whichever is lower, the top bar or the initiative strip (which wraps under the bar when narrow).
-{ const tb = document.querySelector('.topbar'), ib = document.getElementById('initbar');
-  const topH = () => document.documentElement.style.setProperty('--top-h', Math.max(tb.getBoundingClientRect().bottom, ib.getBoundingClientRect().bottom) + 'px');
+// The initiative strip hangs under the top bar, and the look card under whichever of the two is lower.
+{ const tb = document.querySelector('.topbar'), ib = document.getElementById('initbar'), root = document.documentElement.style;
+  const topH = () => { root.setProperty('--bar-h', tb.getBoundingClientRect().bottom + 'px'); root.setProperty('--top-h', Math.max(tb.getBoundingClientRect().bottom, ib.getBoundingClientRect().bottom) + 'px'); };
   new ResizeObserver(topH).observe(tb); new ResizeObserver(topH).observe(ib); addEventListener('resize', topH); }
 let lastCurrent;
 function drawInit(v) {
