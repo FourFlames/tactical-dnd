@@ -2604,7 +2604,7 @@ async function refresh() {
     if (cursor.id || cursor.cell) fetchLook(); // things moved: what you can tell may have changed
   } catch (e) { /* server restarting */ }
 }
-// ---------- connection health: round trip of real requests plus a /api/ping every 5 s; a loss glyph on failures or a down stream ----------
+// ---------- connection health: round trip of a bare /api/ping every 5 s (other requests include server work, so they only count failures); a loss glyph on failures or a down stream ----------
 const net = { rtt: null, fails: [], stream: 'connecting' };
 function netDraw() {
   const now = Date.now(); net.fails = net.fails.filter((t) => now - t < 60000);
@@ -2622,7 +2622,7 @@ window.fetch = async (input, init) => {
   if (!u.startsWith('/api/')) return netFetch(input, init);
   try {
     const r = await netFetch(input, init);
-    if (r.status >= 500) net.fails.push(Date.now()); else net.rtt = Math.round(performance.now() - t0);
+    if (r.status >= 500) net.fails.push(Date.now()); else if (u.startsWith('/api/ping') && !(init && init.method)) net.rtt = Math.round(performance.now() - t0);
     netDraw(); return r;
   } catch (e) { net.fails.push(Date.now()); netDraw(); throw e; }
 };

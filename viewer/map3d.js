@@ -990,7 +990,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   function focusOn(id, at) {
     if (lastState && !lastState.creatures[id] && /^[A-Za-z]\d+$/.test(id || '')) at = id.toUpperCase();
     const c = lastState && lastState.creatures[id];
-    if (!at && (!c || !c.pos || c.hidden)) return;
+    if (!at && (!c || !c.pos || (c.hidden && c.side !== 'party'))) return; // your own hidden creature is still yours to find
     const p = cellOf(at || c.pos);
     const to = new THREE.Vector3(p.x + 0.5, (at ? cellElev(lastState, p.x, p.y) : c.elev || 0) * FT + 0.5, p.y + 0.5);
     const off = camera.position.clone().sub(controls.target), d = off.length();
@@ -1025,7 +1025,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const rc = renderer.domElement.getBoundingClientRect();
     const to = (x, z) => { projV.set(x, y, z).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
     const m = to(q.x + 0.5, q.y + 0.5), a = to(q.x, q.y), b = to(q.x + 1, q.y + 1);
-    return m.z > 1 ? null : { x: m.x, y: m.y, r: Math.hypot(a.x - b.x, a.y - b.y) / 2 };
+    // Lifted a fifth of the ring: the tilted floor squashes the square, so a ring centred on it reads as sitting low.
+    const r = Math.hypot(a.x - b.x, a.y - b.y) / 2;
+    return m.z > 1 ? null : { x: m.x, y: m.y - r * 0.2, r };
   }
   function followTurn(v) {
     // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
