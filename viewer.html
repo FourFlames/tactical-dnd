@@ -1738,20 +1738,28 @@ function whyNot(kind) {
   if (kind === 'action' && t.action) return 'action spent';
   if (kind === 'bonus' && !(t.features.cunningAction || t.features.nimbleEscape)) return 'no bonus-action option';
   if (kind === 'bonus' && t.bonus) return 'bonus action spent';
+  if (kind === 'bonusAny' && t.bonus) return 'bonus action spent';   // any bonus-action spell or feature, not just Cunning Action
+  if (kind === 'reaction' && t.reaction) return 'reaction spent';
   return '';
 }
+// What a leaf costs. Attacks carry it (`as`); the table covers the spells the wheel offers by name.
+const BONUS_SPELLS = /^(spiritual weapon|healing word|mass healing word|misty step|shield of faith|hunter'?s mark|hex|sanctuary|expeditious retreat|divine favor|ensnaring strike|searing smite|thunderous smite|wrathful smite|branding smite|compelled duel|flame blade|shillelagh|magic stone|healing spirit|shadow blade|swift quiver|zephyr strike|hail of thorns)$/i;
+const REACTION_SPELLS = /^(shield|absorb elements|feather fall|hellish rebuke|counterspell|silvery barbs)$/i;
+const spellCost = (name) => (BONUS_SPELLS.test(name) ? 'bonusAny' : REACTION_SPELLS.test(name) ? 'reaction' : 'action');
+const attackKind = (a) => { const k = a.as || (a.bonusAction || /^spiritual weapon$/i.test(a.name) ? 'bonus' : 'action'); return k === 'bonus' ? 'bonusAny' : k; };
+const spendOf = (kind) => (kind === 'bonusAny' ? 'bonus' : kind);
 const gated = (kind, s) => { const w = whyNot(kind); return w ? Object.assign({}, s, { off: true, odds: w, go: undefined }) : s; };
 const fightOnly = (kind, s) => { const t = myTurn(); return t && t.explore ? Object.assign({}, s, { off: true, odds: 'in a fight', go: undefined }) : gated(kind, s); };
 const actLeaf = (action, extra, s) => Object.assign({}, s, { go: () => { act(action, extra); } });
-async function sendIntent(cx, text, at) {
+async function sendIntent(cx, text, at, spend) {
   const err = document.getElementById('actErr');
   err.textContent = '';
-  try { await postIntent(Object.assign({ text, creature: cx.actor }, at)); }
+  try { await postIntent(Object.assign({ text, creature: cx.actor, spend }, at)); }
   catch (e) { err.textContent = e.message === 'Failed to fetch' ? 'Could not reach the table.' : e.message; }
   refresh();
 }
 const atOf = (T) => (T.id ? { target: T.id } : { cell: T.cell });
-const intentLeaf = (cx, T, s, text) => Object.assign({}, s, { go: () => { sendIntent(cx, text, T && atOf(T)); } });
+const intentLeaf = (cx, T, s, text, spend) => Object.assign({}, s, { go: () => { sendIntent(cx, text, T && atOf(T), spend); } });
 
 async function getLook(id, from) {
   const q = new URLSearchParams({ id, from });
@@ -1827,7 +1835,9 @@ const inspectLeaf = (cx, T) => ({ role: 'Inspect', what: 'Inspect', go: () => {
 } });
 
 function strikeLeaf(cx, T, L) {
-  const atk = (L && L.attacks) || [], ok = atk.filter((a) => a.ok), best = ok.find((a) => a.mode !== 'dis') || ok[0], why = whyNot('action');
+  const atk = (L && L.attacks) || [], whyA = (a) => whyNot(attackKind(a));
+  const ok = atk.filter((a) => a.ok), main = ok.filter((a) => attackKind(a) === 'action'), pool = main.length ? main : ok; // the face of Strike is a plain attack; bonus ones live under the full list
+  const best = pool.find((a) => a.mode !== 'dis') || pool[0], why = best ? whyA(best) : whyNot('action');
   const fight = (myTurn() || {}).explore ? 'starts a fight · ' : '';
   const desc = (a) => fight + shortVerdict(a.verdict) + (a.damage ? ' · ' + a.damage : '') + (a.sneak ? ` · sneak +${a.sneak}` : '');
   const hit = (a) => ({ what: a.name, go: () => { act('attack', { target: T.id, weapon: a.name, sneak: !!a.sneak }); } });
@@ -1835,7 +1845,7 @@ function strikeLeaf(cx, T, L) {
   if (!L) Object.assign(s, { what: 'Strike', off: true, odds: 'no read on that' });
   else if (!best) Object.assign(s, { what: 'Strike', off: true, odds: atk.length ? shortVerdict(atk[0].verdict) : 'no attacks' });
   else Object.assign(s, hit(best), why ? { off: true, odds: why, go: undefined } : { odds: desc(best) });
-  if (atk.length) s.full = () => menuOf('All attacks', atk.map((a) => Object.assign(hit(a), a.ok && !why ? { odds: desc(a) } : { off: true, odds: why || a.verdict, go: undefined })));
+  if (atk.length) s.full = () => menuOf('All attacks', atk.map((a) => Object.assign(hit(a), a.ok && !whyA(a) ? { odds: desc(a) } : { off: true, odds: a.ok ? whyA(a) : a.verdict, go: undefined })));
   return s;
 }
 
@@ -1853,7 +1863,7 @@ async function approachFor(cx, T, L) {
   return best || null;
 }
 function approachLeaf(cx, T, appr, L, s) {
-  const melee = (cx.a.attacks || []).find((w) => !w.range);
+  const melee = (cx.a.attacks || []).find((w) => !w.range && attackKind(w) === 'action');
   const strike = (w) => act('attack', { target: T.id, weapon: w.name });
   if (!melee) return Object.assign({}, s, { off: true, odds: 'no melee attack' });
   const w = whyNot('action');
@@ -1883,12 +1893,12 @@ function wheelDefaults(c) {
   const self = (what, o = {}) => Object.assign({ what, self: true }, o);
   const maneuvers = (/Maneuvers?:\s*(.+?)\.(?:\s|$)/i.exec(notes) || [, ''])[1].split(/,\s*(?![^()]*\))/).map((x) => x.replace(/\s*\(.*$/, '').trim()).filter(Boolean);
   switch (cls) {
-    case 'fighter': return { signature: approach, kit: { what: 'Fighter', items: [self('Second Wind', { res: 'secondWind', odds: '1d10 + level' }), self('Action Surge', { res: 'actionSurge', opt: true }),
+    case 'fighter': return { signature: approach, kit: { what: 'Fighter', items: [self('Second Wind', { res: 'secondWind', odds: '1d10 + level', cost: 'bonusAny' }), self('Action Surge', { res: 'actionSurge', opt: true }),
       ...(maneuvers.length ? [{ what: 'Maneuvers', items: maneuvers.map((m) => ({ what: m })) }] : [])] } };
     case 'rogue': return { signature: self('Hide', { short: 'Hide', act: ['hide', { as: 'bonus' }], needs: 'bonus', odds: 'bonus action' }),
       kit: { what: 'Cunning Action', items: [self('Dash', { act: ['dash', { as: 'bonus' }], needs: 'bonus' }), self('Disengage', { act: ['disengage', { as: 'bonus' }], needs: 'bonus' }), self('Hide', { act: ['hide', { as: 'bonus' }], needs: 'bonus' })] } };
-    case 'barbarian': return { signature: self('Rage', { res: 'rage', opt: true }), kit: { what: 'Reckless', items: [self('Reckless Attack')] } };
-    case 'monk': return { signature: { what: 'Flurry of Blows', odds: 'ki' }, kit: { what: 'Ki', items: [self('Patient Defense'), self('Step of the Wind'), { what: 'Stunning Strike' }] } };
+    case 'barbarian': return { signature: self('Rage', { res: 'rage', opt: true, cost: 'bonusAny' }), kit: { what: 'Reckless', items: [self('Reckless Attack')] } };
+    case 'monk': return { signature: { what: 'Flurry of Blows', odds: 'ki', cost: 'bonusAny' }, kit: { what: 'Ki', items: [self('Patient Defense', { cost: 'bonusAny' }), self('Step of the Wind', { cost: 'bonusAny' }), { what: 'Stunning Strike' }] } };
     case 'paladin': return { signature: approach, kit: book.items.length ? book : null };
     case 'ranger': return { signature: { what: "Hunter's Mark", cast: true, foe: true }, kit: book.items.length ? book : null };
     case 'cleric': case 'wizard': case 'sorcerer': case 'warlock': case 'bard': case 'druid': return caster;
@@ -1913,7 +1923,9 @@ function leafOf(cx, spec, T, appr, L, role) {
   const onTarget = T && T.id !== cx.actor && !spec.self;
   const text = spec.cast ? `${cx.aName} casts ${spec.what}${onTarget ? (T.side === 'party' ? ' on ' : ' at ') + (T.name || T.cell) : ''}`
     : `${cx.aName} uses ${spec.what}${onTarget ? ' on ' + (T.name || T.cell) : ''}`;
-  return intentLeaf(cx, onTarget ? T : null, s, text);
+  const cost = spec.cost || (spec.cast ? spellCost(spec.what) : '');
+  const leaf = intentLeaf(cx, onTarget ? T : null, s, text, cost && spendOf(cost));
+  return cost ? gated(cost, leaf) : leaf;
 }
 const leavesOf = (cx, items, T, appr, L) => items.map((i) => leafOf(cx, i, T, appr, L)).filter(Boolean);
 function sigKit(cx, T, appr, L) {
@@ -1925,7 +1937,7 @@ function sigKit(cx, T, appr, L) {
 
 async function enemyMenu(cx, T) {
   const L = await getLook(T.id, cx.actor), appr = await approachFor(cx, T, L), n = T.name;
-  const it = (what, text, o) => intentLeaf(cx, T, Object.assign({ what }, o), `${cx.aName} ${text} ${n}`);
+  const it = (what, text, o) => gated('action', intentLeaf(cx, T, Object.assign({ what }, o), `${cx.aName} ${text} ${n}`, 'action'));
   const approach = appr && appr.here ? { what: 'Approach', off: true, odds: 'already adjacent' } : appr ? Object.assign({ what: 'Approach', odds: '' }, moveFields(appr.cell, appr.p)) : { what: 'Approach', off: true, odds: myTurn() ? 'no way there' : noTurnWhy() };
   return { title: n, slots: Object.assign({
     1: strikeLeaf(cx, T, L),
@@ -1939,7 +1951,7 @@ async function enemyMenu(cx, T) {
 function allyMenu(cx, T) {
   const down = T.hp !== undefined && T.hp <= 0, n = T.name;
   const aid = down ? gated('action', actLeaf('check', { skill: 'medicine', about: `stabilize ${n} (${T.pos})` }, { role: 'Aid', what: 'Stabilize', odds: 'Medicine DC 10' }))
-    : intentLeaf(cx, T, { role: 'Aid', what: 'Help' }, `${cx.aName} helps ${n}`);
+    : gated('action', intentLeaf(cx, T, { role: 'Aid', what: 'Help' }, `${cx.aName} helps ${n}`, 'action'));
   const say = (verb) => () => {
     const box = document.getElementById('actText');
     document.getElementById('actSec').classList.remove('closed');

@@ -380,6 +380,29 @@ try {
   r = run('seat', 'test-player-x', ch.id);
   expect('seating reuses the player\'s sign-in code', C.loadSeats()['test-player-x'].token === tester.code, r.out);
 
+
+  // Costs: a bonus-action attack spends the bonus action, not the action; Spiritual Weapon is cast (a slot) on first use only.
+  run('load', 'rope-bridge'); run('initiative');
+  run('place', 'ash', 'G3'); run('place', 'gob1', 'G4');
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  let sa = C.loadState(), ta = C.turnInfo(sa, 'ash');
+  expect('Spiritual Weapon spends the bonus action, not the action', r.ok && ta.bonus && !ta.action && ta.attacks === 0, r.out + JSON.stringify(ta));
+  expect('its first use spends a 2nd-level slot', sa.creatures.ash.resources.slots2 === 1 && sa.creatures.ash.active['Spiritual Weapon'], JSON.stringify(sa.creatures.ash.resources));
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('later uses are free of slots', C.loadState().creatures.ash.resources.slots2 === 1, '');
+  r = run('attack', 'ash', 'gob1', 'mace');
+  expect('a mace swing still spends the action', C.turnInfo(C.loadState(), 'ash').action, r.out);
+  r = run('spend', 'ash', 'slots1');
+  expect('spend uses a resource', r.ok && C.loadState().creatures.ash.resources.slots1 === 3, r.out);
+  r = run('spend', 'ash', 'slots1', '-1');
+  expect('negative spend gives it back', r.ok && C.loadState().creatures.ash.resources.slots1 === 4, r.out);
+  r = run('spend', 'ash', 'slots2', '5');
+  expect('spend refuses more than is left', !r.ok && /only 1/.test(r.out), r.out);
+  run('load', 'rope-bridge'); run('place', 'ash', 'G3'); run('place', 'gob1', 'G4');
+  run('spend', 'ash', 'slots2', '2');
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('no slot, no Spiritual Weapon', !r.ok && /slot left/.test(r.out), r.out);
+
   // Turns of creatures the party can't see: the player view says something is acting, not who.
   run('load', 'rope-bridge');
   run('initiative');

@@ -127,8 +127,13 @@ const ACTS = {
     const e = econ(ti, f, msg.as, null);
     return e.error ? e : { pre: ['use', id, msg.as === 'bonus' ? 'bonus' : 'action'], args: ['check', id, 'stealth', '--about', 'hide'] };
   },
-  attack: ({ id, msg, ti }) => (ti.action ? { error: 'Your action is already spent.' }
-    : { args: ['attack', id, String(msg.target || ''), String(msg.weapon || ''), ...(msg.sneak ? ['--sneak'] : [])] }),
+  attack: ({ id, msg, ti, s }) => {
+    const w = C.findAttack(s.creatures[id], msg.weapon), as = w ? C.attackCost(w).as : 'action';
+    if (as === 'bonus' && ti.bonus) return { error: 'Your bonus action is already spent.' };
+    if (as === 'reaction' && ti.reaction) return { error: 'Your reaction is already spent.' };
+    if (as === 'action' && ti.action) return { error: 'Your action is already spent.' };
+    return { args: ['attack', id, String(msg.target || ''), String(msg.weapon || ''), ...(msg.sneak ? ['--sneak'] : [])] };
+  },
   check: ({ id, msg }) => (/^[a-z-]{2,20}$/.test(msg.skill || '') ? { args: ['check', id, msg.skill, '--about', String(msg.about || 'look closer').slice(0, 120)] } : { error: 'Pick a skill.' }),
   undo: ({ id }) => ({ args: ['undo', id], quiet: true }),
   end: ({ id }) => ({ args: ['next'], label: 'ends the turn' }),
@@ -432,7 +437,7 @@ const server = http.createServer((req, res) => {
     });
   }
   if (url.pathname === '/api/intent' && req.method === 'POST') {
-    return readBody(req, 4096, (body) => {
+    return readBody(req, 4096, async (body) => {
       let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
       const seat = seatOf(req, msg.token);
       if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes.' });
@@ -447,10 +452,14 @@ const server = http.createServer((req, res) => {
       const creature = seat.creatures.includes(msg.creature) ? msg.creature : seat.creatures.includes(current) ? current : seat.creatures[0];
       const entry = { id: crypto.randomBytes(6).toString('hex'), t: Date.now(), player: seat.player, creature, text };
       if (msg.kind === 'inspect') entry.kind = 'inspect';
+      // A spell or feature request that costs part of the turn marks it spent right away (the player has committed).
+      const cost = ['action', 'bonus', 'reaction'].includes(msg.spend) && s && s.turnOrder && s.turnOrder.length && creature === current ? msg.spend : null;
+      if (cost && C.turnInfo(s, creature)[cost]) return json(res, 400, { error: `Your ${cost === 'bonus' ? 'bonus action' : cost} is already spent.` });
       // What the player was pointing at, if anything: a creature id or a square (+ height).
       if (s && msg.target && s.creatures[msg.target]) entry.target = msg.target;
       else if (s && /^[A-Za-z]\d{1,2}$/.test(msg.cell || '')) { entry.cell = String(msg.cell).toUpperCase(); if (Number(msg.z)) entry.z = Number(msg.z); }
       C.appendIntent(entry);
+      if (cost) await runEngine(['use', creature, cost]);
       return json(res, 200, Object.assign(entry, { receipt: receipt(s, seat, entry) }));
     });
   }

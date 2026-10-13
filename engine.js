@@ -307,6 +307,16 @@ cmd('use', 'use <id> action|bonus|reaction        mark part of a turn as spent (
   spend(s, pos[0], pos[1]);
   console.log(`${c.name}'s ${pos[1] === 'bonus' ? 'bonus action' : pos[1]} is spent this turn.`); return s;
 });
+cmd('spend', 'spend <id> <resource> [n]           use up n (default 1) of a resource: slots2, secondWind, rage...  (negative n gives back)', (s, { pos }) => {
+  const c = who(s, pos[0]), k = pos[1], n = pos[2] === undefined ? 1 : Number(pos[2]);
+  if (!k || !Number.isFinite(n) || !n) fail('spend <id> <resource> [n]');
+  const res = c.resources || {};
+  if (!(k in res)) fail(`${c.name} has no "${k}". Has: ${Object.keys(res).join(', ') || 'nothing tracked'}.`);
+  if (n > res[k]) fail(`${c.name} has only ${res[k]} ${k} left.`);
+  res[k] -= n;
+  const t = n > 0 ? `${c.name} spends ${n > 1 ? n + ' ' : ''}${k} (${res[k]} left).` : `${c.name} regains ${-n > 1 ? -n + ' ' : ''}${k} (${res[k]} now).`;
+  C.appendLog(s, 'action', t); console.log(t); return s;
+});
 cmd('regain', 'regain <id> action|bonus|reaction     give back part of a turn (Action Surge, haste, and the like)', (s, { pos }) => {
   const c = who(need(s), pos[0]);
   if (!['action', 'bonus', 'reaction'].includes(pos[1])) fail('regain <id> action|bonus|reaction');
@@ -357,9 +367,17 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
   const paralysedCrit = !w.range && dist <= 5 && ['paralyzed', 'unconscious'].some((k) => hasCond(t, k));
   const hit = r.nat !== 1 && (crit || total >= ac);
   const ts = turnState(s, pos[0]);
-  if (flags.as === 'bonus' || flags.as === 'reaction') spend(s, pos[0], flags.as);
+  const cost = C.attackCost(w), as = flags.as === 'bonus' || flags.as === 'reaction' ? flags.as : cost.as;
+  let cast = '';
+  if (cost.cast && !(a.active || {})[w.name]) {
+    const key = Object.keys(a.resources || {}).filter((k) => /^slots\d$/.test(k) && Number(k.slice(5)) >= cost.cast && a.resources[k] > 0).sort()[0];
+    if (!key) fail(`No ${cost.cast}${['', 'st', 'nd', 'rd'][cost.cast] || 'th'}-level slot left.`);
+    a.resources[key]--; (a.active = a.active || {})[w.name] = true;
+    cast = ` (casts it, spending a level-${key.slice(5)} slot)`;
+  }
+  if (as === 'bonus' || as === 'reaction') spend(s, pos[0], as);
   else { ts.attacks = (ts.attacks || 0) + 1; if (ts.attacks >= (a.attacksPerAction || 1)) ts.action = true; }
-  let text = `${a.name} attacks ${t.name} with ${w.name}: ${r.detail}${sign(bonus)} = ${total} vs AC ${ac}${notes.length ? ' (' + notes.join(', ') + ')' : ''} → `;
+  let text = `${a.name} attacks ${t.name} with ${w.name}${cast}: ${r.detail}${sign(bonus)} = ${total} vs AC ${ac}${notes.length ? ' (' + notes.join(', ') + ')' : ''} → `;
   const data = { attacker: pos[0], target: pos[1], hit, nat: r.nat, total, ac, weapon: w.name, ranged: !!w.range, dtype: w.type || '' };
   if (!hit) text += r.nat === 1 ? 'natural 1, miss.' : 'miss.';
   else {
