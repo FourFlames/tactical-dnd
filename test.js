@@ -36,6 +36,7 @@ try {
   r = run('move', 'rook', 'O2');
   expect('speed limit enforced', !r.ok && /needs \d+ ft/.test(r.out), r.out);
   r = run('dash', 'rook'); r = run('move', 'rook', 'L4');
+  { const g0 = C.loadState(); g0.creatures.grall.hidden = true; C.saveState(g0); } // the move provoked (and revealed) him; hide him again for the view tests
   expect('dash doubles movement', r.ok, r.out);
   r = run('attack', 'rook', 'gob3', 'longsword');
   expect('melee reach enforced', !r.ok && /reach/.test(r.out), r.out);
@@ -281,7 +282,7 @@ try {
     r = run('oa', rk.id, '--drop');
     expect('oa --drop declines', r.ok && !(C.loadState().pendingOA || []).some((x) => x.id === rk.id), r.out);
     run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
-    for (let i = 0; i < 3; i++) run('next');
+    for (let i = 0; i < 3; i++) run('next', '--force');
     expect('unanswered OAs lapse as turns pass', !(C.loadState().pendingOA || []).length, JSON.stringify(C.loadState().pendingOA));
     run('load', 'rope-bridge'); run('initiative');
     expect('reaction pip data is available off-turn', C.turnInfo(C.loadState(), 'wren').reaction === false, '');
@@ -451,6 +452,52 @@ try {
   expect('a hidden creature\'s turn is anonymous to players', hp.current === null && hp.currentUnseen && /something moves out of sight/.test(said) && !/Grall/.test(said), said.slice(-400));
   expect('players see unseen turns as a ? in the order', hp.turnOrder.includes('?') && !hp.turnOrder.includes('grall'), JSON.stringify(hp.turnOrder));
   expect('the DM still sees whose turn it is', hd.current === 'grall' && /Grall the Bugbear's turn/.test(JSON.stringify(hd.log)), hd.current);
+
+  // DM speed: the engine runs the turn order.
+  const edit = (fn) => { const s = C.loadState(); fn(s); C.saveState(s); };
+  run('load', 'rope-bridge'); run('initiative'); run('seat', 'sam', 'wren');
+  edit((s) => { s.turnOrder = ['rook', 'gob1', 'wren', 'ash', 'gob2']; s.turnIdx = 0; s.turn = {}; });
+  run('dash', 'rook');
+  r = run('turn', 'wren');
+  let ts = C.loadState();
+  expect('turn <id> makes it that creature turn and says so', r.ok && ts.turnOrder[ts.turnIdx] === 'wren' && /Wren/.test(r.out) && /restored/.test(r.out), r.out);
+  expect('turn leaves other other trackers alone', ts.turn.rook && ts.turn.rook.dash && !ts.turn.wren.dash, JSON.stringify(ts.turn));
+  r = run('turn', 'nobody');
+  expect('turn rejects an unknown creature', !r.ok, r.out);
+  r = run('dash', 'wren'); r = run('info', 'wren');
+  expect('info shows HP, the turn tracker, position and whose turn it is', r.ok && /HP 20\/20/.test(r.out) && /action used/.test(r.out) && /movement 0\/50/.test(r.out) && /dashing/.test(r.out) && /IT IS THEIR TURN/.test(r.out) && /at K9/.test(r.out), r.out);
+  r = run('next');
+  expect('next will not end a a seated player turn', !r.ok && /It's Wren's turn \(sam\)\. They end it with End turn; use --force/.test(r.out) && C.loadState().turnOrder[C.loadState().turnIdx] === 'wren', r.out);
+  r = run('next', '--by-player');
+  expect('...unless the player pressed End turn', r.ok && /Ash/.test(r.out) && /→ Brother Ash/.test(r.out), r.out);
+  run('turn', 'wren'); r = run('next', '--force');
+  expect('...or the DM forces it', r.ok && /→ Brother Ash/.test(r.out), r.out);
+  edit((s) => { s.turnIdx = 0; });
+  r = run('next', '--auto');
+  expect('next --auto stops at a monster with no mind', r.ok && /Goblin Cutter: no mind, DM to act/.test(r.out) && /→ Goblin Cutter \[gob1\]/.test(r.out) && C.loadState().turnOrder[C.loadState().turnIdx] === 'gob1', r.out);
+  edit((s) => { s.turnOrder = ['gob1', 'gob2', 'wren']; s.turnIdx = 0; Object.assign(s.creatures.gob2, { hp: 0 }); });
+  r = run('next', '--auto');
+  expect('next --auto skips the downed and stops at a seated player', r.ok && /→ Wren \[wren\].*REMOTE PLAYER "sam"/.test(r.out), r.out);
+  edit((s) => { for (const id of ['gob1', 'gob2', 'gob3', 'grall']) s.creatures[id].hp = 0; s.turnOrder = ['rook', 'gob1', 'wren']; s.turnIdx = 0; });
+  r = run('next', '--auto');
+  expect('next --auto says when combat is over, and moves nothing', r.ok && /Combat is over/.test(r.out) && C.loadState().turnIdx === 0, r.out);
+
+  // Monster opportunity attacks are rolled on the move.
+  let oaDone = false, oaDown = false;
+  for (let i = 0; i < 8 && !(oaDone && oaDown); i++) {
+    run('load', 'rope-bridge'); run('initiative');
+    edit((s) => { Object.assign(s.creatures.rook, { pos: 'H4', ac: 0, hp: 1 }); s.creatures.gob1.pos = 'H3'; s.creatures.gob1.attacks = [{ name: 'Scimitar', bonus: 20, damage: '5', type: 'slashing' }]; s.turnOrder = ['rook', 'gob1']; s.turnIdx = 0; });
+    r = run('move', 'rook', 'H6');
+    const os = C.loadState();
+    oaDone = r.ok && /Opportunity attack from Goblin Cutter/.test(r.out) && os.creatures.gob1.reactionUsed === true;
+    oaDown = oaDone && os.creatures.rook.hp === 0 && os.creatures.rook.pos === 'H4';
+  }
+  expect('a party creature move provokes a monster opportunity attack, rolled during the move', oaDone, r.out);
+  expect('...and if it drops the mover, the mover stops where it left reach', oaDown, r.out);
+  run('load', 'rope-bridge'); run('initiative');
+  edit((s) => { s.creatures.rook.pos = 'H4'; s.creatures.gob1.pos = 'H3'; s.turnOrder = ['rook', 'gob1']; s.turnIdx = 0; });
+  r = run('move', 'rook', 'H6', '--force');
+  expect('--force moves provoke nothing', r.ok && !/opportunity/i.test(r.out) && !C.loadState().creatures.gob1.reactionUsed, r.out);
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }

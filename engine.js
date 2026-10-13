@@ -9,6 +9,7 @@ const path = require('path');
 const C = require('./lib/core');
 const Minds = require('./lib/minds');
 const Think = require('./lib/think');
+const Places = require('./lib/places');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -34,9 +35,10 @@ function parseArgs(argv) {
 // Inside `mind <id> act` the engine runs its own commands for an NPC; there a rejection is a
 // result to hand back to the NPC, not the end of the process.
 let SOFT = false;
+const REAL_LOG = console.log; // `quiet` swaps console.log out; a rejection still has to be seen
 function fail(msg) {
   if (SOFT) throw Object.assign(new Error(msg), { rejected: true });
-  console.log(`REJECTED: ${msg}`); process.exit(2);
+  REAL_LOG(`REJECTED: ${msg}`); process.exit(2);
 }
 function need(s) { if (!s) fail('No encounter loaded. Run: node engine.js load <encounter>'); return s; }
 function who(s, id) {
@@ -245,9 +247,24 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
     landing = lower;
   }
   // opportunity attacks: leaving a hostile's reach, measured in 3D along the route taken
-  const provoked = flags.force ? [] : C.provokeDetail(s, id, walked);
+  let provoked = flags.force ? [] : C.provokeDetail(s, id, walked);
   const provokers = provoked.map((p) => p.id);
   if (provokers.length || mishap) s.undo.rolled = true;
+  // A party creature's monsters take their opportunity attacks as it leaves their reach, in route order;
+  // if one drops the mover, it goes no further.
+  let oaText = '';
+  if (provoked.length && c.side === 'party') {
+    const taken = [];
+    for (const p of provoked.slice().sort((a, b) => walked.indexOf(a.from) - walked.indexOf(b.from))) {
+      const o = s.creatures[p.id];
+      if (!o || o.controller === 'player' || o.reactionUsed || !bestMelee(o) || c.hp <= 0) continue;
+      const was = SOFT; SOFT = true;
+      try { rollOA(s, { by: p.id, target: id, from: p.from, z: p.z }); taken.push(o.name); } catch (e) { console.log(`(${o.name} can't take the opportunity attack: ${e.message})`); } finally { SOFT = was; }
+      if (c.hp <= 0) { walked.length = walked.indexOf(p.from) + 1; landing = c.pos; break; }
+    }
+    provoked = [];
+    if (taken.length) oaText = ` Opportunity attack from ${taken.join(', ')}${c.hp <= 0 ? `: ${c.name} goes down at ${c.pos}` : ''}.`;
+  }
   const lp = C.parseCell(c.pos);
   const terr = C.tagsAt(s, lp.x, lp.y);
   let text = `${c.name} moves ${from} → ${c.pos} (${spent} ft, ${Math.max(0, budget - ts.used)} ft left).`;
@@ -255,7 +272,8 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
   text += fallText;
   if (flags.force) text += ' [forced by ruling]';
   if (!mishap && terr.length) text += ` Lands on ${C.terrainName(s, lp.x, lp.y)} [${terr.join(', ')}].`;
-  if (provokers.length) text += ` PROVOKES opportunity attack from: ${provokers.join(', ')}.`;
+  if (oaText) text += oaText;
+  else if (provoked.length) text += ` PROVOKES opportunity attack from: ${provokers.join(', ')}.`;
   C.appendLog(s, 'move', text, { id, from, to: c.pos, path: walked });
   console.log(text);
   if (provoked.length && c.side !== 'party') queueOAs(s, id, provoked);
@@ -275,6 +293,14 @@ function livePending(s) {
   s.pendingOA = (s.pendingOA || []).filter((p) => p.round === s.round && age(p) >= 0 && age(p) <= 2 && s.creatures[p.by] && s.creatures[p.target] && s.creatures[p.target].hp > 0);
   return s.pendingOA;
 }
+// Run fn with console output dropped, except lines passed to important() (offers that need the DM's eye).
+let KEEP = null;
+const important = (line) => (KEEP ? KEEP.push(line) : console.log(line));
+async function quiet(fn) {
+  const log = console.log, kept = [];
+  console.log = () => {}; KEEP = kept; HUSH++;
+  try { return await fn(); } finally { console.log = log; KEEP = null; HUSH--; if (kept.length) console.log(kept.join('\n')); }
+}
 function queueOAs(s, id, provoked) {
   const seats = C.loadSeats(), mover = s.creatures[id];
   for (const p of provoked) {
@@ -285,8 +311,8 @@ function queueOAs(s, id, provoked) {
     const player = o.controller === 'player' ? (o.player || 'local') : null;
     if (player && (player === 'local' || (seats[player] && seats[player].creatures.includes(p.id)))) {
       C.appendIntent({ offer: require('crypto').randomBytes(6).toString('hex'), t: Date.now(), player, creature: p.id, oa: oaId, text: `${mover.name} is leaving your reach. Opportunity attack with your ${w.name}?` });
-      console.log(`Opportunity attack from ${o.name} offered to ${player} (${oaId}); their answer runs it. No need to roll it by hand.`);
-    } else console.log(`${o.name} may take an opportunity attack on ${mover.name}: run "oa ${oaId}" to roll it (or ignore it).`);
+      important(`Opportunity attack from ${o.name} offered to ${player} (${oaId}); their answer runs it. No need to roll it by hand.`);
+    } else important(`${o.name} may take an opportunity attack on ${mover.name}: run "oa ${oaId}" to roll it (or ignore it).`);
   }
 }
 
@@ -297,12 +323,16 @@ cmd('oa', 'oa <id> [--drop]  |  oa <by> <target>   resolve a pending opportunity
   if (!p) fail(`No pending opportunity attack${pos[0] ? ` "${pos.join(' ')}"` : ''}. It may have lapsed (they last until two turns later or the end of the round).${pend.length ? ' Pending: ' + pend.map((x) => `${x.id} (${x.by} → ${x.target})`).join(', ') : ''}`);
   s.pendingOA = pend.filter((x) => x !== p);
   if (flags.drop) { console.log(`Opportunity attack ${p.id} dropped.`); return s; }
+  rollOA(s, p);
+  return s;
+});
+// The attack itself: the target stands where it left reach (nobody is moved, unless the blow drops it there).
+function rollOA(s, p) {
   const a = who(s, p.by), t = who(s, p.target);
   if (a.reactionUsed) fail(`${a.name} has already used their reaction.`);
   if (a.hp <= 0 || ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'surrendered'].some((k) => hasCond(a, k))) fail(`${a.name} can't react.`);
   const w = bestMelee(a);
   if (!w) fail(`${a.name} has no melee attack to make an opportunity attack with.`);
-  // Attack the target as if it still stood where it left reach; nobody is moved.
   const here = { pos: t.pos, z: t.z };
   t.pos = p.from; t.z = p.z;
   try {
@@ -315,8 +345,7 @@ cmd('oa', 'oa <id> [--drop]  |  oa <by> <target>   resolve a pending opportunity
     if (!fell) { t.pos = here.pos; if (here.z === undefined) delete t.z; else t.z = here.z; }
     else if (here.z === undefined) delete t.z; // dropped where it left reach
   }
-  return s;
-});
+}
 
 cmd('fall', 'fall <id> [cell] [--feet N]         fall damage (1d6 per 10 ft, prone); into [cell] if pushed or jumping off a ledge', (s, { pos, flags }) => {
   need(s);
@@ -649,9 +678,18 @@ function turnHint(s) {
   return `\n→ ${c.name} [${id}] at ${c.pos}, controlled by ${who}.${mind}${c.hp <= 0 && c.side === 'party' ? ' They are dying: roll "deathsave ' + id + '".' : ''}`;
 }
 
-cmd('next', 'next                               end the current turn, start the next (ticks condition durations)', (s) => {
-  need(s);
-  if (!s.turnOrder || !s.turnOrder.length) fail('No initiative yet. Run: initiative');
+const controllerOf = (c) => c.controller || (c.side === 'party' ? 'llm' : 'dm');
+
+// Step to the next creature that can take a turn (one that has reached its way out leaves first).
+function advanceTurn(s) {
+  const gone = s.creatures[s.turnOrder[s.turnIdx]];
+  if (gone && gone.fled) {
+    const gid = s.turnOrder[s.turnIdx];
+    C.appendLog(s, 'action', `${gone.name} flees the battlefield.`, { id: gid });
+    delete s.creatures[gid];
+    s.turnOrder.splice(s.turnIdx, 1);
+    s.turnIdx--;
+  }
   for (let guard = 0; guard < 100; guard++) {
     s.turnIdx++;
     if (s.turnIdx >= s.turnOrder.length) { s.turnIdx = 0; s.round++; }
@@ -672,7 +710,140 @@ cmd('next', 'next                               end the current turn, start the 
   let t = `Round ${s.round}: ${c.name}'s turn.`;
   if (expired.length) t += ` (${expired.join(', ')} wore off.)`;
   if (burning) t += ` ${c.name} starts the turn in fire!`;
-  C.appendLog(s, 'turn', t, { id, unseen: !seenNow(s)(id) }); console.log(t + turnHint(s)); return s;
+  C.appendLog(s, 'turn', t, { id, unseen: !seenNow(s)(id) });
+  return t;
+}
+
+// Is the fight over? Nobody hostile left who can fight (down, fled, surrendered or routed), or the party is down.
+function combatOver(s) {
+  if (!Object.values(s.creatures).some((c) => c.side === 'party' && c.hp > 0)) return 'The party is down.';
+  const foe = Object.entries(s.creatures).some(([id, c]) => c.side !== 'party' && c.side !== 'neutral' && c.pos && c.hp > 0 && !c.fled
+    && !hasCond(c, 'surrendered') && !((s.minds || {})[id] || {}).morale);
+  return foe ? null : 'Combat is over: no hostile is left who can fight.';
+}
+
+// Run the turns that need no one's decision, from the current creature on, until someone has to decide.
+async function autoRun(s) {
+  const at = (s.mindConfig || {}).deliberateAt || 2;
+  let round = s.round;
+  for (let guard = 0; guard < 300; guard++) {
+    const over = combatOver(s);
+    if (over) { console.log(over); break; }
+    const id = s.turnOrder[s.turnIdx], c = s.creatures[id], ctl = controllerOf(c);
+    if (ctl === 'player' || ctl === 'llm') break;
+    const m = (s.minds || {})[id];
+    const idle = c.hp <= 0 || c.side === 'neutral' || ['asleep', 'unconscious', 'paralyzed', 'stunned', 'incapacitated'].some((k) => hasCond(c, k))
+      || (hasCond(c, 'surrendered') && !(m && m.morale && !m.morale.spoke));
+    if (!idle) {
+      if (!m) { console.log(`${c.name}: no mind, DM to act.`); break; }
+      const model = Minds.modelFor(s, m), remote = Think.isRemote(model);
+      const thinks = m.pending.some((p) => p.urgency >= at && !(p.after !== undefined && p.after >= (s.mtime || 0)));
+      if (!remote && model !== 'haiku' && thinks && !m.morale) {
+        console.log(`${c.name} needs a Claude mind (${model}): mind ${id} brief → npc agent → mind ${id} decide, then "mind ${id} act" (or "mind ${id} fallback"); then "auto" to go on.`);
+        break;
+      }
+      const act = await quiet(async () => {
+        if (remote && thinks) await thinkMinds(s, [id], true);
+        const a = mindAct(s, id);
+        perceiveNow(s);
+        return a;
+      });
+      console.log(`  ${briefLine(s, id, act)}`);
+      const fl = flavourFor(s, id, act);
+      if (fl) C.appendLog(s, 'narration', fl);
+    }
+    advanceTurn(s);
+    if (s.round !== round) { round = s.round; console.log(`— Round ${round} —`); }
+    if (!(s.turnOrder || []).length) break;
+  }
+  console.log(turnHint(s).trim());
+  return s;
+}
+
+cmd('next', 'next [--auto] [--force]            end the current turn, start the next (ticks condition durations). --auto: then run every minded monster turn (quietly) until a player, a party agent, a Claude-model mind or a mindless monster is up. A seated player\'s own turn is only ended by their End turn, or --force', async (s, { flags }) => {
+  need(s);
+  if (!s.turnOrder || !s.turnOrder.length) fail('No initiative yet. Run: initiative');
+  const cur = s.creatures[s.turnOrder[s.turnIdx]];
+  if (cur && controllerOf(cur) === 'player' && cur.player && cur.hp > 0 && !hasCond(cur, 'unconscious') && !flags['by-player'] && !flags.force) {
+    fail(`It's ${cur.name}'s turn (${cur.player}). They end it with End turn; use --force to end it anyway.`);
+  }
+  const over = flags.auto && combatOver(s);
+  if (over) { console.log(over); return null; }
+  const t = advanceTurn(s);
+  if (!flags.auto) { console.log(t + turnHint(s)); return s; }
+  console.log(t);
+  return autoRun(s);
+});
+
+cmd('auto', 'auto                               like next --auto, but starts with the creature whose turn it is now (use it after a player\'s End turn has already moved on to a monster)', async (s) => {
+  need(s);
+  if (!s.turnOrder || !s.turnOrder.length) fail('No initiative yet. Run: initiative');
+  return autoRun(s);
+});
+
+cmd('turn', 'turn <id>                          repair the order: make it this creature\'s turn in the current round (its turn tracker resets; nobody else is touched)', (s, { pos }) => {
+  need(s);
+  if (!s.turnOrder || !s.turnOrder.length) fail('No initiative yet. Run: initiative');
+  const c = who(s, pos[0]), idx = s.turnOrder.indexOf(pos[0]);
+  if (idx < 0) fail(`${c.name} isn't in the turn order.`);
+  s.turnIdx = idx;
+  s.turn = s.turn || {};
+  s.turn[pos[0]] = { used: 0, dash: false, disengage: false };
+  delete c.reactionUsed;
+  delete s.undo;
+  const t = `Round ${s.round}: ${c.name}'s turn (restored).`;
+  C.appendLog(s, 'turn', t, { id: pos[0], unseen: !seenNow(s)(pos[0]) });
+  console.log(t + turnHint(s));
+  return s;
+});
+
+cmd('info', 'info <id>                          one readout: HP, AC, conditions, position, speed, this turn\'s tracker, resources, active spells, pending opportunity attacks, and the mind\'s status', (s, { pos }) => {
+  const c = who(need(s), pos[0]), id = pos[0];
+  const ti = C.turnInfo(s, id), cur = s.turnOrder && s.turnOrder[s.turnIdx] === id;
+  const ctl = controllerOf(c);
+  const z = C.creatureElev(s, c);
+  const L = [`${c.name} [${id}] ${c.side}, ${ctl}${c.player ? ' ' + c.player : ''}${cur ? ', IT IS THEIR TURN' : ''}`];
+  L.push(`HP ${c.hp}/${c.maxHp}${c.tempHp ? ` (+${c.tempHp} temp)` : ''}  AC ${c.ac}  speed ${C.speedOf(c)} ft  at ${c.pos}${z ? ` z${z}ft` : ''}${c.hidden ? '  (hidden)' : ''}${c.fled ? '  (has fled)' : ''}`);
+  if (c.deathSaves && c.hp <= 0) L.push(`Death saves: ${c.deathSaves.ok} ok, ${c.deathSaves.fail} failed`);
+  L.push(`Conditions: ${(c.conditions || []).map((x) => x.name + (x.rounds ? `(${x.rounds})` : '')).join(', ') || 'none'}`);
+  const used = (b) => (b ? 'used' : 'ready');
+  L.push(`Turn: action ${used(ti.action)}${ti.attacks ? ` (${ti.attacks}/${ti.attacksPerAction} attacks)` : ''}, bonus ${used(ti.bonus)}, reaction ${used(ti.reaction)}, movement ${ti.used}/${ti.budget} ft (${ti.left} left)${ti.dash ? ', dashing' : ''}${ti.disengage ? ', disengaging' : ''}`);
+  const res = Object.entries(c.resources || {}).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+  if (res.length) L.push('Resources: ' + res.join(', '));
+  const act = Object.entries(c.active || {}).filter(([, v]) => v).map(([k]) => k);
+  if (act.length) L.push('Active: ' + act.join(', '));
+  const oas = livePending(s).filter((p) => p.by === id || p.target === id);
+  if (oas.length) L.push('Pending opportunity attacks: ' + oas.map((p) => `${p.id} (${s.creatures[p.by].name} → ${s.creatures[p.target].name})`).join(', '));
+  const m = (s.minds || {})[id];
+  if (m) {
+    const it = Minds.current(m);
+    L.push(`Mind: ${m.profile.tier}, alarm ${m.alarm.level} (${m.alarm.intensity})${m.morale ? `, MORALE: ${m.morale.state}${m.morale.cornered ? ' (cornered)' : ''}` : ''}${it ? `, doing: ${it.objective} [${it.source}]` : ', no plan'}`);
+  }
+  console.log(L.join('\n'));
+  return null;
+});
+
+cmd('morale', 'morale <id,id,...|all> --dc N [--ability wis] [--adv|--dis]   roll the save for each listed NPC with a mind (all: every hostile one still fighting); the failures rout (as "mind <id> rout")', (s, { pos, flags }) => {
+  need(s);
+  if (!Minds.active(s)) fail('No NPC minds in this encounter.');
+  const dc = Number(flags.dc);
+  if (!(dc > 0)) fail('morale needs --dc N, e.g. morale all --dc 10');
+  const ab = String(flags.ability || 'wis').toLowerCase();
+  if (!ABIL.includes(ab)) fail(`--ability is one of ${ABIL.join(', ')}.`);
+  const ids = !pos[0] || pos[0] === 'all' ? Object.keys(s.minds).filter((id) => { const c = s.creatures[id]; return c && c.side !== 'party' && c.side !== 'neutral' && c.hp > 0 && !c.fled; })
+    : pos[0].split(',').map((id) => { who(s, id); return id; });
+  const rows = [], broke = [];
+  for (const id of ids) {
+    const c = s.creatures[id], m = s.minds[id];
+    if (!m) { rows.push(`${id.padEnd(8)} ${c.name.padEnd(14)} no mind`); continue; }
+    if (m.morale || c.hp <= 0) { rows.push(`${id.padEnd(8)} ${c.name.padEnd(14)} already ${m.morale ? m.morale.state : 'down'}`); continue; }
+    const r = saveRoll(c, ab, dc, advMode(flags));
+    if (!r.ok) { Minds.setMorale(s, id, 'rout'); broke.push(c.name); }
+    rows.push(`${id.padEnd(8)} ${c.name.padEnd(14)} ${r.total === undefined ? 'auto-fail' : r.total}  ${r.ok ? 'holds' : 'ROUTS'}`);
+  }
+  C.appendLog(s, 'secret', `[mind] Morale (${ab.toUpperCase()} DC ${dc}): ${broke.length ? broke.join(', ') + ' break' : 'everyone holds'}.`);
+  console.log(`Morale ${ab.toUpperCase()} save, DC ${dc}:\n${rows.join('\n') || 'nobody to roll for'}${broke.length ? `\nRouted: ${broke.join(', ')}. They run on their turns (next --auto).` : ''}`);
+  return s;
 });
 
 cmd('deathsave', 'deathsave <id>', (s, { pos }) => {
@@ -1073,10 +1244,11 @@ C.appendLog = (s, type, text, data) => {
   CAP.entries.push(e);
   return e;
 };
+let HUSH = 0; // >0: perception chatter is dropped (brief output)
 function perceiveNow(s) {
   if (s && Minds.active(s)) {
     const lines = Minds.perceive(s, CAP.base, CAP.entries.slice(CAP.done));
-    if (lines.length) console.log(lines.join('\n'));
+    if (lines.length && !HUSH) console.log(lines.join('\n'));
   }
   CAP.done = CAP.entries.length;
   CAP.base = s ? Minds.snapshot(s) : null;
@@ -1185,9 +1357,11 @@ function runStep(s, id, m, st) {
       return { done: true, text: `heard by ${r.heard.map((x) => s.creatures[x].name).join(', ') || 'nobody'}` };
     }
     case 'move': case 'flee': {
-      if (c.pos === st.to) return { done: true, text: `at ${st.to}` };
+      if (c.pos === st.to) { if (st.leave) c.fled = true; return { done: true, text: st.leave ? `reaches the way out at ${st.to}` : `at ${st.to}` }; }
       if ((st.dash || st.do === 'flee') && !ti().action && !ti().dash) tryCmd('dash', s, [id]);
-      return moveToward(s, id, st.to);
+      const r = moveToward(s, id, st.to);
+      if (st.leave && c.pos === st.to) { c.fled = true; r.text += ' and slips out'; }
+      return r;
     }
     case 'guard': {
       if (c.pos !== st.at) { const r = moveToward(s, id, st.at); if (r.failed || c.pos !== st.at) return Object.assign(r, { done: false, stop: true }); }
@@ -1279,7 +1453,7 @@ function mindAct(s, id, opts = {}) {
   if (c.hp <= 0) return [`${c.name} is down.`];
   if (hasCond(c, 'asleep')) return [`${c.name} is asleep.`];
   if (['paralyzed', 'stunned', 'unconscious', 'incapacitated'].some((k) => hasCond(c, k))) return [`${c.name} can't act.`];
-  const out = [];
+  const out = [], acts = [], from = CAP.entries.length;
   const it = Minds.intentionFor(s, id, opts);
   CAP.actor = id;
   try {
@@ -1288,6 +1462,7 @@ function mindAct(s, id, opts = {}) {
       const r = runStep(s, id, m, st);
       s.mindStats.steps = (s.mindStats.steps || 0) + 1;
       out.push(`${c.name} [${it.source}: ${it.objective}] ${Minds.stepText(st)} → ${r.text}`);
+      acts.push({ st, r });
       m.results = [...m.results, { t: s.mtime || 0, text: `${Minds.stepText(st)}: ${r.text}` }].slice(-8);
       if (r.failed) { it.status = 'failed'; Minds.trigger(m, 2, `plan step failed: ${Minds.stepText(st)} (${r.text})`, []); break; }
       if (!r.done) break;
@@ -1296,7 +1471,69 @@ function mindAct(s, id, opts = {}) {
       if (r.stop) break;
     }
   } finally { CAP.actor = null; }
+  out.acts = acts; out.entries = CAP.entries.slice(from); out.intention = it;
   return out;
+}
+
+// ---------- brief output and flavour ----------
+const clip = (x, n = 70) => (x.length > n ? x.slice(0, n - 1) + '…' : x);
+const FLAVOUR = {
+  ranged: ['{n} looses a shot at {t}.', '{n} takes aim at {t} and fires.', '{n} lets fly at {t}.'],
+  melee: ['{n} lunges at {t}.', '{n} swings at {t}.', '{n} closes with {t}.'],
+  guard: ['{n} holds {p}.', '{n} keeps a wary watch over {p}.'],
+  watch: ['{n} peers toward {p}.'],
+  patrol: ['{n} walks the round.'],
+  flee: ['{n} bolts.', '{n} scrambles away in a panic.'],
+  hide: ['{n} melts into the shadows.'],
+  investigate: ['{n} goes to look.'],
+  door: ['{n} works the door.'],
+};
+// One chronicle line for a monster turn when nothing else narrated it. Only what the party could see.
+function flavourFor(s, id, act) {
+  const c = s.creatures[id];
+  if (!c || !Minds.partySeesPath(s, [c.pos])) return null;
+  const spoke = act.entries.some((e) => e.type === 'narration');
+  if (spoke) return null;
+  const pickOf = (k) => FLAVOUR[k][(id.length + (s.round || 0) + (s.turnIdx || 0)) % FLAVOUR[k].length];
+  const fill = (tpl, o = {}) => tpl.replace('{n}', c.name).replace('{t}', o.t || '').replace('{p}', o.p || 'the spot');
+  const place = (cell) => Places.nameOf(s, cell) || 'their post';
+  for (const { st, r } of act.acts) {
+    if (st.do === 'attack' && /attacks with/.test(r.text || '')) {
+      const e = act.entries.find((x) => x.type === 'attack');
+      const tgt = e && e.data && s.creatures[e.data.target];
+      if (tgt) return fill(pickOf(e.data.ranged ? 'ranged' : 'melee'), { t: tgt.name });
+    }
+    if (st.do === 'flee' && !r.failed) return fill(pickOf('flee'));
+    if (st.do === 'guard') return fill(pickOf('guard'), { p: place(st.at) });
+    if (st.do === 'watch') return fill(pickOf('watch'), { p: place(st.at) });
+    if (st.do === 'patrol') return fill(pickOf('patrol'));
+    if (st.do === 'hide') return fill(pickOf('hide'));
+    if (st.do === 'investigate' && !r.failed) return fill(pickOf('investigate'));
+    if (st.do === 'door' && !r.failed) return fill(pickOf('door'));
+  }
+  return null;
+}
+// Compact line: what the world saw an NPC do (moves, attacks, speech, conditions), not what it thought.
+function briefLine(s, id, act) {
+  const c = s.creatures[id] || { name: id };
+  const bits = [];
+  for (const e of act.entries) {
+    const d = e.data || {};
+    const unseen = /^\[unseen\]/.test(e.text) ? ' (unseen)' : '';
+    if (e.type === 'secret' && !unseen) continue;
+    const text = String(e.text).replace(/^\[unseen\] /, '').replace(new RegExp('^' + c.name + ' '), '');
+    if (d.to && d.from) bits.push(`moves ${d.from} → ${d.to}${unseen}`);
+    else if (d.target && d.weapon) {
+      const t = s.creatures[d.target];
+      bits.push(`${d.weapon} at ${t ? t.name : d.target}: ${d.hit ? `${d.crit ? 'CRIT ' : ''}hit ${d.dmg}${t && t.hp !== undefined ? ` (${t.hp}/${t.maxHp}${d.down ? ', down' : ''})` : ''}` : 'miss'}${unseen}`);
+    } else if (e.type === 'narration') bits.push(clip(text.replace(/^.*? (says|shouts|whispers|signals): /, 'says: '), 60));
+    else bits.push(clip(text.replace(/\.$/, '')) + unseen);
+  }
+  if (!bits.length) {
+    const r = act.acts[act.acts.length - 1];
+    bits.push(r ? clip(r.r.text || 'waits') : 'does nothing');
+  }
+  return `${c.name}: ${bits.join('; ')}`;
 }
 
 cmd('minds', 'minds                              NPC minds: alarm, what each is doing, who needs a model to think (and which model)', (s) => {
@@ -1304,7 +1541,7 @@ cmd('minds', 'minds                              NPC minds: alarm, what each is 
   return null;
 });
 
-cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act | fallback | say "<text>" [--to a,b|all] [--channel speech|shout|whisper|signal] [--kind warning] | notice "<text>" [--at <cell>] [--sig 0-3] | trace | setup '<json>']   one NPC's mind: no verb = the DM inspector (its beliefs next to the truth)`, (s, { pos, flags }) => {
+cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act | fallback | say "<text>" [--to a,b|all] [--channel speech|shout|whisper|signal] [--kind warning] | notice "<text>" [--at <cell>] [--sig 0-3] | trace | setup '<json>']   one NPC's mind: no verb = the DM inspector (its beliefs next to the truth). act --brief: world effects and speech only. rout | surrender | stand: morale (overrides its plan; stand clears it)`, async (s, { pos, flags }) => {
   need(s);
   const [id, verb, ...rest] = pos;
   if (!id) fail('Usage: mind <id> [verb]. List them with: minds');
@@ -1329,7 +1566,20 @@ cmd('mind', `mind <id> [brief | decide '<json>' | decide --file <path|-> | act |
     console.log(`${s.creatures[id].name}'s decision${r.stale ? ' (STALE: new evidence arrived while deciding)' : ''}:\n  accepted: ${r.ok.join('; ') || 'nothing'}${r.no.length ? '\n  rejected: ' + r.no.join('; ') : ''}${r.spoken.length ? '\n  spoken: ' + r.spoken.join('; ') : ''}\nNext: "mind ${id} act" on its turn (or "tick" out of combat).`);
     return s;
   }
-  if (verb === 'act') { const out = mindAct(s, id); console.log(out.join('\n') || 'Nothing to do.'); return s; }
+  if (verb === 'act') {
+    if (flags.brief) {
+      const act = await quiet(() => { const a = mindAct(s, id); perceiveNow(s); return a; });
+      console.log(briefLine(s, id, act));
+    } else { const out = mindAct(s, id); console.log(out.join('\n') || 'Nothing to do.'); }
+    return s;
+  }
+  if (verb === 'rout' || verb === 'surrender' || verb === 'stand') {
+    const c = s.creatures[id];
+    Minds.setMorale(s, id, verb === 'stand' ? null : verb);
+    C.appendLog(s, 'secret', `[mind] ${c.name}: ${verb === 'stand' ? 'steadies (morale cleared)' : verb === 'rout' ? 'routs' : 'surrenders'}.`);
+    console.log(verb === 'stand' ? `${c.name} stands firm again.` : `${c.name} ${verb === 'rout' ? 'will flee by the safest exit' : 'will give up'} on their turn (next --auto). Undo with: mind ${id} stand`);
+    return s;
+  }
   if (verb === 'fallback') {
     const it = Minds.adoptFallback(s, id);
     m.pending = [];
@@ -1465,20 +1715,25 @@ cmd('help', 'help', () => {
 
 // ---------- dispatch ----------
 // Before minds act (a tick, or one NPC's turn), the ones on OpenRouter models with news think first.
-async function thinkFirst(state, name, args) {
-  if (!state || !Minds.active(state) || args.flags['no-think']) return;
+async function thinkMinds(state, scope, think) {
   // Split mode: anyone holding a new standing order takes it in first, with a short call of its own.
-  if (Think.takeMode() === 'split' && process.env.OPENROUTER_API_KEY && (name === 'tick' || (name === 'mind' && args.pos[1] === 'act'))) {
-    const scope = name === 'mind' ? [args.pos[0]] : Object.keys(state.minds);
+  if (Think.takeMode() === 'split' && process.env.OPENROUTER_API_KEY) {
     const takers = scope.filter((id) => state.minds[id] && (state.minds[id].newRules || []).length && Think.isRemote(Minds.modelFor(state, state.minds[id])) && state.creatures[id] && state.creatures[id].hp > 0);
     if (takers.length) await Think.takeOrders(state, takers);
   }
-  let ids;
-  if (name === 'tick' && !(state.turnOrder || []).length) ids = Think.due(state);
-  else if (name === 'mind' && args.pos[1] === 'act' && state.minds[args.pos[0]]) ids = Think.due(state, [args.pos[0]]);
-  if (!ids || !ids.length) return;
+  if (!think) return;
+  const ids = Think.due(state, scope);
+  if (!ids.length) return;
   if (!process.env.OPENROUTER_API_KEY) { console.log(`(OPENROUTER_API_KEY isn't set: ${ids.join(', ')} act on the fallback instead of thinking.)`); return; }
   await Think.think(state, ids);
+}
+async function thinkFirst(state, name, args) {
+  if (!state || !Minds.active(state) || args.flags['no-think']) return;
+  if (name === 'tick') return thinkMinds(state, Object.keys(state.minds), !(state.turnOrder || []).length);
+  if (name === 'mind' && args.pos[1] === 'act' && state.minds[args.pos[0]]) {
+    const go = () => thinkMinds(state, [args.pos[0]], true);
+    return args.flags.brief ? quiet(go) : go();
+  }
 }
 async function main() {
   const [name, ...rest] = process.argv.slice(2);
@@ -1493,6 +1748,7 @@ async function main() {
     fn = (s, a) => ext.run(need(s), a, { C, who: (id) => who(s, id), fail, applyDamage: (id, n, t) => applyDamage(s, id, n, t), fallOn: (id, feet, cell) => fallOn(s, id, feet, cell), addCond, saveRoll, abilityBonus, expandCells, turnState, hasCond, mod, sign, advMode });
   }
   CAP.base = state ? Minds.snapshot(state) : null;
+  if (args.flags.brief) HUSH++;
   try {
     await thinkFirst(state, name, args);
     const out = await fn(state, args);

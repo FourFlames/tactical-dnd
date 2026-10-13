@@ -122,7 +122,7 @@ function runEngine(args) {
 }
 const ACTS = {
   // name: (ctx) => { args, quiet?, check?() } ; check returns an error string to refuse
-  move: ({ id, msg }) => ({ args: ['move', id, String(msg.cell || ''), ...(msg.jump ? ['--jump'] : []), ...(msg.fastClimb ? ['--fast-climb'] : [])], quietIf: (out) => !/Athletics|PROVOKES|falls|prone|over the edge/i.test(out) }),
+  move: ({ id, msg }) => ({ args: ['move', id, String(msg.cell || ''), ...(msg.jump ? ['--jump'] : []), ...(msg.fastClimb ? ['--fast-climb'] : [])], quietIf: (out) => !/Athletics|PROVOKES|opportunity attack|falls|prone|over the edge/i.test(out) }),
   dash: ({ id, msg, ti, f }) => econ(ti, f, msg.as, ['dash', id], true),
   disengage: ({ id, msg, ti, f }) => econ(ti, f, msg.as, ['disengage', id], true),
   dodge: ({ id, ti }) => (ti.action ? { error: 'Your action is already spent.' } : { args: ['dodge', id], quiet: true }),
@@ -139,7 +139,7 @@ const ACTS = {
   },
   check: ({ id, msg }) => (/^[a-z-]{2,20}$/.test(msg.skill || '') ? { args: ['check', id, msg.skill, '--about', String(msg.about || 'look closer').slice(0, 120)] } : { error: 'Pick a skill.' }),
   undo: ({ id }) => ({ args: ['undo', id], quiet: true }),
-  end: ({ id }) => ({ args: ['next'], label: 'ends the turn' }),
+  end: ({ id }) => ({ args: ['next', '--by-player'], label: 'ends the turn' }),
 };
 // Out of combat: what differs. `file` = no engine command, just tell the DM (who starts the fight or ticks a round).
 const EXPLORE_ACTS = {

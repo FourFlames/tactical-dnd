@@ -483,6 +483,47 @@ try {
   r = decide('pell', { orderResponses: [{ order: 'hold-post', response: 'accept', reply: 'Aye!' }, { order: M('pell').orders[0].via, response: 'accept' }] });
   expect('answers to a standing order, or to the message that carried an order, are read', r.ok && /is a standing order, not a task/.test(r.out) && new RegExp(`read as ${M('pell').orders[0].id}`).test(r.out) && !/no order/.test(r.out), r.out);
 
+  // ---------- DM speed: morale and the turn order ----------
+  const dist = (a, b) => C.distFeet(C.parseCell(a), C.parseCell(b));
+  run('load', 'tollhouse');
+  run('place', 'wren', 'H13'); run('move', 'wren', 'H12');
+  const d0 = dist(S().creatures.bram.pos, 'H12'), wrenHp = S().creatures.wren.hp;
+  r = run('mind', 'bram', 'rout');
+  expect('rout: the DM can make an NPC run', r.ok && M('bram').morale && M('bram').morale.state === 'rout', r.out);
+  r = run('mind', 'bram', 'act', '--brief');
+  expect('rout: --brief shows one line of world effects', r.ok && r.out.split('\n').filter((l) => /^Bram: /.test(l)).length === 1 && !/\[(fallback|morale)/.test(r.out), r.out);
+  expect('rout: he runs from the enemy he can see instead of fighting', dist(S().creatures.bram.pos, 'H12') > d0 && S().creatures.wren.hp === wrenHp, r.out + S().creatures.bram.pos);
+  expect('rout: panic is shouted where the party can hear', C.readLog(8).some((e) => e.type === 'narration' && /Bram/.test(e.text) && /shout|says/.test(e.text)), JSON.stringify(C.readLog(4)));
+  run('mind', 'bram', 'stand');
+  expect('stand: clears it', !M('bram').morale, JSON.stringify(M('bram').morale));
+  run('mind', 'bram', 'fallback');
+  expect('without rout the same mind does not flee', !/Rout|Fall back/.test(run('mind', 'bram').out.split('Doing:')[1].split('\n')[0]), run('mind', 'bram').out.split('Doing:')[1].split('\n')[0]);
+  run('mind', 'tilly', 'surrender'); r = run('mind', 'tilly', 'act', '--brief');
+  expect('surrender: hands up, no more fighting, and says so', r.ok && S().creatures.tilly.conditions.some((c) => c.name === 'surrendered') && !/attack|Spear/i.test(r.out), r.out);
+  run('load', 'tollhouse');
+  r = run('morale', 'bram,tilly', '--dc', '30');
+  expect('morale rolls for the listed minds and routs the failures', r.ok && (r.out.match(/ROUTS/g) || []).length === 2 && M('bram').morale && M('tilly').morale && !M('fang').morale, r.out);
+  r = run('morale', 'all', '--dc', '30');
+  expect('morale all skips the already routed and routs the rest of the hostile minds', /already rout/.test(r.out) && M('fang').morale && M('hask').morale && M('morrow').morale, r.out);
+  // a routed NPC that reaches its way out leaves when its turn ends
+  run('load', 'tollhouse');
+  const edgeCell = Object.values(S().creatures).length && require('./lib/minds').exitCells(S())[0];
+  setup((s) => { s.creatures.bram.pos = edgeCell; s.turnOrder = ['bram', 'fang', 'wren']; s.turnIdx = 0; s.round = 1; s.turn = {}; });
+  run('mind', 'bram', 'rout');
+  for (let i = 0; i < 6 && !(S().creatures.bram && S().creatures.bram.fled); i++) { run('turn', 'bram'); run('mind', 'bram', 'act', '--brief'); }
+  expect('a routed NPC runs to an exit and has fled', S().creatures.bram && S().creatures.bram.fled === true, S().creatures.bram && S().creatures.bram.pos);
+  r = run('next');
+  expect('...and leaves the battlefield on the next turn change, without skipping anyone', r.ok && !S().creatures.bram && !S().turnOrder.includes('bram') && /→ Fang/.test(r.out), r.out);
+  // next --auto
+  run('load', 'tollhouse');
+  run('seat', 'sam', 'wren');
+  setup((s) => { s.turnOrder = ['bram', 'fang', 'tilly', 'wren', 'hask']; s.turnIdx = 0; s.round = 1; s.turn = {}; });
+  r = run('next', '--auto');
+  expect('next --auto runs the minds in order, quietly, and stops at the seated player', r.ok && /Tilly: /.test(r.out) && !/\[fallback/.test(r.out) && /→ Wren \[wren\].*REMOTE PLAYER "sam"/.test(r.out) && S().turnOrder[S().turnIdx] === 'wren', r.out);
+  setup((s) => { s.turnOrder = ['bram', 'hask', 'fang']; s.turnIdx = 0; s.minds.hask.profile.model = 'sonnet'; s.minds.hask.pending.push({ why: 'test', urgency: 3, refs: [] }); });
+  r = run('next', '--auto');
+  expect('next --auto stops at a mind that needs a Claude model', r.ok && /Sergeant Hask needs a Claude mind \(sonnet\)/.test(r.out) && S().turnOrder[S().turnIdx] === 'hask', r.out);
+
   // ---------- encounters without minds are untouched ----------
   r = run('load', 'rope-bridge');
   expect('old encounters have no minds and no mind output', r.ok && !S().minds && !/minds/.test(r.out), r.out);
