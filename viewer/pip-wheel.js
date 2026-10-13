@@ -35,6 +35,15 @@ const CSS = `
   white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: #14130fd9; color: var(--ink, #e9e3d3); font-size: 11px; font-weight: 600; }
 .pw .b.off { opacity: .5; }
 .pw .b.off .i { color: var(--ink-faint, #6b6557); }
+.pw .b .seen-badge { position: absolute; left: -6px; bottom: -4px; width: 23px; height: 16px; display: flex; align-items: center; gap: 1px;
+  border: 1px solid #9b6749; border-radius: 5px; background: #201a13; color: #e5b27c; font: 800 11px/1 system-ui; }
+.pw .b .seen-badge svg { position: static; width: 15px; height: 11px; }
+.pw .b.off:has(.seen-badge) { opacity: 1; }
+.pw .b.off:has(.seen-badge) .i { color: #777065; border-color: #49443c; }
+.pw .b.off:has(.seen-badge) .c, .pw .b.off:has(.seen-badge) .k { opacity: .55; }
+.pw .tip .watchers { margin-top: 5px; border-top: 1px solid #4a4538; padding-top: 4px; }
+.pw .tip .watcher { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--ink-dim, #9c9584); font-size: 11px; }
+.pw .tip .watcher .face { border: 1px solid #756750; border-radius: 50%; width: 17px; height: 17px; display: grid; place-items: center; font: 700 9px/1 system-ui; flex: none; }
 .pw .b.back .i { color: var(--ink, #e9e3d3); }
 .pw .b.sug .i { border-color: #d8b45a99; }
 .pw .b.warn .i { border-color: #d25b4a; background: #2e1a16; color: #e8826f; box-shadow: 0 0 0 2px #d25b4a55, 0 1px 5px #000a; }
@@ -82,6 +91,7 @@ function tipHtml(s, root) {
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
     + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
     + (s.info && !s.off ? `<div class="n">${esc(s.info)}</div>` : '')
+    + ((s.watchers || []).length ? `<div class="watchers"><div class="r">Line of sight</div>${s.watchers.map((w) => `<div class="watcher"><span class="face" aria-hidden="true">${esc((w.name || '?').slice(0, 1))}</span><span>${esc(w.name)} · ${w.plainSight ? 'clear view' : w.los ? 'cover or dim light' : 'view blocked'}</span></div>`).join('')}</div>` : '')
     + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '')
     + (s.alt ? '<div class="n">Right-click: alternatives</div>' : s.swap ? '<div class="n">Right-click: put in the slot</div>' : '');
 }
@@ -119,7 +129,8 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     for (let k = 1; k <= 6; k++) {
       const s = slotOf(k);
       if (!s) continue;
-      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"><span class="i">${iconOf(s, k)}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
+      const badge = s.badge === 'seen' ? '<span class="seen-badge" aria-label="In view"><svg viewBox="0 0 20 12" aria-hidden="true"><path d="M1 6Q10-3 19 6Q10 15 1 6Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6" r="2" fill="currentColor"/></svg>!</span>' : '';
+      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"${s.off ? ' aria-disabled="true"' : ''}><span class="i">${iconOf(s, k)}${badge}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
     }
     el.innerHTML = html;
     S.btns = [...el.querySelectorAll('.b')];

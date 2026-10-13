@@ -146,7 +146,7 @@ try {
   expect('a well-hidden creature in the dark passes unnoticed', !Object.values(M('bram').tracks).some((t) => t.side !== 'ally'), JSON.stringify(M('bram').tracks));
   run('place', 'wren', 'G12');
   r = run('move', 'wren', 'G13');
-  expect('...but not in plain sight, in torchlight, right in front of a guard', !S().creatures.wren.hidden && Object.values(M('bram').tracks).some((t) => t.side === 'hostile' && t.inView), r.out);
+  expect('...but not in plain sight, in torchlight, right in front of a guard', S().creatures.wren.hideState.detectedBy.includes('bram') && C.observerSees(S(), S().creatures.bram, S().creatures.wren) && Object.values(M('bram').tracks).some((t) => t.side === 'hostile' && t.inView), r.out);
 
   // ---------- the dog: sleeping, woken by noise, smells intruders ----------
   run('load', 'tollhouse');
@@ -528,13 +528,13 @@ try {
   run('load', 'tollhouse');
   setup((s) => { s.creatures.wren.pos = 'P4'; }); // bright room, Hask a few squares off, nothing to hide behind
   r = run('hide', 'wren', '--total', '25');
-  expect('hide: refused with the reason when everyone who can see you sees you plainly', r.ok && /can't hide.*nothing to hide behind/.test(r.out) && /NOTICES Sergeant Hask/.test(r.out) && !S().creatures.wren.hidden, r.out);
+  expect('hide: a plain-sight watcher notices without exposing the hider to other watchers', r.ok && /NOTICES Sergeant Hask/.test(r.out) && S().creatures.wren.hideState.detectedBy.includes('hask') && !S().creatures.wren.hideState.detectedBy.includes('bram') && S().creatures.wren.hidden && S().creatures.wren.stealth === 25, r.out);
   run('load', 'tollhouse');
   setup((s) => { s.creatures.wren.pos = 'D12'; }); // behind the hedge, Bram 15 ft away looking south
   r = run('hide', 'wren', '--total', '30');
   expect('hide: a high total behind cover hides, and the table says who would not notice', r.ok && S().creatures.wren.hidden === true && S().creatures.wren.stealth === 30 && /misses +Bram/.test(r.out) && /no view +Tilly/.test(r.out), r.out);
   r = run('hide', 'wren', '--total', '3');
-  expect('hide: a low total is seen by Bram (passive beats it), and he gets the sighting', r.ok && S().creatures.wren.hidden === false && /NOTICES +Bram/.test(r.out) && Object.values(M('bram').tracks).some((t) => t.cell === 'D12'), r.out);
+  expect('hide: a low total is seen by Bram without erasing other watchers concealment', r.ok && S().creatures.wren.hideState.detectedBy.includes('bram') && !S().creatures.wren.hideState.detectedBy.includes('tilly') && /NOTICES +Bram/.test(r.out) && Object.values(M('bram').tracks).some((t) => t.cell === 'D12'), r.out);
   r = run('hide', 'wren', '--auto');
   expect('hide --auto rolls Stealth and judges it', r.ok && /Stealth \[\d+\]\+7 = \d+/.test(r.out), r.out);
   r = run('hide', 'rook');

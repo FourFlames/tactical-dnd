@@ -1483,6 +1483,9 @@ function drawTurn() {
   sec.hidden = !t;
   if (!t) { turnMsg = { text: '', err: false }; return; }
   const f = t.features, bonusMoves = f.cunningAction || f.nimbleEscape;
+  const hp = t.hide, hideLabel = hp && (!hp.possible || hp.partial) ? 'Hide <span aria-label="In view">◉!</span>' : 'Hide';
+  const hideOptions = (o = {}) => Object.assign({}, o, { disabled: !!o.disabled || !!(hp && !hp.possible),
+    title: hp ? [hp.reason, ...(hp.watchers || []).map((w) => `${w.name}: ${w.plainSight ? 'clear view' : w.los ? 'cover or dim light' : 'view blocked'}`)].join('\n') : '' });
   const pips = document.getElementById('tPips');
   pips.parentNode.style.display = t.explore ? 'none' : '';
   if (pips.children.length !== 3) pips.innerHTML = ['Action', 'Bonus', 'Reaction'].map((l) => `<span class="hp1"><i></i>${l}</span>`).join('');
@@ -1497,18 +1500,18 @@ function drawTurn() {
   [...sq.children].forEach((el, i) => el.classList.toggle('spent', i >= filled));
   document.getElementById('tMv').textContent = `${t.left} ft${t.dash ? ' · dashing' : ''}${t.disengage ? ' · disengaged' : ''}`;
   const b = (label, action, { as, disabled, cls = '', small = '', title = '' } = {}) =>
-    `<button class="btn ${cls}" data-act="${action}"${as ? ` data-as="${as}"` : ''}${disabled ? ' disabled' : ''}${title ? ` title="${title}"` : ''}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
+    `<button class="btn ${cls}" data-act="${action}"${as ? ` data-as="${as}"` : ''}${disabled ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
   if (t.explore) {
     document.getElementById('tBtns').innerHTML =
       b('Dash', 'dash', { disabled: t.dash }) + b('Disengage', 'disengage', { disabled: true, small: 'in a fight' }) + b('Dodge', 'dodge', { disabled: true, small: 'in a fight' })
-      + b('Hide', 'hide', { small: 'sneak' }) + (t.canUndo ? b(confirmation('undo') ? 'Click again to undo' : 'Undo move', 'undo', { cls: 'warn' }) : '')
+      + b(hideLabel, 'hide', hideOptions({ small: 'sneak' })) + (t.canUndo ? b(confirmation('undo') ? 'Click again to undo' : 'Undo move', 'undo', { cls: 'warn' }) : '')
       + b('Ready', 'end', { cls: 'gold', title: 'Let a round pass' });
   } else
   document.getElementById('tBtns').innerHTML =
     b('Dash', 'dash', { disabled: t.action || t.dash }) + (bonusMoves ? b('Dash', 'dash', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.dash }) : '')
     + b('Disengage', 'disengage', { disabled: t.action || t.disengage }) + (bonusMoves ? b('Disengage', 'disengage', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.disengage }) : '')
     + b('Dodge', 'dodge', { disabled: t.action })
-    + b('Hide', 'hide', bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action })
+    + b(hideLabel, 'hide', hideOptions(bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action }))
     + (t.canUndo ? b(confirmation('undo') ? 'Click again to undo' : 'Undo move', 'undo', { cls: 'warn' }) : '')
     + b(confirmation('end') ? 'Click again to end turn' : 'End turn', 'end', { cls: 'gold' });
   const msg = document.getElementById('tMsg');
@@ -1806,6 +1809,18 @@ const spendOf = (kind) => (kind === 'bonusAny' ? 'bonus' : kind);
 const gated = (kind, s) => { const w = whyNot(kind); return w ? Object.assign({}, s, { off: true, odds: w, go: undefined }) : s; };
 const fightOnly = (kind, s) => { const t = myTurn(); return t && t.explore ? Object.assign({}, s, { off: true, odds: 'in a fight', go: undefined }) : gated(kind, s); };
 const actLeaf = (action, extra, s) => Object.assign({}, s, { go: () => { act(action, extra); } });
+// Sight is a preview, not a promised Stealth result. Only known observers arrive from the server.
+function hideLeaf(kind, extra, s) {
+  const t = myTurn(), h = t && t.hide;
+  const leaf = t && t.explore ? actLeaf('hide', {}, s) : gated(kind, actLeaf('hide', extra, s));
+  leaf.icon = '◌';
+  if (!h) return leaf;
+  leaf.watchers = h.watchers || [];
+  leaf.info = h.reason;
+  if (!h.possible) Object.assign(leaf, { off: true, badge: 'seen', odds: h.reason, go: undefined });
+  else if (h.partial) Object.assign(leaf, { badge: 'seen', info: h.reason });
+  return leaf;
+}
 async function sendIntent(cx, text, at, spend) {
   const err = document.getElementById('actErr');
   err.textContent = '';
@@ -1961,7 +1976,8 @@ function leafOf(cx, spec, T, appr, L, role) {
   if (spec.res && cx.a.resources) {
     if (!(spec.res in cx.a.resources)) { if (spec.opt) return null; } else if (!cx.a.resources[spec.res]) return Object.assign(s, { off: true, odds: 'none left' });
   } else if (spec.opt) return null;
-  if (spec.act) return gated(spec.needs || 'action', actLeaf(spec.act[0], spec.act[1] || {}, Object.assign(s, { odds: spec.odds })));
+  if (spec.act) return spec.act[0] === 'hide' ? hideLeaf(spec.needs || 'action', spec.act[1] || {}, s)
+    : gated(spec.needs || 'action', actLeaf(spec.act[0], spec.act[1] || {}, Object.assign(s, { odds: spec.odds })));
   const onTarget = T && T.id !== cx.actor && !spec.self;
   const text = spec.cast ? `${cx.aName} casts ${spec.what}${onTarget ? (T.side === 'party' ? ' on ' : ' at ') + (T.name || T.cell) : ''}`
     : `${cx.aName} uses ${spec.what}${onTarget ? ' on ' + (T.name || T.cell) : ''}`;
@@ -2059,7 +2075,7 @@ function selfMenu(cx) {
   } };
   return { title: cx.aName, slots: Object.assign({
     1: fightOnly('action', actLeaf('dodge', {}, { role: 'Self', what: 'Dodge' })),
-    4: t && t.explore ? actLeaf('hide', {}, { role: 'Self', what: 'Hide', odds: 'sneak' }) : bonusHide ? gated('bonus', actLeaf('hide', { as: 'bonus' }, { role: 'Self', what: 'Hide', odds: 'bonus action' })) : gated('action', actLeaf('hide', {}, { role: 'Self', what: 'Hide' })),
+    4: hideLeaf(bonusHide ? 'bonus' : 'action', bonusHide ? { as: 'bonus' } : {}, { role: 'Self', what: 'Hide', odds: t && t.explore ? 'sneak' : bonusHide ? 'bonus action' : undefined }),
     5: { role: 'Inspect', what: 'Inspect', odds: 'Character tab', go: () => { setSideView('sheet'); } },
     6: t ? end : { role: 'Self', what: 'End turn', icon: '⏹', off: true, odds: noTurnWhy() },
   }, sigKit(cx, me1, null, null)) };

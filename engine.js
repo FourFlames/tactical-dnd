@@ -464,6 +464,7 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
   if (flags.sneak && !plan.sneak) fail(`Sneak Attack doesn't apply here (needs a finesse or ranged weapon, advantage or an ally next to ${t.name}, no disadvantage, once per turn).`);
   const { w, mode, notes, ac, dist } = plan;
   a.hidden = false;
+  delete a.hideState;
   const r = C.d20(mode);
   const bonus = (w.bonus || 0) + Number(flags.bonus || 0);
   const total = r.nat + bonus;
@@ -659,9 +660,18 @@ cmd('remove', 'remove <id>                        take a creature off the map (f
 
 cmd('hide', 'hide <id> [--total N | --auto] [--adv|--dis] | reveal <id>   plain: just set hidden (never shown on the player view). With a Stealth total (given, or rolled by --auto): the Hide action, judged against every enemy who could see them now (line of sight, light, cover, distance, passive Perception); refused with nothing to hide behind', (s, { pos, flags }) => {
   const c = who(need(s), pos[0]);
-  if (flags.total === undefined && !flags.auto) { c.hidden = true;
+  if (flags.total === undefined && !flags.auto) { c.hidden = true; delete c.hideState;
     const t = `${c.name} is hidden.`; C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t); console.log(t); return s; }
   if (!c.pos || c.hp <= 0) fail(`${c.name} can't hide.`);
+  // Whether hiding is possible is a terrain/sight question, settled before any die or action is spent.
+  const preflight = Minds.hideCheck(s, pos[0], Infinity);
+  if (preflight.refused) {
+    const reason = flags.player ? 'You are in plain sight. Find cover or break line of sight first.' : preflight.refused;
+    if (flags.as || flags.player) fail(reason);
+    console.log(`${c.name} can't hide: ${reason}`); return null;
+  }
+  if (flags.as && !['action', 'bonus'].includes(flags.as)) fail('Hide uses an action or bonus action.');
+  if (flags.as && C.turnInfo(s, pos[0])[flags.as]) fail(`Your ${flags.as === 'bonus' ? 'bonus action' : 'action'} is already spent.`);
   let total = flags.total !== undefined ? Number(flags.total) : null, detail = '';
   if (total === null || !Number.isFinite(total)) {
     const { bonus } = abilityBonus(c, 'stealth');
@@ -674,15 +684,19 @@ cmd('hide', 'hide <id> [--total N | --auto] [--adv|--dis] | reveal <id>   plain:
     const t = `${c.name} can't hide (Stealth ${detail}${total}): ${res.refused}`;
     C.appendLog(s, 'secret', t, { id: pos[0], hide: { total, refused: true } }); console.log([t, ...table].join('\n')); return s;
   }
-  const seenBy = res.rows.filter((r) => r.notices).map((r) => r.id);
-  c.hidden = res.hidden;
-  if (res.hidden) c.stealth = total; else delete c.stealth;
-  const t = res.hidden ? `${c.name} slips out of sight (Stealth ${detail}${total}).` : `${c.name} tries to hide (Stealth ${detail}${total}) but is seen.`;
+  const known = C.partyKnows(s);
+  const publicRows = c.side === 'party' ? res.rows.filter((r) => known.creature(s.creatures[r.id])) : res.rows;
+  const seenBy = publicRows.filter((r) => r.notices).map((r) => r.id);
+  Minds.applyHideResult(s, pos[0], total, res);
+  if (flags.as) spend(s, pos[0], flags.as);
+  const publicHidden = !publicRows.length || publicRows.some((r) => !r.notices);
+  const publicPartial = publicRows.some((r) => r.notices) && publicHidden;
+  const t = publicHidden ? `${c.name} ${publicPartial ? 'finds concealment, but remains seen by some enemies' : 'slips out of sight'} (Stealth ${detail}${total}).` : `${c.name} tries to hide (Stealth ${detail}${total}) but is seen.`;
   C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t, { id: pos[0], hide: { total, hidden: res.hidden, noticedBy: seenBy } });
   console.log([t, ...(table.length ? table : ['  nobody could see them anyway'])].join('\n')); return s;
 });
 CMDS.reveal = (s, { pos }) => {
-  const c = who(need(s), pos[0]); c.hidden = false;
+  const c = who(need(s), pos[0]); c.hidden = false; delete c.hideState;
   const t = `${c.name} is revealed at ${c.pos}!`; C.appendLog(s, 'action', t); console.log(t); return s;
 };
 
@@ -1321,7 +1335,7 @@ C.appendLog = (s, type, text, data) => {
 };
 let HUSH = 0; // >0: perception chatter is dropped (brief output)
 function perceiveNow(s) {
-  if (s && Minds.active(s)) {
+  if (s && (Minds.active(s) || Object.values(s.creatures).some((c) => c.hideState))) {
     const lines = Minds.perceive(s, CAP.base, CAP.entries.slice(CAP.done));
     if (lines.length && !HUSH) console.log(lines.join('\n'));
   }
@@ -1767,16 +1781,7 @@ cmd('noise','noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--s
 });
 
 cmd('sneak', 'sneak <id> [--total N] [--adv|--dis]   hide with a Stealth roll: NPCs notice only with passive Perception ≥ the total (or a clear, close, well-lit look)', (s, { pos, flags }) => {
-  const c = who(need(s), pos[0]);
-  let total = flags.total !== undefined ? Number(flags.total) : null, detail = '';
-  if (total === null) {
-    const { bonus } = abilityBonus(c, 'stealth');
-    const r = C.d20(advMode(flags) || (c.noisy ? 'dis' : null));
-    total = r.nat + bonus; detail = `${r.detail}${sign(bonus)} = `;
-  }
-  c.hidden = true; c.stealth = total;
-  const t = `${c.name} slips into hiding (Stealth ${detail}${total}).`;
-  C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t, { id: pos[0] }); console.log(t); return s;
+  return CMDS.hide(s, { pos, flags: Object.assign({}, flags, { auto: true }) });
 });
 
 cmd('track', 'track <id> [cell|radius] [--total N] [--adv|--dis] [--note]   Survival to read tracks on soft ground (mud, dust, snow, sand, blood, guano, ash, wet stone, or cells tagged "tracks") within 30 ft and in sight: how many, what size and kind (never names), how old, which way. DC from the ground and the age. --note records each trail with describe', (s, { pos, flags }) => {

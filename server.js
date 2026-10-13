@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const C = require('./lib/core');
+const Minds = require('./lib/minds');
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -27,7 +28,7 @@ function myTurn(seat, s = C.loadState()) {
   if (!seat.creatures.includes(id) || !s.creatures[id]) return null;
   const u = s.undo;
   const canUndo = !!(u && u.id === id && u.round === s.round && u.turnIdx === s.turnIdx && !u.rolled);
-  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null }, C.turnInfo(s, id));
+  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), hide: Minds.hidePreview(s, id, { player: true }), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null }, C.turnInfo(s, id));
 }
 // Out of combat (an encounter is loaded, no turn order) each of the seat's creatures that is on the map
 // and standing can act, one round's worth at a time: { id: turn-like info with explore: true }.
@@ -39,7 +40,7 @@ function exploreOf(seat, s = C.loadState()) {
     if (!c || !c.pos || !(c.hp > 0)) continue;
     const ti = C.turnInfo(s, id), u = s.undo;
     const canUndo = !!(u && u.id === id && !u.rolled && ti.used > 0);
-    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null, explore: true }, ti);
+    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), hide: Minds.hidePreview(s, id, { player: true }), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null, explore: true }, ti);
   }
   return out;
 }
@@ -128,8 +129,8 @@ const ACTS = {
   dodge: ({ id, ti }) => (ti.action ? { error: 'Your action is already spent.' } : { args: ['dodge', id], quiet: true }),
   hide: ({ id, msg, ti, f }) => {
     const e = econ(ti, f, msg.as, null);
-    // the engine rolls and judges it against every watcher; the action is spent only if hiding was possible at all
-    return e.error ? e : { args: ['hide', id, '--auto'], post: ['use', id, msg.as === 'bonus' ? 'bonus' : 'action'] };
+    // Checking, rolling and charging happen together in the engine; a refused attempt spends nothing.
+    return e.error ? e : { args: ['hide', id, '--auto', '--as', msg.as === 'bonus' ? 'bonus' : 'action', '--player'] };
   },
   attack: ({ id, msg, ti, s }) => {
     const w = C.findAttack(s.creatures[id], msg.weapon), as = w ? C.attackCost(w).as : 'action';
@@ -157,7 +158,7 @@ const ACTS = {
 };
 // Out of combat: what differs. `file` = no engine command, just tell the DM (who starts the fight or ticks a round).
 const EXPLORE_ACTS = {
-  hide: ({ id }) => ({ args: ['sneak', id] }),
+  hide: ({ id }) => ({ args: ['hide', id, '--auto', '--player'] }),
   dodge: () => ({ error: 'Only in a fight.' }),
   disengage: () => ({ error: 'Only in a fight.' }),
   attack: ({ id, msg, s }) => {

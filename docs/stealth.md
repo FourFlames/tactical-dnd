@@ -14,10 +14,18 @@ Perception connects the first to the second after **every** state-changing engin
 
 ## Perception (deterministic)
 
+### Table rule: observer-specific hiding
+
+This game deliberately uses a house rule rather than the 2024 global Hide condition: a creature can be hidden from one observer while another sees it. One Stealth roll remains in effect until a new Hide attempt, reveal, or attack. Attacks resolve unseen advantage/disadvantage against the relevant observer before ending the attacker's attempt. Opportunity attacks require that the reactor can see the mover. Knowing or hearing a reported location does not grant sight.
+
+The existing terrain concessions remain: cover, dim light, darkness, peripheral vision, or broken line of sight can allow concealment. A watcher with clear sight still detects the hider; partial concealment does not disable the action. A fully impossible attempt rolls nothing and spends nothing. The wheel and HUD preview only known watcher geometry, with a warning badge and hover explanation; unseen NPCs and passive scores remain private.
+
+Active attempts store `hideState` with Stealth and observer detections. Legacy encounter `hidden` flags remain DM secrets. For current detection, use `observerSees` rather than treating `hidden` as a universal visibility verdict.
+
 | Sense | Rules |
 |---|---|
 | Sight | Line of sight (3D, walls, props) · light at the target: encounter `lighting` {ambient, areas}, cell tags `lit`/`dim`/`dark`, torches (`light: <ft>` on a creature), fires · darkvision raises one step · facing: 110° each side seen, past 60° only peripheral, unless alert/in combat or `fov: "all"` · distance and cover blur it. Clarity ≥ .65 identifies, ≥ .35 is "an unidentified figure", less is "movement". |
-| Stealth | A hidden creature (`sneak`, which stores its Stealth total) is noticed only by passive Perception ≥ that total (−5 in dim light or at the edge of vision). It can't hide in plain sight: bright light, no cover, within 30 ft, looked at directly. Being noticed as a figure or better ends hiding. |
+| Stealth | `hide --auto` and `sneak` store one Stealth total, judged separately by each observer (−5 passive Perception in dim light or at the edge of vision). Clear, close, bright sight exposes the hider to that observer. Detection and Search do not reveal the hider to other observers. |
 | Hearing | Every sound has an origin and a loudness in feet; walls soak 30 ft, closed doors 20, windows 10. A listener gets a direction, a rough distance and a blurred square, never a name. Footsteps 30 ft (60 for `noisy`, e.g. chain mail), a hidden mover's scuff 15 ft and only for passive ≥ their Stealth, a fight 90, a bowstring 20, `noise` whatever you set. Footsteps where a comrade is known to be are ignored. |
 | Touch | Being attacked or hurt, with the direction it came from. |
 | Special | `senses: {darkvision, blindsight, scent, keen, keenHearing}`. Scent notices a stranger within range through walls, without saying who. |
