@@ -210,6 +210,18 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }));
     const bottom = minH * FT - (anyChasm ? 3.5 : 0.6);
     const colTops = v.cells.map((row) => row.map(() => 0));
+    // Deep rock: known wall squares with no floor (or unseen square) around them, drawn as one low rough mass instead of columns.
+    let massFt = 0;
+    const deep = v.cells.map((row, y) => row.map((c, x) => {
+      if (c.fog === 'unknown' || !c.tags.includes('wall') || c.obj) return false;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const n = v.cells[y + dy] && v.cells[y + dy][x + dx];
+        if (n && (n.fog === 'unknown' || !n.tags.includes('wall'))) return false;
+      }
+      massFt = Math.max(massFt, (v.legend[c.ch] && v.legend[c.ch].height) || 6);
+      return true;
+    }));
+    const massH = (wallsLow ? 1.5 : massFt) * FT;
 
     for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) {
       const c = v.cells[y][x];
@@ -221,6 +233,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const at = { x, y };
       const legend = v.legend[c.ch] || {};
 
+      if (deep[y][x]) { colTops[y][x] = massH * 0.6; continue; }
       if (surf === 'chasm') {
         const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('chasm', 0, { dim }) : floorMat('chasm', x, y, dim)), at);
         m.rotation.x = -Math.PI / 2; m.position.set(x + 0.5, bottom + 0.01, y + 0.5);
@@ -281,7 +294,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
     }
     for (const w of v.walls || []) buildWall(v, w, add, geo);
+    buildRockMass(v, deep, bottom, massH);
+    buildChasmDepth(v, bottom);
     buildUncharted(v);
+    buildBackdrop(v);
     // coordinate labels in a straight line along the north and west edges of what's known
     const known = (x, y) => v.cells[y][x].fog !== 'unknown';
     let x0 = v.width, y0 = v.height;
@@ -332,6 +348,110 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false }));
     m.receiveShadow = true; m.renderOrder = -1;
     m.userData.dispose = g; // also keeps it out of picking and wall-fade occlusion (see occluders)
+    terrain.add(m);
+  }
+
+  // Wall squares nothing can see past are one merged, lumpy mass: corner heights come from a hash so the same map always rises the
+  // same way, shared by the squares round each corner so it stays one surface. Only the map's outer edge needs a skirt.
+  function buildRockMass(v, deep, bottom, wallH) {
+    const W = v.width, H = v.height, pos = [], col = [];
+    const base = new THREE.Color('#2f2b24'), c = new THREE.Color(), corners = new Map();
+    const isDeep = (x, y) => x >= 0 && y >= 0 && x < W && y < H && deep[y][x];
+    const corner = (i, j) => {
+      const key = i * 4096 + j;
+      if (!corners.has(key)) {
+        const f = 0.35 + 0.45 * (0.65 * TX.hash(i, j, 53) / 4294967296 + 0.35 * TX.hash(i >> 1, j >> 1, 59) / 4294967296);
+        const inner = isDeep(i - 1, j - 1) && isDeep(i, j - 1) && isDeep(i - 1, j) && isDeep(i, j);
+        const jit = (k) => (inner ? (TX.hash(i, j, k) / 4294967296 - 0.5) * 0.3 : 0);
+        corners.set(key, [i + jit(61), wallH * f, j + jit(67), f]);
+      }
+      return corners.get(key);
+    };
+    const tri = (a, b, d, dim) => {
+      for (const q of [a, b, d]) {
+        pos.push(q[0], q[1], q[2]);
+        c.copy(base).multiplyScalar((0.7 + 0.7 * q[3]) * (dim ? 0.38 : 1)); col.push(c.r, c.g, c.b);
+      }
+    };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!deep[y][x]) continue;
+      const dim = v.cells[y][x].fog === 'remembered';
+      const A = corner(x, y), B = corner(x + 1, y), C = corner(x, y + 1), D = corner(x + 1, y + 1);
+      if ((x + y) & 1) { tri(A, C, D, dim); tri(A, D, B, dim); } else { tri(A, C, B, dim); tri(B, C, D, dim); }
+      for (const [dx, dy, p, q] of [[0, -1, A, B], [0, 1, C, D], [-1, 0, A, C], [1, 0, B, D]]) {
+        if (x + dx >= 0 && y + dy >= 0 && x + dx < W && y + dy < H) continue; // only the map's outer edge
+        const lo = (r) => [r[0], bottom, r[2], 0];
+        tri(p, lo(p), q, dim); tri(q, lo(p), lo(q), dim);
+      }
+    }
+    if (!pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+    m.castShadow = true; m.receiveShadow = true;
+    m.userData.dispose = g; // not pickable and never fades: it is low and nothing stands behind it
+    terrain.add(m);
+  }
+
+  // Chasms read as deep: stacked dark veils (denser the lower they sit) darken the cliff faces and the floor with depth, and a
+  // faint mist rests near the bottom. One merged mesh, kept out of picking like the uncharted ground.
+  function buildChasmDepth(v, bottom) {
+    const cells = [];
+    let rim = -Infinity;
+    v.cells.forEach((row, y) => row.forEach((c, x) => {
+      if (c.fog === 'unknown' || TX.surfaceFor(c) !== 'chasm') return;
+      cells.push([x, y]);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const n = v.cells[y + dy] && v.cells[y + dy][x + dx];
+        if (n && n.fog !== 'unknown' && TX.surfaceFor(n) !== 'chasm' && !n.tags.includes('wall')) rim = Math.max(rim, (n.h || 0) * FT);
+      }
+    }));
+    if (!cells.length) return;
+    if (rim === -Infinity) rim = 0;
+    const D = rim - bottom, dark = new THREE.Color('#050506'), mist = new THREE.Color('#7d8794');
+    const layers = [0.05, 0.14, 0.26, 0.4, 0.56, 0.74, 0.92].map((f, k) => [rim - D * f, dark, 0.1 + k * 0.03])
+      .concat([[bottom + 0.7, mist, 0.07], [bottom + 0.3, mist, 0.1]]);
+    const pos = [], col = [], idx = [];
+    for (const [x, y] of cells) for (const [ly, c, a] of layers) {
+      const n = pos.length / 3;
+      pos.push(x, ly, y, x + 1, ly, y, x, ly, y + 1, x + 1, ly, y + 1);
+      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
+      idx.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    m.renderOrder = -1;
+    m.userData.dispose = g;
+    terrain.add(m);
+  }
+
+  // A big dark ground round the map so it doesn't end in a void: a frame of bands from the map's edge outward that thins to
+  // nothing, in the same tone and lighting as the uncharted margin it runs on from.
+  function buildBackdrop(v) {
+    const W = v.width, H = v.height, U = UNCH_MARGIN;
+    const steps = [[0, 1], [U, 1], [U + 6, 0.85], [U + 18, 0.5], [U + 40, 0.2], [U + 90, 0]];
+    const pos = [], col = [], idx = [], c = new THREE.Color(UNCHARTED).multiplyScalar(0.85);
+    for (const [d, a] of steps) {
+      pos.push(-d, 0, -d, W + d, 0, -d, W + d, 0, H + d, -d, 0, H + d);
+      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
+    }
+    for (let s = 0; s < steps.length - 1; s++) for (let i = 0; i < 4; i++) {
+      const a = s * 4 + i, b = s * 4 + (i + 1) % 4;
+      idx.push(a, a + 4, b, b, a + 4, b + 4);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(Float32Array.from({ length: pos.length }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false, side: THREE.DoubleSide }));
+    m.position.y = -0.02; m.renderOrder = -2;
+    m.userData.dispose = g;
     terrain.add(m);
   }
 
