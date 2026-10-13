@@ -1837,15 +1837,18 @@ const inspectLeaf = (cx, T) => ({ role: 'Inspect', what: 'Inspect', go: () => {
 function strikeLeaf(cx, T, L) {
   const atk = (L && L.attacks) || [], whyA = (a) => whyNot(attackKind(a));
   const ok = atk.filter((a) => a.ok), main = ok.filter((a) => attackKind(a) === 'action'), pool = main.length ? main : ok; // the face of Strike is a plain attack; bonus ones live under the full list
-  const best = pool.find((a) => a.mode !== 'dis') || pool[0], why = best ? whyA(best) : whyNot('action');
+  const pick = atk.find((a) => a.name === slotPref.get(cx.actor, 'strike'));   // chosen with right-click
+  const best = pick ? (pick.ok ? pick : null) : pool.find((a) => a.mode !== 'dis') || pool[0], why = best ? whyA(best) : whyNot('action');
   const fight = (myTurn() || {}).explore ? 'starts a fight · ' : '';
   const desc = (a) => fight + shortVerdict(a.verdict) + (a.damage ? ' · ' + a.damage : '') + (a.sneak ? ` · sneak +${a.sneak}` : '');
   const hit = (a) => ({ what: a.name, go: () => { act('attack', { target: T.id, weapon: a.name, sneak: !!a.sneak }); } });
+  const entry = (a) => Object.assign(hit(a), a.ok && !whyA(a) ? { odds: desc(a) } : { off: true, odds: a.ok ? whyA(a) : a.verdict, go: undefined });
   const s = { role: 'Strike' };
   if (!L) Object.assign(s, { what: 'Strike', off: true, odds: 'no read on that' });
-  else if (!best) Object.assign(s, { what: 'Strike', off: true, odds: atk.length ? shortVerdict(atk[0].verdict) : 'no attacks' });
+  else if (!best) Object.assign(s, { what: pick ? pick.name : 'Strike', off: true, odds: atk.length ? shortVerdict((pick || atk[0]).verdict) : 'no attacks' });
   else Object.assign(s, hit(best), why ? { off: true, odds: why, go: undefined } : { odds: desc(best) });
-  if (atk.length) s.full = () => menuOf('All attacks', atk.map((a) => Object.assign(hit(a), a.ok && !whyA(a) ? { odds: desc(a) } : { off: true, odds: a.ok ? whyA(a) : a.verdict, go: undefined })));
+  if (atk.length) s.full = () => menuOf('All attacks', atk.map(entry));
+  if (atk.length > 1) s.alt = () => menuOf('Strike', atk.map((a) => Object.assign(entry(a), { swap: () => { slotPref.set(cx.actor, 'strike', a.name); return { k: 1, leaf: strikeLeaf(cx, T, L) }; } })));
   return s;
 }
 
@@ -1888,7 +1891,8 @@ function wheelDefaults(c) {
   const main = cantrips.find((x) => ATTACK_CANTRIP.test(x.what)) || cantrips[0];
   const cast = (x) => ({ what: x.what, odds: x.odds, cast: true });
   const book = { what: 'Spells', items: [...cantrips.filter((x) => x !== main).map(cast), ...spells.map(cast)] };
-  const caster = { signature: main ? Object.assign(cast(main), { odds: 'cantrip', foe: true }) : { what: 'Approach & strike', short: 'Approach', approach: true }, kit: book.items.length ? book : null };
+  const pool = [...(main ? [Object.assign(cast(main), { foe: true })] : []), ...book.items];   // what the Signature slot can swap between
+  const caster = { pool, signature: main ? Object.assign(cast(main), { odds: 'cantrip', foe: true }) : { what: 'Approach & strike', short: 'Approach', approach: true }, kit: book.items.length ? book : null };
   const approach = { what: 'Approach & strike', short: 'Approach', approach: true };
   const self = (what, o = {}) => Object.assign({ what, self: true }, o);
   const maneuvers = (/Maneuvers?:\s*(.+?)\.(?:\s|$)/i.exec(notes) || [, ''])[1].split(/,\s*(?![^()]*\))/).map((x) => x.replace(/\s*\(.*$/, '').trim()).filter(Boolean);
@@ -1899,8 +1903,8 @@ function wheelDefaults(c) {
       kit: { what: 'Cunning Action', items: [self('Dash', { act: ['dash', { as: 'bonus' }], needs: 'bonus' }), self('Disengage', { act: ['disengage', { as: 'bonus' }], needs: 'bonus' }), self('Hide', { act: ['hide', { as: 'bonus' }], needs: 'bonus' })] } };
     case 'barbarian': return { signature: self('Rage', { res: 'rage', opt: true, cost: 'bonusAny' }), kit: { what: 'Reckless', items: [self('Reckless Attack')] } };
     case 'monk': return { signature: { what: 'Flurry of Blows', odds: 'ki', cost: 'bonusAny' }, kit: { what: 'Ki', items: [self('Patient Defense', { cost: 'bonusAny' }), self('Step of the Wind', { cost: 'bonusAny' }), { what: 'Stunning Strike' }] } };
-    case 'paladin': return { signature: approach, kit: book.items.length ? book : null };
-    case 'ranger': return { signature: { what: "Hunter's Mark", cast: true, foe: true }, kit: book.items.length ? book : null };
+    case 'paladin': return { pool: book.items, signature: approach, kit: book.items.length ? book : null };
+    case 'ranger': return { pool: [{ what: "Hunter's Mark", cast: true, foe: true }, ...book.items], signature: { what: "Hunter's Mark", cast: true, foe: true }, kit: book.items.length ? book : null };
     case 'cleric': case 'wizard': case 'sorcerer': case 'warlock': case 'bard': case 'druid': return caster;
     default: return { signature: approach, kit: null };
   }
@@ -1928,10 +1932,36 @@ function leafOf(cx, spec, T, appr, L, role) {
   return cost ? gated(cost, leaf) : leaf;
 }
 const leavesOf = (cx, items, T, appr, L) => items.map((i) => leafOf(cx, i, T, appr, L)).filter(Boolean);
+// Right-click alternates are remembered per character (Card 5b moves this onto the sheet): { strike, sig, kit } → a name.
+const slotPref = {
+  get(id, key) { try { return (JSON.parse(localStorage.getItem('wheelSlots.' + id)) || {})[key]; } catch { return undefined; } },
+  set(id, key, v) { try { const o = JSON.parse(localStorage.getItem('wheelSlots.' + id)) || {}; o[key] = v; localStorage.setItem('wheelSlots.' + id, JSON.stringify(o)); } catch { /* private window: the swap just won't stick */ } },
+};
+const BENIGN = /cure|heal|bless|shield of faith|aid|restoration|sanctuary|protection|armor|longstrider|expeditious|guidance|resistance|spare the dying|goodberry|detect|identify|comprehend|disguise|feather|jump|light$/i;
+const flatSpecs = (items) => (items || []).flatMap((i) => (i.items ? flatSpecs(i.items) : [i]));
 function sigKit(cx, T, appr, L) {
-  const d = wheelDefaults(cx.a), out = {};
-  out[2] = leafOf(cx, d.signature, T, appr, L, 'Signature');
-  out[3] = d.kit ? subOf('Kit', d.kit.what, d.kit.what, leavesOf(cx, d.kit.items, T, appr, L)) : { role: 'Kit', what: 'Kit', off: true, odds: 'nothing set' };
+  const d = wheelDefaults(cx.a), out = {}, foe = T && T.id && T.side === 'enemy';
+  // A spell the character also has as an engine attack (Spiritual Weapon, Fire Bolt) runs that attack on a creature, gated by its own cost.
+  const atkFor = (spec) => foe && spec.cast && (cx.a.attacks || []).find((a) => a.name.toLowerCase().startsWith(spec.what.toLowerCase()));
+  const mk = (spec, role) => {
+    const a = atkFor(spec);
+    if (!a) return leafOf(cx, spec, T, appr, L, role);
+    return gated(attackKind(a), { role, what: spec.what, odds: spec.odds, go: () => { act('attack', { target: T.id, weapon: a.name }); } });
+  };
+  const pool = (d.pool || []).filter((x) => !(foe && BENIGN.test(x.what)));
+  const sigSlot = () => {
+    const pick = pool.find((x) => x.what === slotPref.get(cx.actor, 'sig')), leaf = mk(pick || d.signature, 'Signature');
+    return pool.length > 1 ? Object.assign(leaf, { alt: () => menuOf('Signature', pool.map((x) => Object.assign(mk(x, undefined), { swap: () => { slotPref.set(cx.actor, 'sig', x.what); return { k: 2, leaf: sigSlot() }; } }))) }) : leaf;
+  };
+  out[2] = sigSlot();
+  const flat = flatSpecs(d.kit && d.kit.items);
+  const kitSlot = () => {
+    if (!d.kit) return { role: 'Kit', what: 'Kit', off: true, odds: 'nothing set' };
+    const pick = flat.find((x) => x.what === slotPref.get(cx.actor, 'kit')), leaf = pick && leafOf(cx, pick, T, appr, L, 'Kit');
+    const base = leaf || subOf('Kit', d.kit.what, d.kit.what, leavesOf(cx, d.kit.items, T, appr, L));
+    return flat.length > 1 ? Object.assign(base, { alt: () => menuOf('Kit', flat.map((x) => { const l = leafOf(cx, x, T, appr, L); return l && Object.assign(l, { swap: () => { slotPref.set(cx.actor, 'kit', x.what); return { k: 3, leaf: kitSlot() }; } }); }).filter(Boolean)) }) : base;
+  };
+  out[3] = kitSlot();
   return out;
 }
 

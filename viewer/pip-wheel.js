@@ -82,7 +82,8 @@ function tipHtml(s, root) {
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
     + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
     + (s.info && !s.off ? `<div class="n">${esc(s.info)}</div>` : '')
-    + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '');
+    + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '')
+    + (s.alt ? '<div class="n">Right-click: alternatives</div>' : s.swap ? '<div class="n">Right-click: put in the slot</div>' : '');
 }
 
 export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, onHot = () => {}, spinMs = () => 150 } = {}) {
@@ -264,7 +265,20 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['contextmenu', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       if (S.folded) return;
-      if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) <= 5) back();
+      // A right-drag orbits the camera (it ends here too, far from where it began): only a right-click counts.
+      if (down && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+      // On a slot, right-click is its contextual alternate: `alt()` drills into a menu of alternatives; in that menu `swap()`
+      // puts the option into the slot it came from ({ k, leaf }) and goes back. Anywhere else (or a slot with neither) it's Back.
+      const s = slotOf(hit(ev.clientX, ev.clientY));
+      if (s && s.alt) { const d = S.stack.length; drill(s.alt()); S.altFrom = d; return; }
+      if (s && s.swap) {
+        const r = s.swap();
+        S.stack.length = S.altFrom || S.stack.length - 1;
+        if (r && r.leaf) cur().slots[r.k] = r.leaf;
+        build(); spin(-1);
+        return;
+      }
+      back();
     }],
     ['keydown', (ev) => {
       if (/^Digit[1-6]$/.test(ev.code)) { ev.stopPropagation(); const k = +ev.code.slice(5); setHot(k); choose(k, ev.shiftKey); }
