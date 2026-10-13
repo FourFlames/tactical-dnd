@@ -755,10 +755,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const q = cellOf(p.cell), y = (p.z || cellElev(lastState, q.x, q.y)) * FT + 0.06;
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.42, 40), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, depthTest: false, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.set(q.x + 0.5, y, q.y + 0.5);
-    const label = labelSprite(p.label ? `${p.who}: ${p.label}` : p.who);
-    label.position.set(q.x + 0.5, y + 0.9, q.y + 0.5);
-    fx.add(ring, label);
-    pings.push({ ring, label, born: performance.now() });
+    // quiet: a bare, shorter ring (where a heard sound came from) with no name tag
+    const label = p.quiet ? null : labelSprite(p.label ? `${p.who}: ${p.label}` : p.who);
+    if (label) label.position.set(q.x + 0.5, y + 0.9, q.y + 0.5);
+    if (p.quiet) ring.material.opacity = 0.7;
+    fx.add(...(label ? [ring, label] : [ring]));
+    pings.push({ ring, label, born: performance.now(), life: p.quiet ? 1600 : 3000 });
   }
 
   // ---------- move preview ----------
@@ -1173,12 +1175,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     for (let i = effects.length - 1; i >= 0; i--) if (effects[i](now)) effects.splice(i, 1);
     for (let i = pings.length - 1; i >= 0; i--) {
-      const pg = pings[i], age = (now - pg.born) / 3000;
+      const pg = pings[i], age = (now - pg.born) / pg.life;
       pg.ring.scale.setScalar(1 + ((age * 3) % 1) * 1.5);
       pg.ring.material.opacity = Math.max(0, 1 - age);
-      pg.label.material.opacity = Math.max(0, Math.min(1, (1 - age) * 2));
+      if (pg.label) pg.label.material.opacity = Math.max(0, Math.min(1, (1 - age) * 2));
       if (age >= 1) {
-        for (const o of [pg.ring, pg.label]) { fx.remove(o); o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        for (const o of [pg.ring, pg.label].filter(Boolean)) { fx.remove(o); o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
         pings.splice(i, 1);
       }
     }

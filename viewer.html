@@ -215,6 +215,8 @@
   .ping { animation: ping 1s ease-out 3; transform-box: fill-box; transform-origin: center; }
   @keyframes ping { 0% { transform: scale(.3); opacity: 1 } 100% { transform: scale(1.7); opacity: 0 } }
   .pinglabel { animation: fade 3.2s forwards; }
+  .ping.quiet { animation-iteration-count: 2; animation-duration: .8s; opacity: .7; }
+  .soundhint { animation: fade 1.6s forwards; }
 
   /* floating panels over the map */
   .mapzone { position: fixed; inset: 0; display: flex; }
@@ -372,6 +374,13 @@
   .por .face { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #1b1a15; border: 2px solid var(--c, var(--neutral));
     font: 700 15px var(--display); letter-spacing: .02em; box-shadow: 0 3px 10px rgba(0, 0, 0, .45); transition: transform .15s; }
   .por:hover .face { transform: translateY(-2px); }
+  .perc { display: inline-flex; align-items: center; vertical-align: middle; margin-right: 6px; cursor: default; }
+  .perc .pface { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: #1b1a15; border: 1.5px solid var(--c, var(--neutral));
+    font: 700 7px var(--display); font-style: normal; color: var(--ink); cursor: pointer; margin-left: -5px; box-sizing: border-box; }
+  .perc .pface:first-child { margin-left: 0; }
+  .perc .pface:hover { color: var(--gold); position: relative; z-index: 1; }
+  .perc .sense { font-size: 10px; margin-left: 3px; opacity: .75; font-family: var(--mono); line-height: 1; }
+  .cellchip { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
   .por .hpb { width: 34px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
   .por .hpb i { display: block; height: 100%; }
   .por.cur .face { width: 56px; height: 56px; font-size: 20px; border-width: 3px; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--gold), 0 6px 18px rgba(0, 0, 0, .55); }
@@ -951,8 +960,24 @@ function linkRefs(e) {
     return id ? `<span class="ref" style="--c:${SIDE_COLOR[cs[id].side] || SIDE_COLOR.neutral}" data-ref="${id}">${m}</span>` : m;
   });
 }
+// Who perceived a line (data.perceivers) as a stack of tiny portraits plus a sense glyph; data.at adds a cell chip.
+const SENSE = { hear: ['👂', 'Heard by'], see: ['👁', 'Seen by'], know: ['✦', 'Known to'], smell: ['👃', 'Smelled by'] };
+const listNames = (a) => a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+function perceiverBadge(e) {
+  const d = e.data || {}, cs = (state && state.creatures) || {};
+  if (!Array.isArray(d.perceivers)) return '';
+  const known = d.perceivers.filter((id) => cs[id]);
+  if (!known.length) return '';
+  const labels = tokenLabels(state), [glyph, verb] = SENSE[d.sense] || ['•', 'Noticed by'];
+  const chk = (id) => { const k = d.check && (d.check[id] || d.check); return k && k.skill && Number.isFinite(k.total) ? ` (${k.skill} ${k.total})` : ''; };
+  const faces = known.map((id) => `<span class="pface" data-ref="${esc(id)}" style="--c:${SIDE_COLOR[cs[id].side] || SIDE_COLOR.neutral}">${esc(labels[id] || '?')}</span>`).join('');
+  const names = known.map((id) => cs[id].name + (d.sense === 'know' ? chk(id) : ''));
+  const tip = `${verb} ${listNames(names)}`;
+  return `<span class="perc" title="${esc(tip)}">${faces}<span class="sense">${glyph}</span></span>`;
+}
 function logEntry(e) {
-  return `<div class="entry ${esc(e.type)}${e.data && e.data.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${linkRefs(e)}${mechanicsChips(e)}</div>`;
+  const d = e.data || {}, cell = typeof d.at === 'string' && !d.id && /^[A-Z]+\d+$/.test(d.at) ? ` <span class="ref cellchip" data-ref="${esc(d.at)}">${esc(d.at)}</span>` : '';
+  return `<div class="entry ${esc(e.type)}${d.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${perceiverBadge(e)}${linkRefs(e)}${cell}${mechanicsChips(e)}</div>`;
 }
 function drawLog(v) {
   const log = document.getElementById('log');
@@ -2211,6 +2236,7 @@ async function playItem(it, gen) {
     it.moved = true; rebuildHolds(); render(); // the token now belongs at its polled square
     if (!THREE_D) await sleep(450);
   }
+  if (e.data && e.data.sense === 'hear' && Array.isArray(e.data.perceivers)) soundMark(e.data);
   if (FX_TYPES.includes(e.type) && e.data) { fx = true; await playFx(e, alive); }
   if (!alive()) return;
   if (TICKER_ACTIONS.has(e.type)) { showTicker(e); await sleep(fx ? 250 : 500); }
@@ -2335,12 +2361,39 @@ async function sendPing() {
       body: JSON.stringify({ token: TOKEN || undefined, cell, z: cursor.cell ? cursor.z : null, target: cursor.id }) });
   } catch { /* best effort */ }
 }
+// A heard sound hints where it came from: a quiet ring on its square, or (only a bearing known) a chevron
+// beside the nearest listener pointing that way. Fades in ~1.5 s; never on catch-up (those entries don't play).
+const COMPASS = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] };
+function soundMark(d) {
+  const cs = (state && state.creatures) || {};
+  if (typeof d.at === 'string' && /^[A-Z]+\d+$/.test(d.at)) { showPing({ cell: d.at, quiet: true }); return; }
+  const m = typeof d.dir === 'string' && d.dir.match(/north|south/g), w = typeof d.dir === 'string' && d.dir.match(/east|west/g);
+  const v = [(w ? COMPASS[w[0]][0] : 0), (m ? COMPASS[m[0]][1] : 0)];
+  if (!v[0] && !v[1]) return;
+  const ears = d.perceivers.map((id) => cs[id]).filter((c) => c && c.pos);
+  if (!ears.length) return;
+  // the listener nearest the bearing's side: farthest along it
+  const at = (c) => { const p = parseCell(c.pos); return p.x * v[0] + p.y * v[1]; };
+  const c = ears.reduce((a, b) => (at(b) > at(a) ? b : a)), p = parseCell(c.pos);
+  if (THREE_D) {
+    if (map3d) { const q = { x: Math.max(0, Math.min(state.width - 1, p.x + v[0] * 2)), y: Math.max(0, Math.min(state.height - 1, p.y + v[1] * 2)) }; map3d.ping({ cell: cellName(q.x, q.y), quiet: true }); }
+    return;
+  }
+  const g = svg && svg.querySelector('#pings');
+  if (!g) return;
+  const n = Math.hypot(v[0], v[1]), ux = v[0] / n, uy = v[1] / n, r = CELL * .8;
+  const cx = (p.x + .5) * CELL + ux * r, cy = (p.y + .5) * CELL + uy * r, s = CELL * .22;
+  const ch = el('polyline', { points: `${cx - ux * s - uy * s},${cy - uy * s + ux * s} ${cx + ux * s},${cy + uy * s} ${cx - ux * s + uy * s},${cy - uy * s - ux * s}`,
+    fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'soundhint' }, g);
+  setTimeout(() => ch.remove(), 1600);
+}
 function showPing(p) {
   if (THREE_D) { if (map3d) map3d.ping(p); return; }
   const g = svg && svg.querySelector('#pings');
   if (!g) return;
   const q = parseCell(p.cell), cx = q.x * CELL + CELL / 2, cy = q.y * CELL + CELL / 2;
-  const ring = el('circle', { cx, cy, r: CELL * .55, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3, class: 'ping' }, g);
+  const ring = el('circle', { cx, cy, r: CELL * .55, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 3, class: p.quiet ? 'ping quiet' : 'ping' }, g);
+  if (p.quiet) { setTimeout(() => ring.remove(), 1600); return; }
   const text = (p.label ? `${p.who}: ${p.label}` : p.who) + (p.z ? ` @${p.z}ft` : '');
   const lbl = el('text', { x: cx, y: q.y * CELL - 6, 'text-anchor': 'middle', fill: 'var(--gold)', 'font-family': 'Inter', 'font-weight': 600, 'font-size': 12, class: 'pinglabel', stroke: '#14130f', 'stroke-width': 3, 'paint-order': 'stroke' }, g);
   lbl.textContent = text;
