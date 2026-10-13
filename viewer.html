@@ -510,6 +510,7 @@
 </div>
 <script src="/lib/power.js"></script>
 <script src="/lib/rules.js"></script>
+<script src="/lib/grid.js"></script>
 <script>
 // Side panel: floats over the map; the open/closed choice is remembered (starts closed on narrow screens).
 (() => {
@@ -1468,8 +1469,10 @@ async function act(action, extra = {}) {
   actionConfirm = null;
   setTurnMsg('…');
   try {
-    const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action, id: (myTurn() || {}).id }, extra)) });
+    // n + game: the version stamp. The server answers 409 { stale } when the game moved on since this state (Card 13c).
+    const r = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ token: TOKEN, action, id: (myTurn() || {}).id, n: state && state.seq, game: state && state.game }, extra)) });
     const out = await r.json();
+    if (r.status === 409 && out.stale) { setTurnMsg('Things changed. Take another look.', true); await refresh(); ringAgain(); return false; }
     if (!r.ok) setTurnMsg(out.error || 'Refused.', true);
     else setTurnMsg(out.quiet ? out.text : `${out.text} (DM notified)`);
     await refresh();
@@ -1664,7 +1667,7 @@ const wheelContext = () => JSON.stringify([state && state.round, state && state.
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
-    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev), onHot: (s) => previewRoute(s && s.route), yields: (ev) => wheelYields(ev) });
+    pw = m.createPipWheel(document.body, { onLeaf: (s) => { leafFrom = W && { ref: W.ref, t: performance.now() }; const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev), onHot: (s) => previewRoute(s && s.route), yields: (ev) => wheelYields(ev) });
     return pw;
   }));
 }
@@ -1749,46 +1752,77 @@ function selectOnly(ref) { // the click may have toggled the selection off; the 
   else if (cursor.cell !== ref) pointSquare(ref);
 }
 
-async function openWheelAt(ref) {
+// The ring never waits (Card 13c): it opens at once from what the viewer already has. Slot details that take longer
+// (hit odds from /api/look, routes from lib/grid.js on the player view) show an hourglass and are patched in with
+// pw.replace as they arrive. D is the menu's late data: D.L the look (undefined while pending), D.ready once routes may be
+// worked out. `inPlace` (a refresh or a stale action) swaps the open ring's contents instead of unfolding a new one.
+async function openWheelAt(ref, { inPlace = false } = {}) {
   if (!wheelOk()) return;
   if (!me.turn) pickActor(ref);
   const v = wheelView(), c = v.creatures[ref], cell = c ? c.pos : ref;
+  if (!c && !/^[A-Z]\d+$/.test(ref)) return;
   const here = Object.values(v.creatures).filter((x) => x.pos === cell), actor = wheelActor();
   if (!actor || !state.creatures[actor]) return;
   const mk = THREE_D && map3d && map3d.marks();
   if (mk && here.length > 1) {   // 3D answers a crowd with icon mode: a click on a square or body enters it, and an icon picked from it opens that wheel
-    if (c && mk.iconMode) return openEntity(c.id);
+    if (c && mk.iconMode) return openEntity(c.id, undefined, { inPlace });
     closeWheel(); mk.enter(c ? c.id : here[0].id);
     return;
   }
   const seq = ++wheelSeq;
   const context = wheelContext();
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
-  await loadWheel();
+  if (!pw) await loadWheel();   // preloaded, so normally no await at all: the ring opens in this same task
   if (seq !== wheelSeq || context !== wheelContext()) return; // a newer click or game change got here first
-  if (here.length === 1) return openEntity(here[0].id, seq);
-  const menu = here.length ? pickMenu(cx, cell, here) : await squareMenu(cx, cell);
-  if (seq !== wheelSeq || context !== wheelContext()) return;
-  selectOnly(cell);
-  pw.open(menu, wheelAnchor(cell));
-  W = { seq, context };
+  if (here.length === 1) return openEntity(here[0].id, seq, { inPlace });
+  const D = {}, make = () => (here.length ? pickMenu(cx, cell, here) : squareMenu(cx, cell, D));
+  showRing(make, cell, inPlace);
+  W = { seq, context, ref: cell, make };
+  selectOnly(cell);   // after the ring: selecting redraws the map and card
   if (mk) { const p = parseCell(cell); W.sq = cell; map3d.showSquare({ x: p.x, y: p.y }, true); wheel3d(null); }
+  if (!here.length) later(seq, () => { D.ready = true; });
 }
-async function openEntity(id, seq = ++wheelSeq) {
+async function openEntity(id, seq = ++wheelSeq, { inPlace = false } = {}) {
   if (!me.turn) pickActor(id);
   const c = state.creatures[id], actor = wheelActor();
   if (!c || !actor) return;
   const context = wheelContext();
   const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
-  const menu = id === actor ? selfMenu(cx) : c.side === 'enemy' ? await enemyMenu(cx, c) : allyMenu(cx, c);
+  if (!pw) await loadWheel();
   if (seq !== wheelSeq || context !== wheelContext()) return;
-  selectOnly(id);
-  await loadWheel();
-  if (seq !== wheelSeq || context !== wheelContext()) return;
+  const foe = id !== actor && c.side === 'enemy', D = {};
+  const make = () => (id === actor ? selfMenu(cx) : foe ? enemyMenu(cx, c, D) : allyMenu(cx, c));
   if (W && W.sq && map3d) map3d.showSquare(null);
-  pw.open(menu, wheelAnchor(id));
-  W = { seq, context, id };
+  showRing(make, id, inPlace);
+  W = { seq, context, ref: id, id, make };
+  selectOnly(id);   // after the ring: selecting redraws the map and card
   if (THREE_D && map3d) wheel3d(id);
+  if (!foe) return;
+  later(seq, () => { D.ready = true; });
+  getLook(id, actor).then((L) => { D.L = L; repaint(seq); });
+}
+function showRing(make, ref, inPlace) {
+  if (inPlace && pw.isOpen) pw.replace(make()); else pw.open(make(), wheelAnchor(ref));
+  ringStats.opened = performance.now();
+}
+// Fill-ins for the open ring: after the ring has painted, so working out routes never holds it up.
+function later(seq, fn) {
+  let done = false;
+  const go = () => { if (done) return; done = true; if (W && W.seq === seq) { fn(); repaint(seq); } };
+  requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 60);   // the timer covers a hidden tab, where frames stop
+}
+function repaint(seq) { if (W && W.seq === seq && W.make && pw && pw.isOpen) pw.replace(W.make()); }
+const ringStats = { opened: 0 };   // for checking the click-to-ring time in the console
+// After a stale action (409) or a pushed change: the ring the player was using comes back with fresh data.
+let leafFrom = null;
+function ringAgain() {
+  const f = leafFrom; leafFrom = null;
+  if (f && performance.now() - f.t < 10000 && !(pw && pw.isOpen)) openWheelAt(f.ref);
+}
+function rebuildRing() {
+  if (!(pw && pw.isOpen && W && W.ref)) return;
+  if (!wheelOk() || !wheelActor() || !(state.creatures[W.ref] || /^[A-Z]\d+$/.test(W.ref))) return closeWheel();
+  openWheelAt(W.ref, { inPlace: true });
 }
 
 // ---- reasons a leaf is greyed ----
@@ -1831,29 +1865,60 @@ async function sendIntent(cx, text, at, spend) {
 const atOf = (T) => (T.id ? { target: T.id } : { cell: T.cell });
 const intentLeaf = (cx, T, s, text, spend) => Object.assign({}, s, { go: () => { sendIntent(cx, text, T && atOf(T), spend); } });
 
-async function getLook(id, from) {
-  const q = new URLSearchParams({ id, from });
-  if (SEAT) q.set('token', SEAT);
-  try { const r = await fetch('/api/look?' + q), o = await r.json(); return r.ok ? o : null; } catch { return null; }
+// Slot data cache: looks by target and viewer, routes by grid. A pushed change (refresh) drops both.
+const slotCache = { looks: new Map(), grid: null };
+function getLook(id, from) {
+  const k = id + '|' + from;
+  if (!slotCache.looks.has(k)) {
+    const q = new URLSearchParams({ id, from });
+    if (SEAT) q.set('token', SEAT);
+    slotCache.looks.set(k, fetch('/api/look?' + q).then(async (r) => { const o = await r.json(); return r.ok ? o : null; }).catch(() => null));
+  }
+  return slotCache.looks.get(k);
 }
-async function fetchPath(cell, opts = {}) {
-  const q = new URLSearchParams({ token: TOKEN, cell });
+// Routes are worked out here, by lib/grid.js on the player view (the latest state, not the playback's held positions):
+// the same pathing the engine runs, but only on what the party knows, so a preview never routes around a hidden goblin
+// or through unseen ground. The engine re-checks the move on commit. Same answer shape as /api/path.
+function routeGrid() {
+  const t = myTurn(), k = JSON.stringify(t && [t.id, t.used, t.dash, t.disengage, t.left]);
+  const g = slotCache.grid;
+  if (g && g.state === state && g.k === k) return g;
+  return (slotCache.grid = { state, k, routes: new Map(), s: Grid.fromView(state, t ? { [t.id]: { disengage: t.disengage, dash: t.dash, used: t.used } } : {}) });
+}
+function localPath(cell, opts = {}) {
   const t = myTurn();
-  if (t) q.set('id', t.id);
-  if (opts.jump) q.set('jump', '1');
-  if (opts.fastClimb) q.set('fastClimb', '1');
-  try { const r = await fetch('/api/path?' + q); return r.ok ? await r.json() : null; } catch { return null; }
+  if (!t || !state || !state.creatures[t.id]) return null;
+  const g = routeGrid(), rk = JSON.stringify([cell, !!opts.jump, !!opts.fastClimb]);
+  if (g.routes.has(rk)) return g.routes.get(rk);
+  const s = g.s, me1 = s.creatures[t.id], p = parseCell(cell);
+  let out;
+  if (me1.pos === cell) out = { ok: false, reason: 'here' };
+  else if (Grid.occupant(s, p.x, p.y, t.id)) out = { ok: false, reason: 'occupied' };
+  else {
+    let route = null;
+    try { route = Grid.findPath(s, t.id, cell, { jump: !!opts.jump, fastClimb: !!opts.fastClimb, running: t.used >= 10 }); } catch { /* treated as no route */ }
+    if (!route) out = { ok: false, reason: 'no route' };
+    else {
+      const checks = route.steps.filter((st) => st.check).map((st) => ({ kind: st.kind, dc: st.dc, to: st.to }));
+      const provokers = Grid.provokeDetail(s, t.id, route.cells).map((x) => s.creatures[x.id].name);
+      const dashLeft = t.dash ? null : t.left + Grid.speedOf(me1) * (Grid.hasCond(me1, 'prone') ? 0.5 : 1);
+      out = { ok: route.cost <= t.left, cost: route.cost, left: t.left, dashLeft, path: route.cells, checks, provokers };
+    }
+  }
+  g.routes.set(rk, out);
+  return out;
 }
 // The route to a square, trying a plain walk, then a jump, then a fast climb. { p, jump, fast }
-async function routeTo(cell) {
-  let p = await fetchPath(cell);
+function routeTo(cell) {
+  const p = localPath(cell);
   if (!p || p.path || p.reason === 'here' || p.reason === 'occupied') return { p };
   for (const o of [{ jump: true }, { fastClimb: true }]) {
-    const q = await fetchPath(cell, o);
+    const q = localPath(cell, o);
     if (q && q.path) return { p: q, jump: !!o.jump, fast: !!o.fastClimb };
   }
   return { p };
 }
+const WAIT = { wait: true, odds: '⌛ working it out' };   // a slot whose details haven't arrived
 
 // A move (or dash-and-move) along route p. A route that provokes needs a second choose: the slot turns red and the
 // wheel stays open (the same two-step as the Move button on the card).
@@ -1914,6 +1979,7 @@ function strikeLeaf(cx, T, L) {
   const hit = (a) => ({ what: a.name, go: () => { act('attack', { target: T.id, weapon: a.name, sneak: !!a.sneak }); } });
   const entry = (a) => Object.assign(hit(a), a.ok && !whyA(a) ? { odds: desc(a) } : { off: true, odds: a.ok ? whyA(a) : a.verdict, go: undefined });
   const s = { role: 'Strike' };
+  if (L === undefined) return Object.assign(s, { what: 'Strike' }, WAIT);
   if (!L) Object.assign(s, { what: 'Strike', off: true, odds: 'no read on that' });
   else if (!best) Object.assign(s, { what: pick ? pick.name : 'Strike', off: true, odds: atk.length ? shortVerdict((pick || atk[0]).verdict) : 'no attacks' });
   else Object.assign(s, hit(best), why ? { off: true, odds: why, go: undefined } : { odds: desc(best) });
@@ -1922,18 +1988,18 @@ function strikeLeaf(cx, T, L) {
   return s;
 }
 
-// The nearest free square beside a creature, by path cost. { cell, p } | { here: true } | null
-async function approachFor(cx, T, L) {
-  if (L && L.dist <= 5) return { here: true };
+// The nearest free square beside a creature, by path cost. { cell, p } | { here: true } | null; undefined until D.ready.
+function approachFor(cx, T, D) {
+  if (!D || !D.ready) return undefined;
   if (!myTurn()) return null;
-  const v = wheelView(), p0 = parseCell(T.pos), free = [];
+  const s = routeGrid().s, a = s.creatures[cx.actor], b = s.creatures[T.id];
+  if (a && b && Grid.distFeet(Grid.at(s, a), Grid.at(s, b)) <= 5) return { here: true };
+  const p0 = parseCell(T.pos), free = [];
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const x = p0.x + dx, y = p0.y + dy, id = cellName(x, y);
-    if ((dx || dy) && x >= 0 && y >= 0 && x < state.width && y < state.height && !Object.values(v.creatures).some((c) => c.pos === id)) free.push(id);
+    if ((dx || dy) && x >= 0 && y >= 0 && x < state.width && y < state.height && !Object.values(state.creatures).some((c) => c.pos === id)) free.push(id);
   }
-  const ps = await Promise.all(free.map(async (cell) => ({ cell, p: await fetchPath(cell) })));
-  const best = ps.filter((r) => r.p && r.p.path).sort((a, b) => a.p.cost - b.p.cost)[0];
-  return best || null;
+  return free.map((cell) => ({ cell, p: localPath(cell) })).filter((r) => r.p && r.p.path).sort((a, b) => a.p.cost - b.p.cost)[0] || null;
 }
 function approachLeaf(cx, T, appr, L, s) {
   const melee = (cx.a.attacks || []).find((w) => !w.range && attackKind(w) === 'action');
@@ -1941,6 +2007,7 @@ function approachLeaf(cx, T, appr, L, s) {
   if (!melee) return Object.assign({}, s, { off: true, odds: 'no melee attack' });
   const w = whyNot('action');
   if (w) return Object.assign({}, s, { off: true, odds: w });
+  if (appr === undefined) return Object.assign({}, s, WAIT);
   if (appr && appr.here) return Object.assign({}, s, { odds: 'adjacent: ' + melee.name, go: () => { strike(melee); } });
   if (!appr) return Object.assign({}, s, { off: true, odds: myTurn() ? 'no way there' : noTurnWhy() });
   const f = moveFields(appr.cell, appr.p, { then: () => strike(melee) });
@@ -2031,10 +2098,10 @@ function sigKit(cx, T, appr, L) {
   return out;
 }
 
-async function enemyMenu(cx, T) {
-  const L = await getLook(T.id, cx.actor), appr = await approachFor(cx, T, L), n = T.name;
+function enemyMenu(cx, T, D) {
+  const L = D.L, appr = approachFor(cx, T, D), n = T.name;
   const it = (what, text, o) => gated('action', intentLeaf(cx, T, Object.assign({ what }, o), `${cx.aName} ${text} ${n}`, 'action'));
-  const approach = appr && appr.here ? { what: 'Approach', off: true, odds: 'already adjacent' } : appr ? Object.assign({ what: 'Approach', odds: '' }, moveFields(appr.cell, appr.p)) : { what: 'Approach', off: true, odds: myTurn() ? 'no way there' : noTurnWhy() };
+  const approach = appr === undefined ? Object.assign({ what: 'Approach' }, WAIT) : appr && appr.here ? { what: 'Approach', off: true, odds: 'already adjacent' } : appr ? Object.assign({ what: 'Approach', odds: '' }, moveFields(appr.cell, appr.p)) : { what: 'Approach', off: true, odds: myTurn() ? 'no way there' : noTurnWhy() };
   return { title: n, slots: Object.assign({
     1: strikeLeaf(cx, T, L),
     4: subOf('Tactics', 'Tactics', 'Tactics', [it('Shove', 'tries to shove'), it('Grapple', 'tries to grapple'), it('Disarm', 'tries to disarm'),
@@ -2109,7 +2176,7 @@ function nearDoor(w, pos) {   // within a square of the door's length, on either
   const lo = Math.min(v ? w.y1 : w.x1, v ? w.y2 : w.x2), hi = Math.max(v ? w.y1 : w.x1, v ? w.y2 : w.x2);
   return (across === line - 1 || across === line) && along >= lo - 1 && along <= hi;
 }
-async function doorMenu(cx, w) {
+function doorMenu(cx, w, D) {
   const label = w.id.replace(/[-_]+/g, ' '), t = myTurn(), near = nearDoor(w, cx.a.pos);
   const key = (cx.a.keys || []).includes(w.id), locked = !!w.locked || knownLocked.has(w.id);
   const doIt = (op) => async () => {
@@ -2121,10 +2188,10 @@ async function doorMenu(cx, w) {
   if (!t) main = { what: w.open ? 'Close' : 'Open', off: true, odds: noTurnWhy() };
   else if (!w.open && locked && !key) main = { what: 'Locked', off: true, odds: 'no key' };
   else if (near) main = { what: w.open ? 'Close' : 'Open', odds: w.open ? 'free' : locked ? 'unlocks with your key' : 'free', go: doIt(op) };
+  else if (!D.ready) main = Object.assign({ what: 'Approach & ' + op }, WAIT);
   else {   // walk to the nearest free square beside it, then work it
-    const occ = Object.values(wheelView().creatures).map((c) => c.pos), free = [...new Set(doorSides(w))].filter((c) => !occ.includes(c));
-    const ps = await Promise.all(free.map(async (cell) => ({ cell, p: await fetchPath(cell) })));
-    const best = ps.filter((r) => r.p && r.p.path).sort((a, b) => a.p.cost - b.p.cost)[0];
+    const occ = Object.values(state.creatures).map((c) => c.pos), free = [...new Set(doorSides(w))].filter((c) => !occ.includes(c));
+    const best = free.map((cell) => ({ cell, p: localPath(cell) })).filter((r) => r.p && r.p.path).sort((a, b) => a.p.cost - b.p.cost)[0];
     const f = best ? moveFields(best.cell, best.p, { then: doIt(op) }) : { off: true, odds: 'no way there' };
     main = Object.assign({ what: 'Approach & ' + op }, f, f.off ? {} : { odds: `${best.p.cost} ft, then ${op}` });
   }
@@ -2134,9 +2201,9 @@ async function doorMenu(cx, w) {
   return subOf('Door', `${w.open ? 'Close' : 'Open'} door`, label, items);
 }
 
-async function squareMenu(cx, cell) {
-  const T = { cell }, t = myTurn(), { p, jump, fast } = t ? await routeTo(cell) : {};
-  const doors = await Promise.all(doorsBeside(cell).map((w) => doorMenu(cx, w)));
+function squareMenu(cx, cell, D) {
+  const T = { cell }, t = myTurn(), { p, jump, fast } = t && D.ready ? routeTo(cell) : {};
+  const doors = doorsBeside(cell).map((w) => doorMenu(cx, w, D));
   const cellInfo = (wheelView().cells[parseCell(cell).y] || [])[parseCell(cell).x] || {};
   const tags = cellInfo.tags || [], thing = cellInfo.obj ? cellInfo.obj.name : cellInfo.terrain || 'the spot';
   // Squares with something to play with: the free-text request is pre-filled for the player to finish.
@@ -2145,7 +2212,8 @@ async function squareMenu(cx, cell) {
     document.getElementById('actSec').classList.remove('closed');
     box.value = `${cx.aName} ${verb} the ${thing.replace(/^the /i, '')} at ${cell}`; fitBox(); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
   } } : null;
-  const mv = moveFields(cell, p, { jump, fast }), dash = moveFields(cell, p, { dash: true, jump, fast });
+  const pending = t && !D.ready;
+  const mv = pending ? WAIT : moveFields(cell, p, { jump, fast }), dash = pending ? WAIT : moveFields(cell, p, { dash: true, jump, fast });
   const word = moveWord(p);
   const aim = [];
   for (const w of cx.a.attacks || []) if (w.range) aim.push({ what: w.name, short: w.name });
@@ -2164,7 +2232,7 @@ async function squareMenu(cx, cell) {
   const dw = doorsBeside(cell);
   const doorSlot = doors.length === 1 ? doors[0] : subOf('Door', 'Doors', 'Doors here', doors.map((m, i) => Object.assign(m, { what: dw[i].id.replace(/[-_]+/g, ' ') })));
   return { title: cell, slots: {
-    1: Object.assign({ role: 'Move here', what: word, short: mv.off ? 'Move' : p.checks.length ? word : p.cost + ' ft' }, mv),
+    1: Object.assign({ role: 'Move here', what: word, short: mv.off || pending ? 'Move' : p.checks.length ? word : p.cost + ' ft' }, mv),
     2: Object.assign({ role: 'Dash', what: 'Dash here', short: 'Dash' }, dash),
     3: subOf('Aim here', 'Aim here', 'Aim at ' + cell, aim.map(aimLeaf)),
     4: subOf('Tricks', 'Tricks', 'Tricks', doors.length ? [...tricks, ping] : tricks),
@@ -2576,7 +2644,8 @@ async function refresh() {
     for (const k of Object.keys(hoverCache)) delete hoverCache[k];
     hoverEpoch++; clearTimeout(hover.timer);
     if (hover.id) hover.timer = setTimeout(() => fetchHover(hover.id), 120);
-    if (pw && pw.isOpen && W && W.context !== wheelContext()) closeWheel(); // cached targets or actions changed
+    slotCache.looks.clear(); slotCache.grid = null;   // a pushed change invalidates every slot's cached details
+    if (pw && pw.isOpen && W && W.context !== wheelContext()) rebuildRing(); // targets or actions changed: the open ring is rebuilt on the new state
     ingest();
     render();
     drawResolving();
