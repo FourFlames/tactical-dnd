@@ -508,6 +508,8 @@
     <div class="sheet" id="sheet" hidden></div>
   </aside>
 </div>
+<script src="/lib/power.js"></script>
+<script src="/lib/rules.js"></script>
 <script>
 // Side panel: floats over the map; the open/closed choice is remembered (starts closed on narrow screens).
 (() => {
@@ -1789,10 +1791,8 @@ function whyNot(kind) {
   if (kind === 'reaction' && t.reaction) return 'reaction spent';
   return '';
 }
-// What a leaf costs. Attacks carry it (`as`); the table covers the spells the wheel offers by name.
-const BONUS_SPELLS = /^(spiritual weapon|healing word|mass healing word|misty step|shield of faith|hunter'?s mark|hex|sanctuary|expeditious retreat|divine favor|ensnaring strike|searing smite|thunderous smite|wrathful smite|branding smite|compelled duel|flame blade|shillelagh|magic stone|healing spirit|shadow blade|swift quiver|zephyr strike|hail of thorns)$/i;
-const REACTION_SPELLS = /^(shield|absorb elements|feather fall|hellish rebuke|counterspell|silvery barbs)$/i;
-const spellCost = (name) => (BONUS_SPELLS.test(name) ? 'bonusAny' : REACTION_SPELLS.test(name) ? 'reaction' : 'action');
+// What a leaf costs: attacks carry it (`as`); lib/rules.js holds the table for the spells the wheel offers by name.
+const spellCost = Rules.spellCost;
 const attackKind = (a) => { const k = a.as || (a.bonusAction || /^spiritual weapon$/i.test(a.name) ? 'bonus' : 'action'); return k === 'bonus' ? 'bonusAny' : k; };
 const spendOf = (kind) => (kind === 'bonusAny' ? 'bonus' : kind);
 const gated = (kind, s) => { const w = whyNot(kind); return w ? Object.assign({}, s, { off: true, odds: w, go: undefined }) : s; };
@@ -1924,38 +1924,21 @@ function approachLeaf(cx, T, appr, L, s) {
   return Object.assign({}, s, f, f.off ? {} : { odds: `${appr.p.cost} ft, then ${melee.name}`, info: `${melee.name} ${signed(melee.bonus)} to hit · ${melee.damage}` });
 }
 
-// ---- class defaults (Card 5b swaps this for the choice stored on the character) ----
-// Reads what the party view gives: the creature's notes ("Human Fighter 3 (Battle Master)... Spells: ...") and resources.
-// A spec: { what, short?, self?, cast?, res?, opt?, odds?, act?: [action, extra], needs?, approach?, text?(a, T) }.
-const ATTACK_CANTRIP = /fire bolt|sacred flame|eldritch blast|ray of frost|chill touch|shocking grasp|vicious mockery|produce flame|poison spray|toll the dead|thorn whip|acid splash|word of radiance|mind sliver|sword burst|primal savagery|infestation/i;
-function wheelDefaults(c) {
-  const notes = (c && c.notes) || '', res = (c && c.resources) || {};
+// ---- class defaults ----
+// A builder character brings a structured `wheel` block (lib/rules.js wheelFor); a hand-written encounter creature is read from its notes
+// ("Human Fighter 3 (Battle Master)... Spells: ...") and resources. Either way lib/rules.js wheelSpecs turns it into the slot specs.
+function wheelInput(c) {
+  const w = c && c.wheel;
+  if (w) return { cls: w.class, cantrips: w.cantrips.map((x) => ({ what: x.name, odds: 'cantrip' })), spells: w.spells.map((x) => ({ what: x.name, odds: Rules.ordinal(x.level) })), maneuvers: w.maneuvers };
+  const notes = (c && c.notes) || '';
   const cls = ((/\b(Barbarian|Bard|Cleric|Druid|Fighter|Monk|Paladin|Ranger|Rogue|Sorcerer|Warlock|Wizard)\b/i.exec(notes) || [])[1] || '').toLowerCase();
   const names = (re) => { const m = re.exec(notes); return m ? m[1].split(/,\s*(?![^()]*\))/).map((raw) => ({ what: raw.replace(/\s*\(.*$/, '').trim(), odds: (/\((\d+(?:st|nd|rd|th))/.exec(raw) || [])[1] || '', raw })).filter((x) => x.what) : []; };
   const cantrips = names(/Cantrips?:\s*(.+?)\.(?:\s|$)/i);
   for (const m of notes.matchAll(/([A-Z][A-Za-z' ]+?) \(cantrip\)/g)) cantrips.push({ what: m[1].trim(), odds: 'cantrip' });
-  const spells = names(/Spells?[^:.]*:\s*(.+?)\.(?:\s|$)/i);
-  const main = cantrips.find((x) => ATTACK_CANTRIP.test(x.what)) || cantrips[0];
-  const cast = (x) => ({ what: x.what, odds: x.odds, cast: true });
-  const book = { what: 'Spells', items: [...cantrips.filter((x) => x !== main).map(cast), ...spells.map(cast)] };
-  const pool = [...(main ? [Object.assign(cast(main), { foe: true })] : []), ...book.items];   // what the Signature slot can swap between
-  const caster = { pool, signature: main ? Object.assign(cast(main), { odds: 'cantrip', foe: true }) : { what: 'Approach & strike', short: 'Approach', approach: true }, kit: book.items.length ? book : null };
-  const approach = { what: 'Approach & strike', short: 'Approach', approach: true };
-  const self = (what, o = {}) => Object.assign({ what, self: true }, o);
   const maneuvers = (/Maneuvers?:\s*(.+?)\.(?:\s|$)/i.exec(notes) || [, ''])[1].split(/,\s*(?![^()]*\))/).map((x) => x.replace(/\s*\(.*$/, '').trim()).filter(Boolean);
-  switch (cls) {
-    case 'fighter': return { signature: approach, kit: { what: 'Fighter', items: [self('Second Wind', { res: 'secondWind', odds: '1d10 + level', cost: 'bonusAny' }), self('Action Surge', { res: 'actionSurge', opt: true }),
-      ...(maneuvers.length ? [{ what: 'Maneuvers', items: maneuvers.map((m) => ({ what: m })) }] : [])] } };
-    case 'rogue': return { signature: self('Hide', { short: 'Hide', act: ['hide', { as: 'bonus' }], needs: 'bonus', odds: 'bonus action' }),
-      kit: { what: 'Cunning Action', items: [self('Dash', { act: ['dash', { as: 'bonus' }], needs: 'bonus' }), self('Disengage', { act: ['disengage', { as: 'bonus' }], needs: 'bonus' }), self('Hide', { act: ['hide', { as: 'bonus' }], needs: 'bonus' })] } };
-    case 'barbarian': return { signature: self('Rage', { res: 'rage', opt: true, cost: 'bonusAny' }), kit: { what: 'Reckless', items: [self('Reckless Attack')] } };
-    case 'monk': return { signature: { what: 'Flurry of Blows', odds: 'ki', cost: 'bonusAny' }, kit: { what: 'Ki', items: [self('Patient Defense', { cost: 'bonusAny' }), self('Step of the Wind', { cost: 'bonusAny' }), { what: 'Stunning Strike' }] } };
-    case 'paladin': return { pool: book.items, signature: approach, kit: book.items.length ? book : null };
-    case 'ranger': return { pool: [{ what: "Hunter's Mark", cast: true, foe: true }, ...book.items], signature: { what: "Hunter's Mark", cast: true, foe: true }, kit: book.items.length ? book : null };
-    case 'cleric': case 'wizard': case 'sorcerer': case 'warlock': case 'bard': case 'druid': return caster;
-    default: return { signature: approach, kit: null };
-  }
+  return { cls, cantrips, spells: names(/Spells?[^:.]*:\s*(.+?)\.(?:\s|$)/i), maneuvers };
 }
+const wheelDefaults = (c) => Rules.wheelSpecs(wheelInput(c));
 // A spec for this target, as a wheel leaf. T is a creature view, a { cell }, or null (yourself).
 function leafOf(cx, spec, T, appr, L, role) {
   const s = { role, what: spec.what, short: spec.short, self: spec.self, odds: spec.odds };
@@ -1979,13 +1962,25 @@ function leafOf(cx, spec, T, appr, L, role) {
   return cost ? gated(cost, leaf) : leaf;
 }
 const leavesOf = (cx, items, T, appr, L) => items.map((i) => leafOf(cx, i, T, appr, L)).filter(Boolean);
-// Right-click alternates are remembered per character (Card 5b moves this onto the sheet): { strike, sig, kit } → a name.
+// Right-click alternates are remembered per character: { strike, sig, kit } → a name. A builder character keeps them on the sheet
+// (POST /api/wheel; the state carries them back in creature.wheel.slots); localStorage is the cache for hand-written creatures
+// and for a save that didn't go through.
 const slotPref = {
-  get(id, key) { try { return (JSON.parse(localStorage.getItem('wheelSlots.' + id)) || {})[key]; } catch { return undefined; } },
-  set(id, key, v) { try { const o = JSON.parse(localStorage.getItem('wheelSlots.' + id)) || {}; o[key] = v; localStorage.setItem('wheelSlots.' + id, JSON.stringify(o)); } catch { /* private window: the swap just won't stick */ } },
+  local(id) { try { return JSON.parse(localStorage.getItem('wheelSlots.' + id)) || {}; } catch { return {}; } },
+  put(id, o) { try { if (Object.keys(o).length) localStorage.setItem('wheelSlots.' + id, JSON.stringify(o)); else localStorage.removeItem('wheelSlots.' + id); } catch { /* private window: the swap just won't stick */ } },
+  sheet(id) { const c = state && state.creatures && state.creatures[id]; return c && c.wheel; },
+  get(id, key) { const w = this.sheet(id); return (w && w.slots[key]) || this.local(id)[key]; },
+  set(id, key, v) {
+    const w = this.sheet(id);
+    if (!w) { this.put(id, Object.assign(this.local(id), { [key]: v })); return; }
+    w.slots[key] = v;   // shown now; the server keeps it on the character
+    fetch('/api/wheel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN, id, slot: key, name: v }) })
+      .then((r) => { if (!r.ok) throw new Error(); const o = this.local(id); delete o[key]; this.put(id, o); })
+      .catch(() => this.put(id, Object.assign(this.local(id), { [key]: v })));
+  },
 };
 const BENIGN = /cure|heal|bless|shield of faith|aid|restoration|sanctuary|protection|armor|longstrider|expeditious|guidance|resistance|spare the dying|goodberry|detect|identify|comprehend|disguise|feather|jump|light$/i;
-const flatSpecs = (items) => (items || []).flatMap((i) => (i.items ? flatSpecs(i.items) : [i]));
+const flatSpecs = Rules.flatSpecs;
 function sigKit(cx, T, appr, L) {
   const d = wheelDefaults(cx.a), out = {}, foe = T && T.id && T.side === 'enemy';
   // A spell the character also has as an engine attack (Spiritual Weapon, Fire Bolt) runs that attack on a creature, gated by its own cost.

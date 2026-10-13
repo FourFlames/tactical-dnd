@@ -229,6 +229,15 @@ function charApi(req, res, msg) {
   Chars.save(c);
   return json(res, 200, Object.assign(Chars.view(c), { result: r }));
 }
+// The wheel's structured block for each builder-made creature in view (read fresh from the character, so builder edits show without a respawn).
+function wheelsFor(creatures) {
+  const out = {};
+  for (const [id, c] of Object.entries(creatures || {})) {
+    if (!c.char || c.side !== 'party') continue;
+    try { const ch = Chars.load(c.char); if (ch) out[id] = Chars.wheelOf(ch); } catch { /* a broken character just falls back to the notes */ }
+  }
+  return out;
+}
 const page = (res, name) => send(res, 200, 'text/html; charset=utf-8', fs.readFileSync(path.join(__dirname, name)));
 
 const server = http.createServer((req, res) => {
@@ -312,7 +321,10 @@ const server = http.createServer((req, res) => {
     try {
       const s = C.loadState();
       if (!s) return json(res, 200, { empty: true });
-      return json(res, 200, C.view(s, wantDm ? 'dm' : 'player'));
+      const v = C.view(s, wantDm ? 'dm' : 'player');
+      const wheels = wheelsFor(v.creatures);
+      for (const id of Object.keys(wheels)) v.creatures[id].wheel = wheels[id];
+      return json(res, 200, v);
     } catch (e) {
       return json(res, 500, { error: e.message });
     }
@@ -344,7 +356,25 @@ const server = http.createServer((req, res) => {
     // The reaction belongs to the whole round: in combat each seated creature's is shown, spent or not, even off-turn.
     const reactions = {};
     if (s0 && s0.turnOrder && s0.turnOrder.length) for (const id of seat.creatures) if (s0.creatures[id]) reactions[id] = !!s0.creatures[id].reactionUsed;
-    return json(res, 200, { player: seat.player, creatures: seat.creatures, intents, offers, reactions, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
+    const wheels = wheelsFor(Object.fromEntries(seat.creatures.filter((id) => s0 && s0.creatures[id]).map((id) => [id, s0.creatures[id]])));
+    return json(res, 200, { player: seat.player, creatures: seat.creatures, wheels, intents, offers, reactions, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
+  }
+  // A seated player's slot choice for the wheel, stored on their character: { token, id: creature id, slot: strike|sig|kit, name ('' = class default) }.
+  if (url.pathname === '/api/wheel' && req.method === 'POST') {
+    return readBody(req, 1024, (body) => {
+      let msg; try { msg = JSON.parse(body); } catch { return json(res, 400, { error: 'Bad request.' }); }
+      const seat = seatOf(req, msg.token);
+      if (!seat || seat.locked) return json(res, 403, { error: 'This link is not a seat at the table.' });
+      const s = C.loadState();
+      const cr = s && seat.creatures.includes(msg.id) && s.creatures[msg.id];
+      const c = cr && cr.char && Chars.load(cr.char);
+      if (!c) return json(res, 404, { error: 'That creature has no builder character.' });
+      if (seat.player !== 'local' && c.owner !== seat.player) return json(res, 403, { error: 'Not your character.' });
+      const r = Chars.setWheel(c, String(msg.slot || ''), String(msg.name || '').slice(0, 60));
+      if (r.error) return json(res, 400, r);
+      Chars.save(c);
+      return json(res, 200, { ok: true, wheel: Chars.wheelOf(c) });
+    });
   }
   // Route preview for click-to-move: the path the engine would take, its cost, the rolls on the
   // way (with their DCs) and any opportunity attacks. Read-only.
