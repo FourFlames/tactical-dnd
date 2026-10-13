@@ -411,6 +411,23 @@ try {
   c2 = Chars.load(ch.id);
   Chars.answerSuggestion(tester.name, c2, c2.suggestions[1].id, 'accept'); Chars.save(c2);
   expect('a DM-written homebrew is approved on accept and applies', c2.build.homebrew[1].status === 'approved' && Chars.derive(c2).creature.ac === 19, `${c2.build.homebrew[1].status} ac ${Chars.derive(c2).creature.ac}`);
+
+  // The action wheel reads the character: a structured block, and slot choices stored on the sheet.
+  c2 = Chars.load(ch.id);
+  const w0 = Chars.wheelOf(c2);
+  expect('the wheel block carries class, level, attacks, features and cost-tagged spells', w0.class === 'fighter' && w0.level === 3 && w0.attacks.length > 0 && w0.features.some((f) => f.name === 'Second Wind' && f.cost === 'bonusAny') && Array.isArray(w0.spells) && Chars.view(c2).wheel.class === 'fighter', JSON.stringify(w0).slice(0, 200));
+  const wiz = Chars.create(tester.name, 'Wheel Wiz', 5); madeChars.push(wiz.id);
+  wiz.build = Chars.mergeBuild(wiz.build, R.recommend(Object.assign(wiz.build, { class: 'wizard' }), { config: Chars.config() }));
+  const ww = Chars.wheelOf(wiz);
+  expect('a caster lists spells with their casting cost (Shield is a reaction)', ww.spells.some((x) => x.name === 'Shield' && x.cost === 'reaction') && ww.cantrips.length > 0 && R.spellCost('Healing Word') === 'bonusAny', JSON.stringify(ww.spells.map((x) => x.name + ':' + x.cost)));
+  const alt = ww.options.sig.find((x) => x !== ww.defaults.sig);
+  expect('a slot choice is stored on the character', !Chars.setWheel(wiz, 'sig', alt).error && wiz.build.wheel.sig === alt, JSON.stringify(wiz.build.wheel));
+  Chars.save(wiz);
+  expect('...and survives a save, showing in the wheel block', Chars.wheelOf(Chars.load(wiz.id)).slots.sig === alt, '');
+  expect('a choice the character does not have is refused', !!Chars.setWheel(wiz, 'sig', 'Wish').error && !!Chars.setWheel(wiz, 'bogus', alt).error, '');
+  expect('an empty name clears the slot back to the default', !Chars.setWheel(wiz, 'sig', '').error && !wiz.build.wheel, JSON.stringify(wiz.build.wheel));
+  wiz.build.wheel = { sig: 'Wish', kit: ww.options.kit[0] };
+  expect('a stale saved choice is dropped from the block', !('sig' in Chars.wheelOf(wiz).slots) && Chars.wheelOf(wiz).slots.kit === ww.options.kit[0], '');
   run('load', 'rope-bridge');
   C.saveSeats({ 'test-player-x': { token: tester.code, creatures: [] } });
   r = run('char', ch.id, 'spawn', 'G8');
@@ -498,6 +515,36 @@ try {
   edit((s) => { s.creatures.rook.pos = 'H4'; s.creatures.gob1.pos = 'H3'; s.turnOrder = ['rook', 'gob1']; s.turnIdx = 0; });
   r = run('move', 'rook', 'H6', '--force');
   expect('--force moves provoke nothing', r.ok && !/opportunity/i.test(r.out) && !C.loadState().creatures.gob1.reactionUsed, r.out);
+
+  // Tracks: soft ground keeps prints; Survival reads them by age and ground; results can be recorded as facts.
+  run('load', 'rope-bridge');
+  run('terrain', 'D3:L4', 'add', 'tracks');
+  run('move', 'gob1', 'L4');
+  expect('a creature crossing tagged ground leaves tracks (who, when, where from)', ((C.loadState().trails || {}).L4 || [])[0] && C.loadState().trails.L4[0].who === 'gob1' && C.loadState().trails.L4[0].from, JSON.stringify(C.loadState().trails));
+  expect('bare stone keeps none', !C.loadState().trails.H8 && !C.loadState().trails.K9, JSON.stringify(Object.keys(C.loadState().trails)));
+  r = run('track', 'rook', '4', '--total', '15', '--note');
+  expect('track: a fresh trail reads as size, kind, age and heading, never a name', r.ok && /^\s+a (small|medium) humanoid passed this way, fresh, heading/.test(r.out.split('\n')[1]) && !/Goblin/.test(r.out.split('\n')[1]), r.out);
+  expect('...and --note records it for the inspect card', (C.loadState().known.L4 || []).some((f) => /^Tracks: .*fresh/.test(f)), JSON.stringify(C.loadState().known));
+  r = run('track', 'rook', '4', '--total', '11');
+  expect('track: a low roll on the same ground reads nothing', r.ok && /nothing readable/.test(r.out) && /too faint/.test(r.out), r.out);
+  r = run('track', 'rook', '4', '--total', '12');
+  expect('track: a middling roll gets the trail but not the kind', r.ok && /something passed this way/.test(r.out), r.out);
+  edit((s) => { s.mtime = 25; });
+  r = run('track', 'rook', '4', '--total', '12');
+  expect('track: age raises the DC', /nothing readable/.test(r.out), r.out);
+  r = run('track', 'rook', '4', '--total', '18');
+  expect('...and is reported', /a while old/.test(r.out), r.out);
+  edit((s) => { s.mtime = 70; });
+  r = run('track', 'rook', '4', '--total', '30');
+  expect('old tracks fade away entirely', /nothing readable/.test(r.out) && !/too faint/.test(r.out), r.out);
+  edit((s) => { s.creatures.gob1.pos = 'H3'; s.mtime = 0; s.trails = {}; });
+  run('terrain', 'D3:L4', 'remove', 'tracks');
+  run('move', 'gob1', 'L4');
+  expect('without tagged or soft terrain nothing is recorded', !Object.keys(C.loadState().trails || {}).length, JSON.stringify(C.loadState().trails));
+  run('terrain', 'D3:L4', 'add', 'wet');
+  edit((s) => { s.creatures.gob1.pos = 'L2'; });
+  run('move', 'gob1', 'L3');
+  expect('wet stone takes prints at a higher DC', ((C.loadState().trails || {}).L3 || [])[0] && C.loadState().trails.L3[0].base === 14, JSON.stringify(C.loadState().trails));
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }

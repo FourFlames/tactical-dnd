@@ -606,7 +606,12 @@ cmd('door', 'door <wall-id> open|close|lock|unlock [--by <id>] [--force]   open 
   w.open = pos[1] === 'open';
   if (w.open) w.hidden = false;
   const t = `The door ${pos[0]} (${w.from}-${w.to}) ${w.open ? 'swings open' : 'shuts'}.`;
-  C.appendLog(s, 'terrain', t, { door: pos[0], cell: w.from, open: w.open, by: typeof flags.by === 'string' ? flags.by : null }); console.log(t); return s;
+  // What the party makes of a door an NPC works: seen if they can see it, otherwise heard as a door, with a bearing.
+  const npc = by && by.side !== 'party';
+  C.appendLog(s, 'terrain', t, { door: pos[0], cell: w.from, open: w.open, by: typeof flags.by === 'string' ? flags.by : null, swing: true, dmOnly: npc || undefined });
+  if (npc) Minds.partyNarrate(s, { at: w.from, loud: 40, type: 'terrain', src: Minds.partySees(s, by) ? by.id : undefined,
+    seen: Minds.partySees(s, by) ? `${by.name} ${w.open ? 'opens' : 'shuts'} a door.` : `A door ${w.open ? 'swings open' : 'shuts'}.`, heard: `a door ${w.open ? 'creaking open' : 'banging shut'}` });
+  console.log(t); return s;
 });
 
 cmd('spawn', `spawn '<json>'                     add a creature, e.g. spawn '{"id":"wolf1","name":"Wolf","side":"enemy","pos":"B2","hp":11,"ac":13,"speed":40,"attacks":[{"name":"Bite","bonus":4,"damage":"2d4+2","type":"piercing"}]}'`, (s, { pos }) => {
@@ -635,9 +640,29 @@ cmd('remove', 'remove <id>                        take a creature off the map (f
   const t = `${c.name} leaves the battlefield.`; C.appendLog(s, 'action', t); console.log(t); return s;
 });
 
-cmd('hide', 'hide <id> | reveal <id>             toggle hidden (hidden enemies never appear on the player view)', (s, { pos }) => {
-  const c = who(need(s), pos[0]); c.hidden = true;
-  const t = `${c.name} is hidden.`; C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t); console.log(t); return s;
+cmd('hide', 'hide <id> [--total N | --auto] [--adv|--dis] | reveal <id>   plain: just set hidden (never shown on the player view). With a Stealth total (given, or rolled by --auto): the Hide action, judged against every enemy who could see them now (line of sight, light, cover, distance, passive Perception); refused with nothing to hide behind', (s, { pos, flags }) => {
+  const c = who(need(s), pos[0]);
+  if (flags.total === undefined && !flags.auto) { c.hidden = true;
+    const t = `${c.name} is hidden.`; C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t); console.log(t); return s; }
+  if (!c.pos || c.hp <= 0) fail(`${c.name} can't hide.`);
+  let total = flags.total !== undefined ? Number(flags.total) : null, detail = '';
+  if (total === null || !Number.isFinite(total)) {
+    const { bonus } = abilityBonus(c, 'stealth');
+    const r = C.d20(advMode(flags) || (c.noisy ? 'dis' : null));
+    total = r.nat + bonus; detail = `${r.detail}${sign(bonus)} = `;
+  }
+  const res = Minds.hideCheck(s, pos[0], total);
+  const table = res.rows.map((r) => `  ${r.notices ? 'NOTICES ' : r.sighted ? 'misses  ' : 'no view '}${r.name} (${r.id}): ${r.why}`);
+  if (res.refused) {
+    const t = `${c.name} can't hide (Stealth ${detail}${total}): ${res.refused}`;
+    C.appendLog(s, 'secret', t, { id: pos[0], hide: { total, refused: true } }); console.log([t, ...table].join('\n')); return s;
+  }
+  const seenBy = res.rows.filter((r) => r.notices).map((r) => r.id);
+  c.hidden = res.hidden;
+  if (res.hidden) c.stealth = total; else delete c.stealth;
+  const t = res.hidden ? `${c.name} slips out of sight (Stealth ${detail}${total}).` : `${c.name} tries to hide (Stealth ${detail}${total}) but is seen.`;
+  C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t, { id: pos[0], hide: { total, hidden: res.hidden, noticedBy: seenBy } });
+  console.log([t, ...(table.length ? table : ['  nobody could see them anyway'])].join('\n')); return s;
 });
 CMDS.reveal = (s, { pos }) => {
   const c = who(need(s), pos[0]); c.hidden = false;
@@ -1232,16 +1257,35 @@ cmd('rate', 'rate \'<homebrew json>\' [--level N]   price a homebrew feat/item/t
 const CAP = { entries: [], done: 0, base: null, actor: null };
 const rawAppend = C.appendLog;
 C.appendLog = (s, type, text, data) => {
+  let heard = null;
+  if (s && type === 'move' && data && data.id && data.path) C.recordTracks(s, data.id, data.path);
   if (s && Minds.active(s) && ['move', 'action', 'roll', 'condition'].includes(type)) {
     const id = (data && data.id) || CAP.actor;
     const c = id && s.creatures[id];
     if (c && c.side !== 'party') {
       const path = data && data.path ? data.path : [c.pos];
-      if (!Minds.partySeesPath(s, path)) { text = `[unseen] ${text}`; type = 'secret'; }
+      if (!Minds.partySeesPath(s, path)) {
+        text = `[unseen] ${text}`; type = 'secret';
+        // Footsteps the party can hear, once per creature per round (a hidden mover is silent to them).
+        const stamp = `${s.round || 0}.${s.mtime || 0}`;
+        if (data && data.path && !c.hidden && (s.heardSteps || {})[id] !== stamp) heard = { stamp, id, at: c.pos, loud: c.noisy ? 60 : 30, heard: c.noisy ? 'heavy, clinking footsteps' : 'footsteps' };
+      }
+    }
+  }
+  // A fight the party can't see is heard (the clash of steel, a bowstring), not read about.
+  if (s && type === 'attack' && data && data.attacker && s.creatures[data.attacker] && s.creatures[data.attacker].side !== 'party') {
+    const a = s.creatures[data.attacker], tg = s.creatures[data.target];
+    if (a.pos && !(tg && tg.side === 'party') && !Minds.partySeesPath(s, [a.pos, tg && tg.pos].filter(Boolean))) {
+      data = Object.assign({}, data, { dmOnly: true });
+      heard = data.ranged ? { at: a.pos, loud: 20, heard: 'the snap of a bowstring' } : { at: (tg || a).pos, loud: 90, heard: 'the clash of a fight' };
     }
   }
   const e = rawAppend(s, type, text, data);
   CAP.entries.push(e);
+  if (heard) {
+    if (heard.stamp) (s.heardSteps = s.heardSteps || {})[heard.id] = heard.stamp;
+    Minds.partyNarrate(s, { at: heard.at, loud: heard.loud, heard: heard.heard });
+  }
   return e;
 };
 let HUSH = 0; // >0: perception chatter is dropped (brief output)
@@ -1682,7 +1726,10 @@ cmd('noise','noise <cell> "<what it sounds like>" [--loud <ft>] [--by <id>] [--s
   const loud = Number(flags.loud) || 60;
   const by = typeof flags.by === 'string' ? flags.by : null;
   if (by) who(s, by);
-  C.appendLog(s, flags.secret ? 'secret' : 'action', `A sound at ${cell}: ${desc}.`, { noise: true, cell, loud, desc, by, sig: flags.sig !== undefined ? Number(flags.sig) : 2 });
+  // The world event (NPCs hear it) is the DM's; the party gets its own line: seen or heard, and from where as far as they can tell.
+  const nz = { noise: true, cell, loud, desc, by, sig: flags.sig !== undefined ? Number(flags.sig) : 2 };
+  C.appendLog(s, flags.secret ? 'secret' : 'action', `A sound at ${cell}: ${desc}.`, flags.secret ? nz : Object.assign(nz, { dmOnly: true }));
+  if (!flags.secret) Minds.partyNarrate(s, { at: cell, loud, actor: by && s.creatures[by].side === 'party' ? by : undefined, seen: `${desc.charAt(0).toUpperCase()}${desc.slice(1)}.`, heard: desc });
   console.log(`Noise at ${cell} (${loud} ft): ${desc}.`);
   return s;
 });
@@ -1698,6 +1745,31 @@ cmd('sneak', 'sneak <id> [--total N] [--adv|--dis]   hide with a Stealth roll: N
   c.hidden = true; c.stealth = total;
   const t = `${c.name} slips into hiding (Stealth ${detail}${total}).`;
   C.appendLog(s, c.side === 'party' ? 'action' : 'secret', t, { id: pos[0] }); console.log(t); return s;
+});
+
+cmd('track', 'track <id> [cell|radius] [--total N] [--adv|--dis] [--note]   Survival to read tracks on soft ground (mud, dust, snow, sand, blood, guano, ash, wet stone, or cells tagged "tracks") within 30 ft and in sight: how many, what size and kind (never names), how old, which way. DC from the ground and the age. --note records each trail with describe', (s, { pos, flags }) => {
+  const c = who(need(s), pos[0]);
+  const cells = C.trackCells(s, c, pos[1]);
+  if (!cells.length) { console.log(`${c.name} finds no tracks to read there (nothing in sight that holds a print).`); return null; }
+  let total = flags.total !== undefined ? Number(flags.total) : null, detail = '';
+  if (total === null || !Number.isFinite(total)) {
+    const { bonus } = abilityBonus(c, 'survival');
+    const r = C.d20(advMode(flags));
+    total = r.nat + bonus; detail = `${r.detail}${sign(bonus)} = `;
+  }
+  const res = C.readTracks(s, c, cells, total);
+  const lines = res.trails.map((x) => `  ${x.text} (last seen at ${x.cell}) [DM: ${x.who}]`);
+  if (res.unread) lines.push(`  ${res.unread} mark${res.unread > 1 ? 's' : ''} too faint or smudged to make anything of`);
+  if (!lines.length) lines.push('  nothing but the ground');
+  if (flags.note) {
+    s.known = s.known || {};
+    for (const x of res.trails) {
+      const fact = `Tracks: ${x.text}.`;
+      if (!(s.known[x.cell] || []).includes(fact)) s.known[x.cell] = [...(s.known[x.cell] || []), fact];
+    }
+  }
+  const t = `${c.name} studies the ground (Survival ${detail}${total}): ${res.trails.length ? res.trails.length + ' trail' + (res.trails.length > 1 ? 's' : '') : 'nothing readable'}.`;
+  C.appendLog(s, 'action', t, { id: pos[0], track: { total } }); console.log([t, ...lines].join('\n')); return s;
 });
 
 cmd('ext', 'ext                            list approved library commands in ext/', () => {

@@ -50,6 +50,8 @@ Plain actions map directly:
 
 Use `range a b` whenever you're unsure about distance, line of sight, or cover. It's free.
 
+Hiding and tracking are rolled by the engine, not guessed: `hide <id> --auto` (or `--total N` for a bare Stealth total) compares against every enemy who could see them and prints who would notice; `track <id> [cell|radius]` reads prints with Survival (see docs/stealth.md).
+
 Some maps have height (`show` prints creatures as `N5@10ft`) and walls along grid lines (listed under the map). The engine handles both: distance and reach count height, climbing ledges costs double, stairs don't, line of sight and cover are traced in 3D, and falls deal 1d6 per 10 ft. High ground gives no bonus to hit, only better angles past cover. If a player wants to jump or climb fast, use the flags above; anything stranger (swinging from a rope, catching a ledge) is a ruling.
 
 Movement is pathed: the engine routes around walls and enemies and charges double for difficult terrain. If it says the creature can't make it, tell the player how far they *can* get, or suggest a dash.

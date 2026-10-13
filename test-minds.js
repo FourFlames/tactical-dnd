@@ -524,6 +524,53 @@ try {
   r = run('next', '--auto');
   expect('next --auto stops at a mind that needs a Claude model', r.ok && /Sergeant Hask needs a Claude mind \(sonnet\)/.test(r.out) && S().turnOrder[S().turnIdx] === 'hask', r.out);
 
+  // ---------- Hide: a Stealth total judged against everyone who could see the hider ----------
+  run('load', 'tollhouse');
+  setup((s) => { s.creatures.wren.pos = 'P4'; }); // bright room, Hask a few squares off, nothing to hide behind
+  r = run('hide', 'wren', '--total', '25');
+  expect('hide: refused with the reason when everyone who can see you sees you plainly', r.ok && /can't hide.*nothing to hide behind/.test(r.out) && /NOTICES Sergeant Hask/.test(r.out) && !S().creatures.wren.hidden, r.out);
+  run('load', 'tollhouse');
+  setup((s) => { s.creatures.wren.pos = 'D12'; }); // behind the hedge, Bram 15 ft away looking south
+  r = run('hide', 'wren', '--total', '30');
+  expect('hide: a high total behind cover hides, and the table says who would not notice', r.ok && S().creatures.wren.hidden === true && S().creatures.wren.stealth === 30 && /misses +Bram/.test(r.out) && /no view +Tilly/.test(r.out), r.out);
+  r = run('hide', 'wren', '--total', '3');
+  expect('hide: a low total is seen by Bram (passive beats it), and he gets the sighting', r.ok && S().creatures.wren.hidden === false && /NOTICES +Bram/.test(r.out) && Object.values(M('bram').tracks).some((t) => t.cell === 'D12'), r.out);
+  r = run('hide', 'wren', '--auto');
+  expect('hide --auto rolls Stealth and judges it', r.ok && /Stealth \[\d+\]\+7 = \d+/.test(r.out), r.out);
+  r = run('hide', 'rook');
+  expect('plain hide still just toggles hidden', r.ok && S().creatures.rook.hidden === true && /is hidden/.test(r.out), r.out);
+
+  // ---------- Sounds the party hears say who heard them, and where from ----------
+  run('load', 'tollhouse');
+  r = run('noise', 'D12', 'a thrown stone', '--by', 'wren');
+  let sound = C.readLog(10).filter((e) => e.type === 'narration' && e.data && e.data.perceivers).pop();
+  expect('noise: the thrower sees their own stone land, at its square', sound && sound.data.sense === 'see' && sound.data.at === 'D12' && sound.data.perceivers.includes('wren') && /thrown stone/i.test(sound.text), JSON.stringify(sound));
+  run('load', 'tollhouse');
+  r = run('noise', 'G5', 'a crash', '--loud', '200');
+  sound = C.readLog(10).filter((e) => e.type === 'narration' && e.data && e.data.perceivers).pop();
+  expect('noise: out of sight it is heard with a bearing and a distance word, no square', sound && sound.data.sense === 'hear' && /^to the /.test(sound.data.dir) && sound.data.dist && !sound.data.at && !/G5/.test(sound.text) && sound.data.perceivers.length, JSON.stringify(sound));
+  const pubSound = C.logFor(S(), 'player', {}).filter((e) => e.data && e.data.sense === 'hear').pop();
+  expect('...the player view keeps the perception data but not the raw noise record', pubSound && pubSound.data.perceivers.length && !C.logFor(S(), 'player', {}).some((e) => /A sound at/.test(e.text)), JSON.stringify(pubSound));
+  const n0 = C.readLog(50).length;
+  run('noise', 'P4', 'a far clatter', '--loud', '20');
+  expect('noise: nothing the party can neither see nor hear reaches the chronicle', !C.readLog(50).slice(n0 - 1).some((e) => e.type === 'narration'), JSON.stringify(C.readLog(3)));
+  r = run('door', 'front', 'open', '--by', 'bram');
+  sound = C.readLog(15).filter((e) => e.data && e.data.perceivers).pop();
+  expect('door: an NPC opening it out of sight is a sound with a bearing, not a name', sound && !/Bram/.test(sound.text) && /door/.test(sound.text) && sound.data.sense === 'hear' && sound.data.dir, JSON.stringify(sound));
+  expect('...and the party never reads "The door front swings open" for it', !C.logFor(S(), 'player', {}).some((e) => /swings open/.test(e.text)), '');
+  run('load', 'tollhouse');
+  setup((s) => { s.minds.bram.alarm = { level: 'routine', intensity: 0, causes: [] }; });
+  run('place', 'wren', 'G13'); // in Bram's torchlight, in plain view of the party too
+  run('tick');
+  const cue = C.readLog(30).filter((e) => e.type === 'narration' && e.data && e.data.id === 'bram').pop();
+  expect('a reaction the party can see names who saw it and where', !cue || (cue.data.sense === 'see' && cue.data.perceivers.length && cue.data.at === S().creatures.bram.pos), JSON.stringify(cue));
+
+  run('load', 'tollhouse');
+  run('move', 'bram', 'F12');
+  run('move', 'bram', 'G12');
+  const steps = C.readLog(30).filter((e) => e.data && e.data.perceivers && /footsteps/.test(e.text));
+  expect('footsteps out of sight are heard with a bearing, once per creature per round', steps.length === 1 && steps[0].data.sense === 'hear' && !/Bram/.test(steps[0].text), JSON.stringify(steps));
+
   // ---------- encounters without minds are untouched ----------
   r = run('load', 'rope-bridge');
   expect('old encounters have no minds and no mind output', r.ok && !S().minds && !/minds/.test(r.out), r.out);
