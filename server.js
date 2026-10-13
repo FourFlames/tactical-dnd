@@ -58,7 +58,10 @@ async function answerOffer(res, seat, msg) {
   if (!o) return json(res, 404, { error: 'That offer is gone.' });
   if (o.answer) return json(res, 409, { error: 'Already answered.' });
   let text = msg.accept ? 'Yes, do it.' : 'No, never mind.';
-  if (msg.accept && o.ruling) {
+  if (o.oa) { // an opportunity attack: yes rolls it as a reaction, no drops it
+    const r = await runEngine(msg.accept ? ['oa', o.oa] : ['oa', o.oa, '--drop']);
+    if (msg.accept) text = r.ok ? 'Yes. ' + r.out.split('\n').slice(-1)[0] + ' (DM: narrate it.)' : 'Yes, but it did not happen: ' + r.out.split('\n')[0];
+  } else if (msg.accept && o.ruling) {
     const rl = o.ruling;
     const r = await runEngine(['ruling', o.creature, rl.skill, String(rl.dc), '--about', rl.about, '--success', rl.success, '--fail', rl.fail]);
     if (!r.ok) return json(res, 400, { error: r.out });
@@ -335,9 +338,13 @@ const server = http.createServer((req, res) => {
     const s0 = C.loadState();
     const intents = C.readIntents().filter((e) => e.player === seat.player && ((e.kind !== 'auto' && e.kind !== 'answer') || e.replies.length)).slice(-8)
       .map(({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }) => ({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }));
-    const offers = C.readOffers().filter((o) => o.player === seat.player && !o.answer).slice(-3)
+    const live = new Set(((s0 && s0.pendingOA) || []).map((p) => p.id)); // an opportunity attack that lapsed takes its offer with it
+    const offers = C.readOffers().filter((o) => o.player === seat.player && !o.answer && (!o.oa || live.has(o.oa))).slice(-3)
       .map(({ offer, t, creature, text, ruling }) => ({ offer, t, creature, text, ruling: ruling ? { skill: ruling.skill, dc: ruling.dc } : null }));
-    return json(res, 200, { player: seat.player, creatures: seat.creatures, intents, offers, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
+    // The reaction belongs to the whole round: in combat each seated creature's is shown, spent or not, even off-turn.
+    const reactions = {};
+    if (s0 && s0.turnOrder && s0.turnOrder.length) for (const id of seat.creatures) if (s0.creatures[id]) reactions[id] = !!s0.creatures[id].reactionUsed;
+    return json(res, 200, { player: seat.player, creatures: seat.creatures, intents, offers, reactions, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
   }
   // Route preview for click-to-move: the path the engine would take, its cost, the rolls on the
   // way (with their DCs) and any opportunity attacks. Read-only.

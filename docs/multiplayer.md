@@ -83,6 +83,16 @@ one wakes `listen`/`wait`, and the DM gets the whole pile as one package.
 player with the DC their character could judge. "Roll it" makes the roll on the spot and wakes
 the DM with the result; "Never mind" just tells the DM.
 
+**Opportunity attacks** use the same dialog, filed by the engine itself. When a non-party creature's
+`move` leaves the reach of a player-controlled creature (a seated one, or the local player's) that
+still has its reaction, the engine records `s.pendingOA` and offers "X is leaving your reach.
+Opportunity attack with your Longsword?" (`offer.oa` holds the pending id). "Do it" makes the server
+run `oa <id>`: the attack is rolled as a reaction against the target as if it still stood where it
+left reach, and a target that drops is left on that square. "Never mind" runs `oa <id> --drop`. An
+unanswered one lapses two turns later or at the end of the round (the offer disappears with it); the
+reaction pip in the HUD (`reactions` in `/api/seat`) shows spent/unspent even off-turn.
+Creatures the DM controls get no offer: the move prints the `oa <id>` to run.
+
 **Dice and hits:** every attack, check, save, ruling, damage and heal in the log carries its
 numbers in `data`, and the viewer plays them: the d20 lands, the shot flies (or the attacker
 lunges), the target flashes and the damage rises off it. Projectile looks are keyed by damage

@@ -245,7 +245,8 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
     landing = lower;
   }
   // opportunity attacks: leaving a hostile's reach, measured in 3D along the route taken
-  const provokers = flags.force ? [] : C.provokersAlong(s, id, walked);
+  const provoked = flags.force ? [] : C.provokeDetail(s, id, walked);
+  const provokers = provoked.map((p) => p.id);
   if (provokers.length || mishap) s.undo.rolled = true;
   const lp = C.parseCell(c.pos);
   const terr = C.tagsAt(s, lp.x, lp.y);
@@ -257,6 +258,63 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
   if (provokers.length) text += ` PROVOKES opportunity attack from: ${provokers.join(', ')}.`;
   C.appendLog(s, 'move', text, { id, from, to: c.pos, path: walked });
   console.log(text);
+  if (provoked.length && c.side !== 'party') queueOAs(s, id, provoked);
+  return s;
+});
+
+// Opportunity attacks are the reactor's choice. Each is recorded in s.pendingOA; a player-controlled
+// reactor (seated, or the local player) gets an offer, anyone else is left to the DM ("oa <id>").
+// Stale after two more turns or the end of the round.
+const avgDmg = (e) => String(e).replace(/\s+/g, '').split(/(?=[+-])/).reduce((n, t) => { const m = /^([+-]?)(\d*)d(\d+)$/i.exec(t); return n + (m ? (m[1] === '-' ? -1 : 1) * (m[2] || 1) * (+m[3] + 1) / 2 : Number(t) || 0); }, 0);
+function bestMelee(o) {
+  const ok = (o.attacks || []).filter((w) => !w.range && C.attackCost(w).as === 'action' && !C.attackCost(w).cast);
+  return ok.sort((a, b) => (b.bonus || 0) + avgDmg(b.damage) - (a.bonus || 0) - avgDmg(a.damage))[0];
+}
+function livePending(s) {
+  const age = (p) => s.turnIdx - p.turnIdx;
+  s.pendingOA = (s.pendingOA || []).filter((p) => p.round === s.round && age(p) >= 0 && age(p) <= 2 && s.creatures[p.by] && s.creatures[p.target] && s.creatures[p.target].hp > 0);
+  return s.pendingOA;
+}
+function queueOAs(s, id, provoked) {
+  const seats = C.loadSeats(), mover = s.creatures[id];
+  for (const p of provoked) {
+    const o = s.creatures[p.id], w = bestMelee(o);
+    if (!w) continue;
+    const oaId = 'oa' + require('crypto').randomBytes(3).toString('hex');
+    livePending(s).push({ id: oaId, by: p.id, target: id, from: p.from, z: p.z, round: s.round, turnIdx: s.turnIdx });
+    const player = o.controller === 'player' ? (o.player || 'local') : null;
+    if (player && (player === 'local' || (seats[player] && seats[player].creatures.includes(p.id)))) {
+      C.appendIntent({ offer: require('crypto').randomBytes(6).toString('hex'), t: Date.now(), player, creature: p.id, oa: oaId, text: `${mover.name} is leaving your reach. Opportunity attack with your ${w.name}?` });
+      console.log(`Opportunity attack from ${o.name} offered to ${player} (${oaId}); their answer runs it. No need to roll it by hand.`);
+    } else console.log(`${o.name} may take an opportunity attack on ${mover.name}: run "oa ${oaId}" to roll it (or ignore it).`);
+  }
+}
+
+cmd('oa', 'oa <id> [--drop]  |  oa <by> <target>   resolve a pending opportunity attack as a reaction, against the target as it stood where it left reach (--drop: decline)', (s, { pos, flags }) => {
+  need(s);
+  const pend = livePending(s);
+  const p = pos[1] ? pend.filter((x) => x.by === pos[0] && x.target === pos[1]).pop() : pend.find((x) => x.id === pos[0]);
+  if (!p) fail(`No pending opportunity attack${pos[0] ? ` "${pos.join(' ')}"` : ''}. It may have lapsed (they last until two turns later or the end of the round).${pend.length ? ' Pending: ' + pend.map((x) => `${x.id} (${x.by} → ${x.target})`).join(', ') : ''}`);
+  s.pendingOA = pend.filter((x) => x !== p);
+  if (flags.drop) { console.log(`Opportunity attack ${p.id} dropped.`); return s; }
+  const a = who(s, p.by), t = who(s, p.target);
+  if (a.reactionUsed) fail(`${a.name} has already used their reaction.`);
+  if (a.hp <= 0 || ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'surrendered'].some((k) => hasCond(a, k))) fail(`${a.name} can't react.`);
+  const w = bestMelee(a);
+  if (!w) fail(`${a.name} has no melee attack to make an opportunity attack with.`);
+  // Attack the target as if it still stood where it left reach; nobody is moved.
+  const here = { pos: t.pos, z: t.z };
+  t.pos = p.from; t.z = p.z;
+  try {
+    const plan = C.attackPlan(s, p.by, p.target, w.name, {});
+    if (plan.error) fail(plan.error);
+    C.appendLog(s, 'action', `${a.name} takes an opportunity attack on ${t.name}, who is leaving ${p.from}.`, { id: p.by });
+    CMDS.attack(s, { pos: [p.by, p.target, w.name], flags: { as: 'reaction' } });
+  } finally {
+    const fell = t.hp <= 0 && !C.occupant(s, C.parseCell(p.from).x, C.parseCell(p.from).y, p.target);
+    if (!fell) { t.pos = here.pos; if (here.z === undefined) delete t.z; else t.z = here.z; }
+    else if (here.z === undefined) delete t.z; // dropped where it left reach
+  }
   return s;
 });
 
@@ -603,6 +661,7 @@ cmd('next', 'next                               end the current turn, start the 
   const id = s.turnOrder[s.turnIdx], c = s.creatures[id];
   s.turn = {};
   delete s.undo;
+  livePending(s); // unanswered opportunity attacks lapse
   delete c.reactionUsed; // a reaction comes back at the start of the creature's own turn
   const expired = [];
   c.conditions = (c.conditions || []).filter((x) => {

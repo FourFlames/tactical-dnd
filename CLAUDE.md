@@ -106,7 +106,8 @@ When the player says a friend is joining, seat them: `node engine.js seat <name>
 **Players act with buttons too.** On their turn the viewer lets players move (route preview, jump/climb toggles, undo), Dash, Disengage, Dodge, Hide, attack, roll a skill check, and End turn. The server runs these as ordinary engine commands for the creature whose turn it is, so they're already resolved when you hear about them. They reach you as `did:` lines in a package:
 
 - `·` lines are quiet (plain moves, dash, dodge, undo). They never wake you on their own; they ride along with the next loud one.
-- `!` lines are loud (attacks, checks, Hide rolls, moves that rolled Athletics, fell, or provoked, and End turn). They wake `listen`/`wait`. Narrate what happened (one `say`), roll any opportunity attacks the move provoked, and judge undecided checks: a Hide or Perception roll arrives as a bare total for you to compare.
+- `!` lines are loud (attacks, checks, Hide rolls, moves that rolled Athletics, fell, or provoked, and End turn). They wake `listen`/`wait`. Narrate what happened (one `say`), and judge undecided checks: a Hide or Perception roll arrives as a bare total for you to compare.
+- **Opportunity attacks:** when a monster's move leaves a seated (or local) player's reach, the engine files an offer ("Opportunity attack with your Longsword?") and the server rolls it on yes (`oa <id>`); you only narrate. For party members you control, the move prints `run "oa <id>"`; unanswered ones lapse after two turns or at the end of the round.
 - After a player's **End turn** the engine has already run `next`: just carry on with whoever is up.
 - Spells, class features and anything else the engine doesn't track: resolve as usual, then `use <id> action|bonus|reaction` so their turn tracker is right. Action Surge and the like: `regain <id> action`.
 

@@ -4,6 +4,8 @@ Running list from play sessions, newest first. Turn the ones worth doing into ca
 
 ## 2026-10-13: goblin-warren-caves in the sandbox, user plays Rook, Wren and Ash on one seat
 
+17. **Reaction visible off-turn; OAs are the player's choice.** After Rook's opportunity attack his HUD still showed nothing (pips only draw on your own turn). The reaction pip should always show in combat, and a provoked OA should be offered to the player (Do it / Never mind), not rolled by the DM. (Sonnet, in progress.)
+16. *(DM slip)* **No way back a turn.** I ran `next` one time too many and skipped Wren's round-3 turn; the engine has no `prev`/`turn <id>`, so the DM can't repair the order. Also: when a mind's move PROVOKES, the engine just warns; the OA has to be rolled by hand after the fact (needed a `place` back and forth). Card 8's "monster OAs rolled on the move" covers the second half.
 15. **Right-click is the ring's alternate menu.** Right-clicking a slot opens that slot's alternatives (the other attacks/spells/features that could live there). In that menu, left-click uses the option right away; right-click swaps it into the slot (remembered for that character). Queued after the action-type fix.
 14. **Tracks.** Survival and tracking could become really cool with creatures leaving tracks (footprints in mud/guano/blood, how old, how many, which way), read with Survival.
 13. **Sound events need a source.** "Rook and Brother Ash hear a voice to the east shout..." should carry where it came from (a cell chip / direction marker on the map), as far as the hearer can tell.

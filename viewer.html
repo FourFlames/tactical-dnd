@@ -252,6 +252,7 @@
   .hud .htabs button.on { color: var(--gold); border-color: var(--gold); }
   .hud .hwait { font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
   .hud .hwait:empty { display: none; }
+  .hud .hwait .hp1 { display: inline-flex; margin-left: 10px; vertical-align: middle; }
   .hud .hturn { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
   .hud .hpips { display: flex; align-items: center; gap: 12px; }
   .hud .hp1 { display: flex; align-items: center; gap: 4px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--gold); transition: color .2s; }
@@ -1076,7 +1077,9 @@ function drawAct() {
   tabs.hidden = me.creatures.length < 2;
   tabs.innerHTML = me.creatures.length < 2 ? '' : me.creatures.map((cid) => `<button data-hud="${esc(cid)}" class="${cid === id ? 'on' : ''}">${esc(nameOf(cid))}</button>`).join('');
   const xt = myTurn();
-  document.getElementById('hudWait').textContent = mine ? '' : xt && xt.explore ? 'Exploring' : state && state.round ? `${nameOf(state.current)}'s turn` : 'Waiting for initiative';
+  const spentR = me.reactions && me.reactions[id], offTurn = state && state.round && state.current !== id && me.reactions && id in me.reactions; // the reaction pip shows off-turn too
+  document.getElementById('hudWait').innerHTML = mine ? '' : esc(xt && xt.explore ? 'Exploring' : state && state.round ? `${nameOf(state.current)}'s turn` : 'Waiting for initiative')
+    + (offTurn ? `<span class="hp1${spentR ? ' spent' : ''}" title="Your reaction comes back at the start of your turn"><i></i>Reaction</span>` : '');
   document.getElementById('hudRes').innerHTML = resHtml(c && c.resources);
   document.getElementById('hudAtks').innerHTML = c && (c.attacks || []).length
     ? (c.attacks || []).map((a) => `<span>${attackLine(a)}</span>`).join('') + (myTurn() ? '<em>click a target to attack</em>' : '') : '';

@@ -250,6 +250,45 @@ try {
   for (const f of [C.SEATS, C.INTENTS]) if (fs.existsSync(f)) fs.unlinkSync(f);
   run('seat', 'sam', 'wren');
   run('load', 'rope-bridge');
+  // opportunity attacks are the reactor's choice: pending entry + offer, resolved by `oa`
+  {
+    run('initiative');
+    run('place', 'wren', 'L3'); run('place', 'rook', 'D8'); run('place', 'gob3', 'M3');
+    r = run('move', 'gob3', 'N3');
+    let os = C.loadState(), po = (os.pendingOA || [])[0];
+    let of = C.readOffers().pop();
+    expect('a provoking move files a pending OA and an offer to the seated player', r.ok && po && po.by === 'wren' && po.target === 'gob3' && po.from === 'M3' && of && of.player === 'sam' && of.oa === po.id && /Opportunity attack with your Shortsword|Opportunity attack with your/.test(of.text), r.out + JSON.stringify(po));
+    const hpBefore = os.creatures.gob3.hp;
+    r = run('oa', po.id);
+    os = C.loadState();
+    expect('oa rolls an attack from the departure cell and spends the reaction', r.ok && /Wren attacks Goblin Archer/.test(r.out) && os.creatures.wren.reactionUsed === true && !(os.pendingOA || []).length && (os.creatures.gob3.hp < hpBefore || /miss/.test(r.out)), r.out);
+    expect('a target that survives stays where it moved to', os.creatures.gob3.hp <= 0 || os.creatures.gob3.pos === 'N3', os.creatures.gob3.pos);
+    r = run('oa', po.id);
+    expect('a pending OA is used up', !r.ok && /No pending/.test(r.out), r.out);
+    // a drop puts the target back at `from`
+    run('load', 'rope-bridge'); run('initiative');
+    run('place', 'wren', 'L3'); run('place', 'gob3', 'M3');
+    let g = C.loadState(); g.creatures.gob3.hp = 1; g.creatures.wren.attacks.forEach((w) => { w.bonus = 99; }); C.saveState(g);
+    run('move', 'gob3', 'N3');
+    po = C.loadState().pendingOA[0];
+    r = run('oa', po.id);
+    expect('a dropped target is placed back where it left reach', r.ok && C.loadState().creatures.gob3.hp === 0 && C.loadState().creatures.gob3.pos === 'M3', r.out);
+    // lapsing and declining
+    run('place', 'rook', 'L4'); run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
+    g = C.loadState();
+    expect('a second provoker is queued too', (g.pendingOA || []).some((x) => x.by === 'rook'), JSON.stringify(g.pendingOA));
+    const rk = g.pendingOA.find((x) => x.by === 'rook');
+    r = run('oa', rk.id, '--drop');
+    expect('oa --drop declines', r.ok && !(C.loadState().pendingOA || []).some((x) => x.id === rk.id), r.out);
+    run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
+    for (let i = 0; i < 3; i++) run('next');
+    expect('unanswered OAs lapse as turns pass', !(C.loadState().pendingOA || []).length, JSON.stringify(C.loadState().pendingOA));
+    run('load', 'rope-bridge'); run('initiative');
+    expect('reaction pip data is available off-turn', C.turnInfo(C.loadState(), 'wren').reaction === false, '');
+    const rs = C.loadState(); rs.creatures.wren.reactionUsed = true;
+    expect('turnInfo carries a spent reaction', C.turnInfo(rs, 'wren').reaction === true, '');
+  }
+  run('load', 'rope-bridge');
   // event stream: n = log line number, game id, older-log paging
   {
     const g1 = C.loadState().game;
