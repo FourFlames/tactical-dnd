@@ -994,7 +994,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const p = cellOf(at || c.pos);
     const to = new THREE.Vector3(p.x + 0.5, (at ? cellElev(lastState, p.x, p.y) : c.elev || 0) * FT + 0.5, p.y + 0.5);
     const off = camera.position.clone().sub(controls.target), d = off.length();
-    if (d > defDist * 2.5) off.setLength(defDist);
+    // Zoom in to a framing scaled by size (10 for a square or Medium-or-smaller) when further out; a closer view stays put.
+    const goal = 10 * ({ large: 18, huge: 24, gargantuan: 30 }[String(c && c.size || '').toLowerCase()] || 14) / 14;
+    if (d > goal * 1.3) off.setLength(goal);
     ease = { t0: performance.now(), fromT: controls.target.clone(), toT: to, fromO: camera.position.clone().sub(controls.target), toO: off };
   }
   // Where a creature (by id, at its current glide position) or a cell (by name) is on screen, in client px:

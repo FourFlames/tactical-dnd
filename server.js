@@ -470,6 +470,8 @@ const server = http.createServer((req, res) => {
     if (!l) return json(res, 404, { error: 'Your character knows nothing about that.' });
     return json(res, 200, l);
   }
+  // Cheap round-trip probe for the viewer's connection chip.
+  if (url.pathname === '/api/ping' && req.method === 'GET') return json(res, 200, { t: Date.now() });
   // Pings: a short-lived marker every viewer draws, for "this square, right here".
   if (url.pathname === '/api/ping' && req.method === 'POST') {
     return readBody(req, 1024, (body) => {
