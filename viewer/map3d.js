@@ -110,7 +110,7 @@ function box(w, h, d, v0 = 0) {
 
 const SIDE_FOR = { grass: 'dirt', dirt: 'dirt', flagstone: 'rock', oil: 'rock', water: 'rock', rock: 'rock', planks: 'planks', chasm: 'rock' };
 
-export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
+export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
@@ -149,60 +149,251 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   scene.add(terrain, tokens, fx, cursorG, spectral);
 
   let built = null;          // signature of the terrain currently built
-  let disposables = [];      // geometries made for the current terrain
-  let flames = [], waters = [], lights = [];
+  const flames = [], lights = [], waters = new Set();   // flame sprites and their lights (all chunks); water materials
   let framed = false, wallsLow = false;
   let lastState = null, lastSelected = null, hoveredId = null; // hoveredId: set from outside (a portrait); ptrHover: under the pointer
   let ptrHover = null, marks = null, hoverKey = null, pickedCell = null, lastCursorCell = null;
   const mouse = { x: -1e4, y: -1e4, btn: 0 };
   let turnKey = null, follow = true, followYielded = false, speed = 1;
   const glides = new Map(); // creature id -> resolve, for glides still walking
-  const wallMeshes = [], wallMaterials = [];
   const tokenObjs = new Map();
   let trail = null;
   let cursorKey = null;
   const pings = [];
 
   // ---------- terrain ----------
+  // The ground is built in CHUNK x CHUNK blocks of squares. A chunk merges its pieces into one mesh per material (flat-coloured
+  // pieces share one vertex-coloured material), so a map is a few dozen draw calls, and only chunks whose squares changed are
+  // rebuilt. Sight is not geometry: one fog field (a small texture over the grid, linearly filtered) dims remembered ground and
+  // fades the edge of the known in the shader, so a change of what the party sees only rewrites that texture (updateFog).
+  const CHUNK = 8;
+  const chunks = new Map();   // "cx,cy" -> { sig, group, pick, fades, walls, wallMats, geos, flames, lights }
+  let globalSig = null, globalObjs = [], fogPlane = null, gridW = 0, cur = null;
+  let abyss = { regionOf: new Int32Array(0), regions: [] };   // chasm regions: a region id per square (-1: none), kept for falls later
   function cellElev(v, x, y) {
     const c = v.cells[y] && v.cells[y][x];
     if (!c || c.fog === 'unknown') return 0;
     return (c.h || 0) + (c.obj && c.obj.stand ? c.obj.height : 0);
   }
 
-  // Local clones keep occlusion from changing the shared floor/prop material cache.
-  function markWall(mesh) {
+  // The fog field: per texel (FOG_S per square, FOG_PAD squares of margin) R = light on the terrain (1 seen, .38 remembered,
+  // darker toward the unknown), G = cover of the uncharted plane, B = how dark that plane is (deep in the unknown, or beside a chasm),
+  // A = how close to what is seen now (the plane is dimmer beside remembered ground). Shared by every terrain material.
+  const FOG_S = 4, FOG_PAD = 4;
+  const fogU = { uFogTex: { value: null }, uFogXf: { value: new THREE.Vector4(0, 0, 1, 1) }, uMapWH: { value: new THREE.Vector2(1, 1) } };
+  let fogTex = null, fogBuilt = null;
+  const pitCache = {};
+  // Terrain shading: the fog field darkens what the shader lights (side faces read the square they face). fade 1/2: the
+  // opaque and see-through passes of a fadeable wall batch, split per vertex by aFade (see fadeOccludingWalls).
+  function terrainShader(m, fade = 0) {
+    if (m.userData.fogFade === fade) return m;
+    m.userData.fogFade = fade;
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, fogU);
+      sh.vertexShader = 'varying vec3 vFogW; varying vec3 vFogN;\n' + (fade ? 'attribute float aFade; varying float vFade;\n' : '') +
+        sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vFogW = (modelMatrix * vec4(transformed, 1.0)).xyz; vFogN = mat3(modelMatrix) * objectNormal;' + (fade ? ' vFade = aFade;' : ''));
+      sh.fragmentShader = 'uniform sampler2D uFogTex; uniform vec4 uFogXf; varying vec3 vFogW; varying vec3 vFogN;\n' + (fade ? 'varying float vFade;\n' : '') + sh.fragmentShader
+        .replace('void main() {', 'void main() {\n' + (fade === 1 ? '  if (vFade < 0.995) discard;\n' : fade === 2 ? '  if (vFade >= 0.995) discard;\n' : ''))
+        .replace('#include <opaque_fragment>', 'outgoingLight *= texture2D(uFogTex, (vFogW.xz + normalize(vFogN).xz * 0.3 - uFogXf.xy) * uFogXf.zw).r;\n' +
+          (fade === 2 ? 'diffuseColor.a *= vFade;\n' : '') + '#include <opaque_fragment>');
+    };
+    m.customProgramCacheKey = () => 'terrain' + fade;
+    m.needsUpdate = true;
+    return m;
+  }
+
+  // Squared Euclidean distance transform (Felzenszwalb): for each texel, the distance in texels to the nearest set texel.
+  function edt(mask, w, h) {
+    const INF = 1e20, n = Math.max(w, h), g = new Float64Array(w * h), f = new Float64Array(n), d = new Float64Array(n), vv = new Int32Array(n), z = new Float64Array(n + 1);
+    for (let i = 0; i < w * h; i++) g[i] = mask[i] ? 0 : INF;
+    const pass = (len) => {
+      let k = 0; vv[0] = 0; z[0] = -INF; z[1] = INF;
+      for (let q = 1; q < len; q++) {
+        let s = ((f[q] + q * q) - (f[vv[k]] + vv[k] * vv[k])) / (2 * q - 2 * vv[k]);
+        while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[vv[k]] + vv[k] * vv[k])) / (2 * q - 2 * vv[k]); }
+        k++; vv[k] = q; z[k] = s; z[k + 1] = INF;
+      }
+      k = 0;
+      for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; d[q] = (q - vv[k]) * (q - vv[k]) + f[vv[k]]; }
+    };
+    for (let x = 0; x < w; x++) { for (let y = 0; y < h; y++) f[y] = g[y * w + x]; pass(h); for (let y = 0; y < h; y++) g[y * w + x] = d[y]; }
+    for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) f[x] = g[y * w + x]; pass(w); for (let x = 0; x < w; x++) g[y * w + x] = Math.sqrt(d[x]); }
+    return g;
+  }
+  const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const fogOf = (v, x, y) => { const c = v.cells[y] && v.cells[y][x]; return c ? c.fog : 'unknown'; };
+  function fogSignature(v) {
+    return v.width + 'x' + v.height + ':' + v.cells.map((r) => r.map((c) => (c.fog === 'visible' ? 2 : c.fog === 'remembered' ? 1 : 0)).join('')).join('/');
+  }
+  function updateFog(v) {
+    const W = v.width, H = v.height, S = FOG_S, P = FOG_PAD, tw = (W + 2 * P) * S, th = (H + 2 * P) * S, n = tw * th;
+    if (!fogTex || fogTex.image.width !== tw || fogTex.image.height !== th) {
+      if (fogTex) fogTex.dispose();
+      fogTex = new THREE.DataTexture(new Uint8Array(n * 4), tw, th);
+      fogTex.magFilter = fogTex.minFilter = THREE.LinearFilter;
+      fogU.uFogTex.value = fogTex;
+      fogU.uFogXf.value.set(-P, -P, 1 / (W + 2 * P), 1 / (H + 2 * P));
+      fogU.uMapWH.value.set(W, H);
+    }
+    const known = new Uint8Array(n), unknown = new Uint8Array(n), vis = new Uint8Array(n), pit = pitCache.abyss !== abyss || pitCache.n !== n ? new Uint8Array(n) : null;
+    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) {
+      const x = Math.floor(i / S) - P, y = Math.floor(j / S) - P, f = fogOf(v, x, y), t = j * tw + i;
+      known[t] = f !== 'unknown'; unknown[t] = !known[t]; vis[t] = f === 'visible';
+      if (pit) pit[t] = abyss.regionOf.length && x >= 0 && y >= 0 && x < W && y < H && abyss.regionOf[y * W + x] >= 0;
+    }
+    if (pit) Object.assign(pitCache, { abyss, n, d: edt(pit, tw, th) });   // the chasms only change with the terrain
+    const dK = edt(known, tw, th), dU = edt(unknown, tw, th), dV = edt(vis, tw, th), dP = pitCache.d, out = fogTex.image.data;
+    for (let t = 0; t < n; t++) {
+      const s = known[t] ? (dU[t] - 0.5) / S : -(dK[t] - 0.5) / S;   // signed distance to the edge of the known, in squares
+      const seen = 1 - sstep(0, 0.9, (dV[t] - 0.5) / S);
+      const light = (0.38 + 0.62 * seen) * (0.4 + 0.6 * sstep(-0.3, 1.1, s));
+      out[t * 4] = Math.round(255 * light);
+      out[t * 4 + 1] = Math.round(255 * (1 - sstep(-0.45, 0.1, s)));
+      // darker deeper into the unknown, and over unknown ground beside a chasm (it most likely falls away too)
+      out[t * 4 + 2] = Math.round(255 * Math.max(sstep(0, 4, -s), 0.85 * (1 - sstep(0.5, 2.5, (dP[t] - 0.5) / S))));
+      out[t * 4 + 3] = Math.round(255 * seen);
+    }
+    fogTex.needsUpdate = true;
+    // Fires burn bright only where the party can see them.
+    for (const ch of chunks.values()) {
+      for (const s of ch.flames) s.material.opacity = fogOf(v, s.userData.cx, s.userData.cy) === 'visible' ? 0.95 : 0.25;
+      for (const l of ch.lights) l.userData.on = fogOf(v, l.userData.cx, l.userData.cy) === 'visible' ? 1 : 0;
+    }
+  }
+
+  // Ground you can't make out: one plane under the whole map and far past it. The fog field gives it its cover (none over the
+  // known, so chasms show), its darkening into the unknown, and a soft dissolve into the backdrop past the map's edge.
+  const UNCHARTED = '#26221c';
+  function ensureFogPlane(W, H) {
+    const key = W + 'x' + H;
+    if (fogPlane && fogPlane.userData.key === key) return;
+    if (fogPlane) { terrain.remove(fogPlane); fogPlane.geometry.dispose(); fogPlane.material.dispose(); }
+    const E = 100, g = new THREE.PlaneGeometry(W + 2 * E, H + 2 * E).rotateX(-Math.PI / 2).translate(W / 2, -0.03, H / 2);
+    const m = new THREE.MeshStandardMaterial({ color: UNCHARTED, roughness: 1, metalness: 0, transparent: true, depthWrite: false, dithering: true });
+    m.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, fogU);
+      sh.vertexShader = 'varying vec3 vFogW;\n' + sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vFogW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = `uniform sampler2D uFogTex; uniform vec4 uFogXf; uniform vec2 uMapWH; varying vec3 vFogW;
+        float fogHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float fogNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(fogHash(i), fogHash(i + vec2(1.0, 0.0)), f.x), mix(fogHash(i + vec2(0.0, 1.0)), fogHash(i + 1.0), f.x), f.y); }
+        ` + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        vec4 fs = texture2D(uFogTex, (vFogW.xz - uFogXf.xy) * uFogXf.zw);
+        vec2 o = max(max(-vFogW.xz, vFogW.xz - uMapWH), 0.0);
+        float d = max(o.x, o.y), nz = 0.6 * fogNoise(vFogW.xz * 0.45) + 0.4 * fogNoise(vFogW.xz * 1.3 + 17.0);
+        diffuseColor.rgb *= (0.86 + 0.28 * nz) * mix(1.0, 0.3, fs.b) * mix(0.55, 1.0, fs.a);
+        diffuseColor.a = fs.g * (d < 3.0 ? 1.0 : exp((3.0 - d) / 22.0));`);
+    };
+    fogPlane = new THREE.Mesh(g, m);
+    fogPlane.receiveShadow = true; fogPlane.renderOrder = -1; fogPlane.userData.key = key;
+    terrain.add(fogPlane);
+  }
+
+  // ---------- merging ----------
+  // A fadeable wall piece (anything markWall'd) keeps its own vertex range and box, so fading it rewrites only its aFade.
+  const markWall = (mesh) => { mesh.userData.wall = true; return mesh; };
+  // Meshes that stay whole (door leaves on their hinge, see-through secret walls) fade the old way, by their own material.
+  function legacyWall(mesh) {
     const clone = (source) => {
-      const material = source.clone();
+      const material = terrainShader(source.clone(), 0);
       material.userData.occlusionBase = { opacity: source.opacity, transparent: source.transparent, depthWrite: source.depthWrite };
-      wallMaterials.push(material); return material;
+      cur.wallMats.push(material); return material;
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(clone) : clone(mesh.material);
-    wallMeshes.push(mesh); return mesh;
+    cur.walls.push(mesh); return mesh;
   }
-  function clearWalls() {
-    for (const material of wallMaterials) { Object.assign(material, material.userData.occlusionBase); material.dispose(); }
-    wallMaterials.length = 0; wallMeshes.length = 0;
-  }
-  function buildTerrain(v) {
-    clearWalls(); occ = null;
-    for (const o of [...terrain.children]) {
-      terrain.remove(o);
-      if (o.userData.dispose) { o.userData.dispose.dispose(); o.material.dispose(); }
+  const batchMats = new Map();
+  function batchMat(src, fade) {
+    const flat = src.isMeshStandardMaterial && !src.map && !src.vertexColors && !(src.emissive && src.emissive.getHex());
+    const key = (flat ? ['flat', src.roughness, src.metalness, src.transparent, src.opacity, src.side, src.flatShading] : [src.uuid]).concat(fade).join('|');
+    let m = batchMats.get(key);
+    if (!m) {
+      m = flat ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: src.roughness, metalness: src.metalness, side: src.side,
+        flatShading: src.flatShading, transparent: src.transparent, opacity: src.opacity, depthWrite: src.depthWrite }) : fade ? src.clone() : src;
+      if (fade === 2) { m.transparent = true; m.depthWrite = false; }
+      batchMats.set(key, terrainShader(m, fade));
     }
-    disposables.forEach((g) => g.dispose());
-    // Flames live in the fx group (so they draw over everything), so take them out by hand.
-    for (const s of flames) { fx.remove(s); s.material.dispose(); }
-    disposables = []; flames = []; waters = [];
-    lights.forEach((l) => scene.remove(l)); lights = [];
-    const geo = (g) => { disposables.push(g); return g; };
-    const add = (mesh, cell) => {
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      if (cell) mesh.userData.cell = cell;
-      terrain.add(mesh);
-      return mesh;
-    };
+    return { m, flat, key };
+  }
+  const _nm = new THREE.Matrix3(), _c = new THREE.Color();
+  function mergeChunk(ch, src) {
+    const batches = new Map();
+    for (const mesh of src) {
+      const mats = [].concat(mesh.material);
+      if (mesh.userData.wall && mats.some((m) => m.transparent)) { ch.group.add(mesh); ch.geos.push(mesh.geometry); legacyWall(mesh); continue; }
+      mesh.updateMatrix(); _nm.getNormalMatrix(mesh.matrix);
+      const g = mesh.geometry, P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, I = g.index;
+      const groups = g.groups.length ? g.groups : [{ start: 0, count: I ? I.count : P.count, materialIndex: 0 }];
+      const cell = mesh.userData.cell ? mesh.userData.cell.y * gridW + mesh.userData.cell.x : -1, fade = mesh.userData.wall ? 1 : 0;
+      const skip = mesh.userData.skip;
+      for (const gr of groups) {
+        if (skip && skip[gr.materialIndex]) continue;
+        const sm = mats[gr.materialIndex] || mats[0], { m, flat, key } = batchMat(sm, fade);
+        let b = batches.get(key);
+        if (!b) batches.set(key, b = { m, flat, fade, src: sm, pos: [], nor: [], uv: [], col: [], cell: [], pieces: [] });
+        if (flat) _c.copy(sm.color);
+        const v0 = b.pos.length / 3, end = Math.min(gr.start + gr.count, I ? I.count : P.count);
+        const e = mesh.matrix.elements, q = _nm.elements, pa = P.array, na = N.array, ua = U && U.array, ia = I && I.array;
+        for (let k = gr.start; k < end; k++) {
+          const i = ia ? ia[k] : k, x = pa[i * 3], y = pa[i * 3 + 1], z = pa[i * 3 + 2];
+          b.pos.push(e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]);
+          const nx = na[i * 3], ny = na[i * 3 + 1], nz = na[i * 3 + 2];
+          const mx = q[0] * nx + q[3] * ny + q[6] * nz, my = q[1] * nx + q[4] * ny + q[7] * nz, mz = q[2] * nx + q[5] * ny + q[8] * nz, l = Math.hypot(mx, my, mz) || 1;
+          b.nor.push(mx / l, my / l, mz / l);
+          if (ua) b.uv.push(ua[i * 2], ua[i * 2 + 1]); else b.uv.push(0, 0);
+          if (flat) b.col.push(_c.r, _c.g, _c.b);
+        }
+        for (let t = 0; t < (end - gr.start) / 3; t++) b.cell.push(cell);
+        if (fade) b.pieces.push({ start: v0, count: b.pos.length / 3 - v0 });
+      }
+      g.dispose();
+    }
+    for (const b of batches.values()) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
+      if (b.flat) g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
+      g.computeBoundingSphere();
+      const mesh = new THREE.Mesh(g, b.m);
+      mesh.castShadow = mesh.receiveShadow = !b.m.transparent || !!b.fade;
+      mesh.userData.faceCell = Int32Array.from(b.cell);
+      ch.group.add(mesh); ch.pick.push(mesh); ch.geos.push(g);
+      if (!b.fade) continue;
+      const attr = new THREE.Float32BufferAttribute(new Float32Array(b.pos.length / 3).fill(1), 1);
+      attr.setUsage(THREE.DynamicDrawUsage); g.setAttribute('aFade', attr);
+      const ghost = new THREE.Mesh(g, batchMat(b.src, 2).m);   // the see-through pass: only faded pieces draw in it
+      ghost.visible = false;
+      ch.group.add(ghost);
+      const pieces = b.pieces.map(({ start, count }) => {
+        const box = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+        for (let i = start * 3; i < (start + count) * 3; i += 3) for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], b.pos[i + a]); box[a + 3] = Math.max(box[a + 3], b.pos[i + a]); }
+        return { start, count, box, op: 1 };
+      });
+      ch.fades.push({ attr, ghost, pieces });
+    }
+  }
 
+  function disposeChunk(ch) {
+    terrain.remove(ch.group);
+    ch.geos.forEach((g) => g.dispose());
+    ch.wallMats.forEach((m) => m.dispose());
+    for (const s of ch.flames) { fx.remove(s); s.material.dispose(); flames.splice(flames.indexOf(s), 1); }
+    for (const l of ch.lights) { scene.remove(l); lights.splice(lights.indexOf(l), 1); }
+    chunks.delete(ch.key);
+  }
+  function clearGlobals() {
+    for (const o of globalObjs) { terrain.remove(o); o.geometry.dispose(); if (o.userData.ownMat) o.material.dispose(); }
+    globalObjs = [];
+  }
+  const addGlobal = (mesh, ownMat = true) => { mesh.userData.ownMat = ownMat; terrain.add(mesh); globalObjs.push(mesh); return mesh; };
+
+  // Small cache for materials that used to be made per call (rope, coals, leaves), so they batch and do not pile up.
+  const oneMat = (key, make) => { if (!flatCache.has(key)) flatCache.set(key, make()); return flatCache.get(key); };
+
+  function buildTerrain(v) {
+    const W = v.width, H = v.height;
+    gridW = W;
     let minH = 0, anyChasm = false;
     v.cells.forEach((row) => row.forEach((c) => {
       if (c.fog === 'unknown') return;
@@ -210,7 +401,6 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (c.tags.includes('chasm')) anyChasm = true;
     }));
     const bottom = minH * FT - (anyChasm ? 3.5 : 0.6);
-    const colTops = v.cells.map((row) => row.map(() => 0));
     // Deep rock: known wall squares with no floor (or unseen square) around them, drawn as one low rough mass instead of columns.
     let massFt = 0;
     const deep = v.cells.map((row, y) => row.map((c, x) => {
@@ -223,35 +413,104 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       return true;
     }));
     const massH = (wallsLow ? 1.5 : massFt) * FT;
+    // The top of the column under a square (what the labels sit on and what a chasm's walls run down from).
+    const colTop = (x, y) => {
+      const c = v.cells[y] && v.cells[y][x];
+      if (!c || c.fog === 'unknown') return null;
+      const top = (c.h || 0) * FT, legend = v.legend[c.ch] || {}, surf = TX.surfaceFor(c);
+      if (deep[y][x]) return massH * 0.6;
+      if (surf === 'chasm') return bottom;
+      if (c.tags.includes('bridge')) return top;
+      if (c.tags.includes('wall') && !c.obj) return top + (wallsLow ? 1.5 : legend.height || 6) * FT;
+      if (surf === 'water') return top - (legend.depth || 2) * FT;
+      return top;
+    };
 
-    for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) {
+    // Anything every chunk depends on changed: start over.
+    const gsig = JSON.stringify([W, H, bottom, massH, wallsLow]);
+    if (gsig !== globalSig) { for (const ch of [...chunks.values()]) disposeChunk(ch); globalSig = gsig; }
+    const wallsAt = new Map();
+    for (const w of v.walls || []) {
+      const x = Math.max(0, Math.min(W - 1, Math.min(w.x1, w.x2))), y = Math.max(0, Math.min(H - 1, Math.min(w.y1, w.y2)));
+      const k = Math.floor(x / CHUNK) + ',' + Math.floor(y / CHUNK);
+      if (!wallsAt.has(k)) wallsAt.set(k, []);
+      wallsAt.get(k).push(w);
+    }
+    // A chunk's squares depend on their neighbours (deep rock, stairs, bridge rails, wall heights), so its signature takes a
+    // one-square ring around it, plus its walls with the floor heights on both sides of each.
+    const cellSig = (x, y) => { const c = v.cells[y] && v.cells[y][x]; return !c ? null : c.fog === 'unknown' ? 0 : [c.ch, c.h, c.tags, c.obj]; };
+    let dirty = false;
+    for (let cy = 0; cy * CHUNK < H; cy++) for (let cx = 0; cx * CHUNK < W; cx++) {
+      const key = cx + ',' + cy, x0 = cx * CHUNK, y0 = cy * CHUNK, x1 = Math.min(W, x0 + CHUNK), y1 = Math.min(H, y0 + CHUNK);
+      const parts = [];
+      for (let y = y0 - 1; y <= y1; y++) for (let x = x0 - 1; x <= x1; x++) parts.push(cellSig(x, y));
+      const ws = wallsAt.get(key) || [];
+      parts.push(ws.map((w) => [w, wallFloors(v, w)]));
+      const sig = JSON.stringify(parts), old = chunks.get(key);
+      if (old && old.sig === sig) continue;
+      if (old) disposeChunk(old);
+      buildChunk(v, key, sig, x0, y0, x1, y1, ws, { bottom, deep, colTop });
+      dirty = true;
+    }
+    if (!dirty && globalObjs.length) return;
+    occ = null; fogBuilt = null;
+    clearGlobals();
+    buildRockMass(v, deep, bottom, massH);
+    buildAbyss(v, bottom, colTop);
+    ensureFogPlane(W, H);
+    // coordinate labels in a straight line along the north and west edges of what's known
+    const known = (x, y) => v.cells[y][x].fog !== 'unknown';
+    let x0 = W, y0 = H;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (known(x, y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); }
+    const lh = (x, y) => (known(x, y) ? Math.max(0, colTop(x, y)) : 0) + 0.02, labels = [];
+    for (let x = 0; x < W; x++) if (v.cells.some((r, y) => known(x, y))) labels.push([x, x + 0.5, lh(x, y0), y0 - 0.4]);
+    for (let y = 0; y < H; y++) if (v.cells[y].some((c, x) => known(x, y))) labels.push([W + y, x0 - 0.4, lh(x0, y), y + 0.5]);
+    buildLabels(W, H, labels);
+  }
+
+  function buildChunk(v, key, sig, X0, Y0, X1, Y1, walls, { bottom, deep, colTop }) {
+    const ch = cur = { key, sig, group: new THREE.Group(), pick: [], fades: [], walls: [], wallMats: [], geos: [], flames: [], lights: [] };
+    terrain.add(ch.group); chunks.set(key, ch);
+    const src = [], geo = (g) => g;
+    const add = (mesh, cell) => {
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      if (cell) mesh.userData.cell = cell;
+      src.push(mesh);
+      return mesh;
+    };
+    const props = [];
+    // Faces nobody can see are left out of the merge: every column's underside, and a side that a solid neighbouring column
+    // (rising from the same base) covers to at least that height. skip[] runs px, nx, py, ny, pz, nz like a BoxGeometry's groups.
+    const solidTop = (x, y) => {
+      const c = v.cells[y] && v.cells[y][x];
+      if (!c || c.fog === 'unknown' || deep[y][x] || c.tags.includes('bridge') || c.tags.includes('stairs') || TX.surfaceFor(c) === 'chasm') return -Infinity;
+      return colTop(x, y);
+    };
+    const hide = (mesh, x, y, y1, top = false) => {
+      mesh.userData.skip = [solidTop(x + 1, y) >= y1 - 1e-6, solidTop(x - 1, y) >= y1 - 1e-6, top, true, solidTop(x, y + 1) >= y1 - 1e-6, solidTop(x, y - 1) >= y1 - 1e-6];
+      return mesh;
+    };
+    const dim = false;   // remembered ground is dimmed by the fog field now, not by its materials
+    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
       const c = v.cells[y][x];
-      if (c.fog === 'unknown') continue;
-      const dim = c.fog === 'remembered';
+      if (c.fog === 'unknown' || deep[y][x]) continue;
       const variant = TX.hash(x, y) % VARIANTS;
       const surf = TX.surfaceFor(c);
       const top = (c.h || 0) * FT;
       const at = { x, y };
       const legend = v.legend[c.ch] || {};
 
-      if (deep[y][x]) { colTops[y][x] = massH * 0.6; continue; }
       if (surf === 'chasm') {
         const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('chasm', 0, { dim }) : floorMat('chasm', x, y, dim)), at);
         m.rotation.x = -Math.PI / 2; m.position.set(x + 0.5, bottom + 0.01, y + 0.5);
-        colTops[y][x] = bottom;
         continue;
       }
-      if (c.tags.includes('bridge')) {
-        buildBridge(v, x, y, top, dim, add, geo);
-        colTops[y][x] = top;
-        continue;
-      }
+      if (c.tags.includes('bridge')) { buildBridge(v, x, y, top, dim, add, geo); continue; }
       // the column under this square
       let colTop = top;
       if (c.tags.includes('wall') && !c.obj) colTop = top + (wallsLow ? 1.5 : legend.height || 6) * FT;
       if (surf === 'water') colTop = top - (legend.depth || 2) * FT;
       const h = colTop - bottom;
-      const g = geo(box(1, h, 1, bottom));
       const sideName = c.tags.includes('wall') && /brick|masonry|tower|built/.test((c.terrain || '').toLowerCase()) ? 'masonry' : SIDE_FOR[surf] || 'rock';
       const topName = surf === 'water' ? 'dirt' : surf === 'oil' ? 'flagstone' : c.tags.includes('wall') ? sideName : surf;
       const flatKey = surf === 'water' ? 'dirt' : surf;
@@ -262,17 +521,15 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         for (let y0 = bottom, i = Math.floor(bottom + 1e-6); y0 < colTop - 1e-6; i++) {
           const y1 = Math.min(colTop, i + 1), m = wallTone(x + y + i, dim);
           const b = add(new THREE.Mesh(geo(box(1, y1 - y0, 1, y0)), m), at);
-          b.position.set(x + 0.5, (y0 + y1) / 2, y + 0.5); markWall(b);
+          b.position.set(x + 0.5, (y0 + y1) / 2, y + 0.5); markWall(hide(b, x, y, y1, y1 < colTop - 1e-6));
           y0 = y1;
         }
-        colTops[y][x] = colTop;
         continue;
       }
-      if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) { colTops[y][x] = top; continue; }
-      const col = add(new THREE.Mesh(g, [side, side, topMat, side, side, side]), at);
-      col.position.set(x + 0.5, bottom + h / 2, y + 0.5);
+      if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) continue;
+      const col = add(new THREE.Mesh(geo(box(1, h, 1, bottom)), [side, side, topMat, side, side, side]), at);
+      col.position.set(x + 0.5, bottom + h / 2, y + 0.5); hide(col, x, y, colTop);
       if (c.tags.includes('wall')) markWall(col);
-      colTops[y][x] = colTop;
       if (surf === 'oil' && TEXTURED) {
         const o = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1.15, 1.15)), mat('oil', variant, { dim, rough: 0.1, metal: 0, opacity: 0.999 })), at);
         o.rotation.x = -Math.PI / 2; o.rotation.z = variant; o.position.set(x + 0.5, top + 0.005, y + 0.5);
@@ -282,9 +539,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         const w = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('water', variant, { dim, rough: 0.15, metal: 0.1, opacity: 0.78 }) : floorMat('water', x, y, dim, { rough: 0.15, metal: 0.1, opacity: 0.85 })), at);
         w.rotation.x = -Math.PI / 2; w.position.set(x + 0.5, top - 0.06, y + 0.5);
         w.castShadow = false;
-        waters.push(w);
+        waters.add(w.material);
       }
-      if (c.obj) buildObject(c.obj, x, y, top, dim, variant, add, geo, c.terrain);
+      if (c.obj) props.push({ c, x, y, top, variant });
       else if (c.tags.includes('fire-source')) addFire(x + 0.5, top, y + 0.5, 1, dim);
       if (c.tags.includes('burning')) {
         const surfaceTop = c.obj && c.obj.stand ? top + c.obj.height * FT : top;
@@ -294,62 +551,57 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         }
       }
     }
-    for (const w of v.walls || []) buildWall(v, w, add, geo);
-    buildRockMass(v, deep, bottom, massH);
-    buildChasmDepth(v, bottom);
-    buildUncharted(v);
-    buildBackdrop(v);
-    // coordinate labels in a straight line along the north and west edges of what's known
-    const known = (x, y) => v.cells[y][x].fog !== 'unknown';
-    let x0 = v.width, y0 = v.height;
-    for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) if (known(x, y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); }
-    const lh = (x, y) => (known(x, y) ? Math.max(0, colTops[y][x]) : 0) + 0.02;
-    for (let x = 0; x < v.width; x++) if (v.cells.some((r, y) => known(x, y))) addLabel(String.fromCharCode(65 + x), x + 0.5, lh(x, y0), y0 - 0.4, geo);
-    for (let y = 0; y < v.height; y++) if (v.cells[y].some((c, x) => known(x, y))) addLabel(String(y + 1), x0 - 0.4, lh(x0, y), y + 0.5, geo);
+    for (const w of walls) buildWall(v, w, add, geo);
+    mergeChunk(ch, src);
+    buildProps(ch, props);
+    cur = null;
   }
 
-  // Ground you can't make out: one merged mesh under every unknown cell plus a margin round the map. Vertices are shared so the
-  // frontier fades (known-adjacent corners are mostly transparent, tinted toward the neighbouring floor) and the margin dissolves outward.
-  const UNCHARTED = '#26221c', UNCH_MARGIN = 3;
-  function buildUncharted(v) {
-    const M = UNCH_MARGIN, W = v.width, H = v.height, nx = W + 2 * M + 1, ny = H + 2 * M + 1;
-    const cellAt = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? v.cells[y][x] : null);
-    const base = new THREE.Color(UNCHARTED), tmp = new THREE.Color();
-    const pos = new Float32Array(nx * ny * 3), col = new Float32Array(nx * ny * 4), idx = [];
-    const dimTone = (c) => { // the neighbouring known floor, dimmed like remembered ground
-      const t = c.tags.includes('wall') ? WALL_TONES[0] : FLOOR_TONES[TX.surfaceFor(c) === 'water' ? 'water' : TX.surfaceFor(c)] || FLOOR_TONES.flagstone;
-      return tmp.set(typeof t === 'string' ? t : t[0]).multiplyScalar(0.38);
+  // Props (crates, barrels, pillars, braziers, barracks furniture) stay whole meshes, one per piece with userData.cell, in the
+  // chunk's own `props` group: they are not merged, so they can become entities with bodies of their own.
+  function buildProps(ch, props) {
+    ch.props = new THREE.Group(); ch.group.add(ch.props);
+    const geo = (g) => { ch.geos.push(g); return g; };
+    const add = (mesh, cell) => {
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      if (cell) mesh.userData.cell = cell;
+      for (const m of [].concat(mesh.material)) terrainShader(m, 0);
+      ch.props.add(mesh); ch.pick.push(mesh);
+      return mesh;
     };
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      const vx = i - M, vy = j - M, k = j * nx + i;
-      pos.set([vx, 0, vy], k * 3);
-      const r = TX.rng(TX.hash(vx + 100, vy + 100, 31)), tone = 1 + (r() - 0.5) * 0.12;
-      const c = new THREE.Color().copy(base).multiplyScalar(tone);
-      let a = 1, nb = null;
-      for (const [cx, cy] of [[vx - 1, vy - 1], [vx, vy - 1], [vx - 1, vy], [vx, vy]]) {
-        const n = cellAt(cx, cy);
-        if (n && n.fog !== 'unknown') { nb = n; break; }
+    for (const { c, x, y, top, variant } of props) buildObject(c.obj, x, y, top, false, variant, add, geo, c.terrain);
+  }
+
+  // The coordinate labels: one mesh over one atlas texture (A.. for columns, 1.. for rows).
+  let labelAtlas = null;
+  function buildLabels(W, H, labels) {
+    if (!labelAtlas || labelAtlas.key !== W + 'x' + H) {
+      if (labelAtlas) { labelAtlas.tex.dispose(); labelAtlas.mat.dispose(); }
+      const n = W + H, cols = 16, rows = Math.ceil(n / cols), c = document.createElement('canvas');
+      c.width = cols * 64; c.height = rows * 64;
+      const ctx = c.getContext('2d');
+      ctx.font = '600 40px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(12,11,9,.85)'; ctx.fillStyle = '#d8cfb8';
+      for (let i = 0; i < n; i++) {
+        const text = i < W ? String.fromCharCode(65 + i) : String(i - W + 1), px = (i % cols) * 64 + 32, py = Math.floor(i / cols) * 64 + 34;
+        ctx.strokeText(text, px, py); ctx.fillText(text, px, py);
       }
-      if (nb) { a = 0.35; c.lerp(dimTone(nb), 0.5); }
-      else { const d = Math.max(0, -vx, vx - W, -vy, vy - H); a = 1 - d / M; }
-      col.set([c.r, c.g, c.b, a], k * 4);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      labelAtlas = { key: W + 'x' + H, tex, cols, rows, mat: new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }) };
     }
-    for (let y = -M; y < H + M; y++) for (let x = -M; x < W + M; x++) {
-      const c = cellAt(x, y);
-      if (c && c.fog !== 'unknown') continue;
-      const a = (y + M) * nx + x + M, b = a + 1, d = a + nx, e = d + 1;
-      idx.push(a, d, b, b, d, e);
+    const { cols, rows } = labelAtlas, pos = [], uv = [], idx = [], s = 0.25;
+    for (const [i, x, y, z] of labels) {
+      const u0 = (i % cols) / cols, u1 = u0 + 1 / cols, v1 = 1 - Math.floor(i / cols) / rows, v0 = v1 - 1 / rows, k = pos.length / 3;
+      pos.push(x - s, y, z - s, x + s, y, z - s, x - s, y, z + s, x + s, y, z + s);
+      uv.push(u0, v1, u1, v1, u0, v0, u1, v0);
+      idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
     }
-    if (!idx.length) return;
+    if (!pos.length) return;
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 4));
-    g.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from({ length: nx * ny * 3 }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx);
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false }));
-    m.receiveShadow = true; m.renderOrder = -1;
-    m.userData.dispose = g; // also keeps it out of picking and wall-fade occlusion (see occluders)
-    terrain.add(m);
+    addGlobal(new THREE.Mesh(g, labelAtlas.mat), false);
   }
 
   // Wall squares nothing can see past are one merged, lumpy mass: corner heights come from a hash so the same map always rises the
@@ -368,21 +620,20 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
       return corners.get(key);
     };
-    const tri = (a, b, d, dim) => {
+    const tri = (a, b, d) => {
       for (const q of [a, b, d]) {
         pos.push(q[0], q[1], q[2]);
-        c.copy(base).multiplyScalar((0.7 + 0.7 * q[3]) * (dim ? 0.38 : 1)); col.push(c.r, c.g, c.b);
+        c.copy(base).multiplyScalar(0.7 + 0.7 * q[3]); col.push(c.r, c.g, c.b);
       }
     };
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (!deep[y][x]) continue;
-      const dim = v.cells[y][x].fog === 'remembered';
       const A = corner(x, y), B = corner(x + 1, y), C = corner(x, y + 1), D = corner(x + 1, y + 1);
-      if ((x + y) & 1) { tri(A, C, D, dim); tri(A, D, B, dim); } else { tri(A, C, B, dim); tri(B, C, D, dim); }
+      if ((x + y) & 1) { tri(A, C, D); tri(A, D, B); } else { tri(A, C, B); tri(B, C, D); }
       for (const [dx, dy, p, q] of [[0, -1, A, B], [0, 1, C, D], [-1, 0, A, C], [1, 0, B, D]]) {
         if (x + dx >= 0 && y + dy >= 0 && x + dx < W && y + dy < H) continue; // only the map's outer edge
         const lo = (r) => [r[0], bottom, r[2], 0];
-        tri(p, lo(p), q, dim); tri(q, lo(p), lo(q), dim);
+        tri(p, lo(p), q); tri(q, lo(p), lo(q));
       }
     }
     if (!pos.length) return;
@@ -390,70 +641,76 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.computeVertexNormals();
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
-    m.castShadow = true; m.receiveShadow = true;
-    m.userData.dispose = g; // not pickable and never fades: it is low and nothing stands behind it
-    terrain.add(m);
+    const m = addGlobal(new THREE.Mesh(g, terrainShader(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide }))));
+    m.castShadow = true; m.receiveShadow = true; // not pickable and never fades: it is low and nothing stands behind it
   }
 
-  // Chasms read as deep: stacked dark veils (denser the lower they sit) darken the cliff faces and the floor with depth, and a
-  // faint mist rests near the bottom. One merged mesh, kept out of picking like the uncharted ground.
-  function buildChasmDepth(v, bottom) {
-    const cells = [];
-    let rim = -Infinity;
-    v.cells.forEach((row, y) => row.forEach((c, x) => {
-      if (c.fog === 'unknown' || TX.surfaceFor(c) !== 'chasm') return;
-      cells.push([x, y]);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const n = v.cells[y + dy] && v.cells[y + dy][x + dx];
-        if (n && n.fog !== 'unknown' && TX.surfaceFor(n) !== 'chasm' && !n.tags.includes('wall')) rim = Math.max(rim, (n.h || 0) * FT);
+  // The abyss: chasm squares (and the bridges over them) joined into connected regions, each with one see-through dark skin
+  // over its walls and floor whose darkness is a smooth function of depth below that region's rim. The region data stays in
+  // `abyss` (a region id per square, each region's squares, rim and floor) for falls into regions below later.
+  const ABYSS = '#040405';
+  function buildAbyss(v, bottom, colTop) {
+    const W = v.width, H = v.height, regionOf = new Int32Array(W * H).fill(-1), regions = [];
+    const cellAt = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? v.cells[y][x] : null);
+    const isChasm = (c) => c && c.fog !== 'unknown' && TX.surfaceFor(c) === 'chasm';
+    const isOpen = (c) => isChasm(c) || (c && c.fog !== 'unknown' && c.tags.includes('bridge'));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!isChasm(v.cells[y][x]) || regionOf[y * W + x] >= 0) continue;
+      const id = regions.length, cells = [], todo = [[x, y]];
+      regionOf[y * W + x] = id;
+      while (todo.length) {
+        const [px, py] = todo.pop(); cells.push([px, py]);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = px + dx, ny = py + dy;
+          if (isOpen(cellAt(nx, ny)) && regionOf[ny * W + nx] < 0) { regionOf[ny * W + nx] = id; todo.push([nx, ny]); }
+        }
       }
-    }));
-    if (!cells.length) return;
-    if (rim === -Infinity) rim = 0;
-    const D = rim - bottom, dark = new THREE.Color('#050506'), mist = new THREE.Color('#7d8794');
-    const layers = [0.05, 0.14, 0.26, 0.4, 0.56, 0.74, 0.92].map((f, k) => [rim - D * f, dark, 0.1 + k * 0.03])
-      .concat([[bottom + 0.7, mist, 0.07], [bottom + 0.3, mist, 0.1]]);
-    const pos = [], col = [], idx = [];
-    for (const [x, y] of cells) for (const [ly, c, a] of layers) {
-      const n = pos.length / 3;
-      pos.push(x, ly, y, x + 1, ly, y, x, ly, y + 1, x + 1, ly, y + 1);
-      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
-      idx.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
+      let rim = -Infinity;
+      for (const [cx, cy] of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const n = cellAt(cx + dx, cy + dy);
+        if (n && n.fog !== 'unknown' && !isOpen(n) && !n.tags.includes('wall')) rim = Math.max(rim, (n.h || 0) * FT);
+      }
+      regions.push({ id, cells, rim: rim === -Infinity ? 0 : rim, bottom });
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
-    g.setIndex(idx);
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
-    m.renderOrder = -1;
-    m.userData.dispose = g;
-    terrain.add(m);
-  }
-
-  // A big dark ground round the map so it doesn't end in a void: a frame of bands from the map's edge outward that thins to
-  // nothing, in the same tone and lighting as the uncharted margin it runs on from.
-  function buildBackdrop(v) {
-    const W = v.width, H = v.height, U = UNCH_MARGIN;
-    const steps = [[0, 1], [U, 1], [U + 6, 0.85], [U + 18, 0.5], [U + 40, 0.2], [U + 90, 0]];
-    const pos = [], col = [], idx = [], c = new THREE.Color(UNCHARTED).multiplyScalar(0.85);
-    for (const [d, a] of steps) {
-      pos.push(-d, 0, -d, W + d, 0, -d, W + d, 0, H + d, -d, 0, H + d);
-      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
+    abyss = { regionOf, regions, width: W };
+    const I = 0.012;
+    for (const r of regions) {
+      const pos = [], solid = [], idx = [];
+      const quad = (a, b, c, d, s) => { const k = pos.length / 3; pos.push(...a, ...b, ...c, ...d); solid.push(s, s, s, s); idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); };
+      for (const [x, y] of r.cells) {
+        quad([x, bottom + I, y], [x + 1, bottom + I, y], [x, bottom + I, y + 1], [x + 1, bottom + I, y + 1], 0);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < W && ny < H && regionOf[ny * W + nx] === r.id) continue;
+          const n = cellAt(nx, ny), seen = n && n.fog !== 'unknown' && !isOpen(n);
+          const top = seen ? Math.min(colTop(nx, ny), r.rim + 2) : r.rim;
+          if (top <= bottom) continue;
+          // the edge between the squares, nudged into this one
+          const ex = dx > 0 ? x + 1 - I : dx < 0 ? x + I : null, ez = dy > 0 ? y + 1 - I : dy < 0 ? y + I : null;
+          if (ex !== null) quad([ex, top, y], [ex, top, y + 1], [ex, bottom, y], [ex, bottom, y + 1], seen ? 0 : 1);
+          else quad([x, top, ez], [x + 1, top, ez], [x, bottom, ez], [x + 1, bottom, ez], seen ? 0 : 1);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('aSolid', new THREE.Float32BufferAttribute(solid, 1));
+      g.setIndex(idx);
+      const u = { uRim: { value: r.rim }, uBot: { value: bottom } };
+      const m = new THREE.MeshBasicMaterial({ color: ABYSS, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+      m.onBeforeCompile = (sh) => {
+        Object.assign(sh.uniforms, u);
+        sh.vertexShader = 'attribute float aSolid; varying float vSolid; varying float vY;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n  vSolid = aSolid; vY = (modelMatrix * vec4(transformed, 1.0)).y;');
+        sh.fragmentShader = 'uniform float uRim, uBot; varying float vSolid; varying float vY;\n' + sh.fragmentShader.replace('#include <alphamap_fragment>', `#include <alphamap_fragment>
+          float t = clamp((uRim - vY) / max(0.01, uRim - uBot), 0.0, 1.0);
+          float a = max(smoothstep(0.0, 1.0, pow(t, 0.7)), vSolid) * 0.985;
+          a += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 128.0;
+          diffuseColor.a *= clamp(a, 0.0, 1.0);`);
+      };
+      m.customProgramCacheKey = () => 'abyss';
+      const mesh = addGlobal(new THREE.Mesh(g, m));
+      mesh.renderOrder = -2; mesh.userData.region = r.id;
     }
-    for (let s = 0; s < steps.length - 1; s++) for (let i = 0; i < 4; i++) {
-      const a = s * 4 + i, b = s * 4 + (i + 1) % 4;
-      idx.push(a, a + 4, b, b, a + 4, b + 4);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(Float32Array.from({ length: pos.length }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
-    g.setIndex(idx);
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false, side: THREE.DoubleSide }));
-    m.position.y = -0.02; m.renderOrder = -2;
-    m.userData.dispose = g;
-    terrain.add(m);
   }
 
   // Stairs climb from the lower neighbour to the higher one in four steps across the square,
@@ -484,7 +741,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     slab.position.set(x + 0.5, top - 0.05, y + 0.5);
     // rope rails on the sides that don't continue into more bridge
     const isBridge = (bx, by) => v.cells[by] && v.cells[by][bx] && (v.cells[by][bx].tags || []).includes('bridge');
-    const rope = new THREE.MeshStandardMaterial({ color: dim ? '#4a3f2e' : '#b89a64', roughness: 1 });
+    const rope = oneMat('rope', () => new THREE.MeshStandardMaterial({ color: '#b89a64', roughness: 1 }));
     const post = mat('planks', 1, { dim, tint: '#9b8a76' });
     const vertical = isBridge(x, y - 1) || isBridge(x, y + 1) || !(isBridge(x - 1, y) || isBridge(x + 1, y));
     const sides = vertical ? [[-1, 0], [1, 0]] : [[0, -1], [0, 1]];
@@ -544,7 +801,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       case 'brazier': {
         const ironM = mat('iron', 0, { dim, rough: 0.55, metal: 0.6 });
         // open-topped, so the coals sit inside it instead of fighting its lid
-        const bowlM = ironM.clone(); bowlM.side = THREE.DoubleSide;
+        const bowlM = oneMat('bowl', () => { const m = ironM.clone(); m.side = THREE.DoubleSide; return m; });
         const bowl = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.3, 0.16, 0.2, 14, 1, true)), bowlM), at);
         bowl.position.set(cx, top + H - 0.1, cz);
         for (let i = 0; i < 3; i++) {
@@ -552,7 +809,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
           const leg = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.025, 0.03, H - 0.15, 5)), ironM), at);
           leg.position.set(cx + Math.cos(a) * 0.16, top + (H - 0.15) / 2, cz + Math.sin(a) * 0.16);
         }
-        const coals = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 14)), new THREE.MeshStandardMaterial({ color: '#2a1a10', emissive: '#ff5a1a', emissiveIntensity: dim ? 0.2 : 1.4 })), at);
+        const coals = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 14)), oneMat('coals', () => new THREE.MeshStandardMaterial({ color: '#2a1a10', emissive: '#ff5a1a', emissiveIntensity: 1.4 }))), at);
         coals.position.set(cx, top + H - 0.06, cz);
         addFire(cx, top + H, cz, 0.9, dim, true);
         break;
@@ -561,7 +818,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         const vis = Math.min(H, 3.2);
         const trunk = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.1, 0.16, vis * 0.55, 8)), mat('bark', variant, { dim })), at);
         trunk.position.set(cx, top + vis * 0.275, cz);
-        const leafM = new THREE.MeshStandardMaterial({ map: tex('leaves', variant), roughness: 1, flatShading: true, color: dim ? '#555' : '#fff' });
+        const leafM = oneMat('leaves' + variant, () => new THREE.MeshStandardMaterial({ map: tex('leaves', variant), roughness: 1, flatShading: true }));
         for (let i = 0; i < 3; i++) {
           const s = 0.55 + r() * 0.35;
           const blob = add(new THREE.Mesh(geo(new THREE.IcosahedronGeometry(s, 0)), leafM), at);
@@ -586,27 +843,32 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const s = new THREE.Sprite(sm);
     s.scale.set(0.45 * size, 0.6 * size, 1);
     s.position.set(x, y + 0.27 * size, z);
-    s.userData = { base: s.scale.clone(), y: s.position.y, phase: Math.random() * 10 };
-    fx.add(s); flames.push(s);
-    if (light && !dim && lights.length < 8) {
+    // cx, cy: the square it burns in, for updateFog (bright and lit only where the party can see it)
+    s.userData = { base: s.scale.clone(), y: s.position.y, phase: Math.random() * 10, cx: Math.floor(x), cy: Math.floor(z) };
+    fx.add(s); flames.push(s); cur.flames.push(s);
+    if (light && lights.length < 8) {
       const l = new THREE.PointLight('#ff9a4a', 5, 6, 1.6);
       l.position.set(x, y + 0.5, z);
-      l.userData.phase = Math.random() * 10;
-      scene.add(l); lights.push(l);
+      l.userData = { phase: Math.random() * 10, on: 1, cx: Math.floor(x), cy: Math.floor(z) };
+      scene.add(l); lights.push(l); cur.lights.push(l);
     }
   }
 
-  function buildWall(v, w, add, geo) {
-    const vertical = w.x1 === w.x2;
-    const len = vertical ? Math.abs(w.y2 - w.y1) : Math.abs(w.x2 - w.x1);
-    // floor heights on both sides of the segment
-    const hs = [];
+  // Floor heights on both sides of a wall segment (known squares only).
+  function wallFloors(v, w) {
+    const vertical = w.x1 === w.x2, len = vertical ? Math.abs(w.y2 - w.y1) : Math.abs(w.x2 - w.x1), hs = [];
     for (let i = 0; i < len; i++) {
       const a = vertical ? [w.x1 - 1, Math.min(w.y1, w.y2) + i] : [Math.min(w.x1, w.x2) + i, w.y1 - 1];
       const b = vertical ? [w.x1, Math.min(w.y1, w.y2) + i] : [Math.min(w.x1, w.x2) + i, w.y1];
       for (const [cx, cy] of [a, b]) if (v.cells[cy] && v.cells[cy][cx] && v.cells[cy][cx].fog !== 'unknown') hs.push((v.cells[cy][cx].h || 0) * FT);
     }
     if (!hs.length) hs.push(0);
+    return hs;
+  }
+  function buildWall(v, w, add, geo) {
+    const vertical = w.x1 === w.x2;
+    const len = vertical ? Math.abs(w.y2 - w.y1) : Math.abs(w.x2 - w.x1);
+    const hs = wallFloors(v, w);
     const base = Math.min(...hs), rim = Math.max(...hs);
     let ft = w.height || WALL_FT[w.kind] || 8;
     if (wallsLow && w.kind !== 'low') ft = Math.min(ft, 2);
@@ -631,9 +893,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       // hinge at one end of the opening; an open door swings 100 degrees
       hinge.position.set(vertical ? midX : midX - len / 2 + 0.08, rim + (doorFt / 2) * FT, vertical ? midZ - len / 2 + 0.08 : midZ);
       leaf.position.set(vertical ? 0 : (len - 0.16) / 2, 0, vertical ? (len - 0.16) / 2 : 0);
-      markWall(leaf); hinge.add(leaf);
+      legacyWall(leaf); hinge.add(leaf); cur.geos.push(leaf.geometry);
       hinge.rotation.y = w.open ? (vertical ? -1 : 1) * Math.PI * 0.55 : 0;
-      terrain.add(hinge);
+      cur.group.add(hinge);
       return;
     }
     if (w.kind === 'window') {
@@ -653,19 +915,6 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
         y0 = y1;
       }
     }
-  }
-
-  function addLabel(text, x, y, z, geo) {
-    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
-    const ctx = c.getContext('2d');
-    ctx.font = '600 40px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(12,11,9,.85)'; ctx.strokeText(text, 32, 34);
-    ctx.fillStyle = '#d8cfb8'; ctx.fillText(text, 32, 34);
-    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-    const m = new THREE.Mesh(geo(new THREE.PlaneGeometry(0.5, 0.5)), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
-    m.rotation.x = -Math.PI / 2; m.position.set(x, y, z);
-    m.userData.dispose = t;
-    terrain.add(m);
   }
 
   // ---------- tokens ----------
@@ -1123,7 +1372,18 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     tmp.copy(v).project(camera);
     return { x: rect.left + (tmp.x + 1) / 2 * rect.width, y: rect.top + (1 - tmp.y) / 2 * rect.height, front: tmp.z < 1 && Math.abs(tmp.x) < 1.15 && Math.abs(tmp.y) < 1.15 };
   };
-  const occluders = () => occ || (occ = terrain.children.filter((o) => o.isMesh && !o.userData.dispose));
+  // What blocks sight and takes clicks: each chunk's merged meshes and props, and secret walls (not door leaves, the fog plane,
+  // the rock mass or the abyss).
+  const occluders = () => occ || (occ = [...chunks.values()].flatMap((ch) => ch.pick.concat(ch.walls.filter((w) => w.parent === ch.group))));
+  // The square (and, for a terrain face, which side) a raycast hit: merged meshes map each triangle to its square.
+  function terrainHit(h) {
+    const fc = h.object.userData.faceCell;
+    const k = fc ? fc[h.faceIndex] : -1, cell = fc ? (k >= 0 ? { x: k % gridW, y: Math.floor(k / gridW) } : null) : h.object.userData.cell || null;
+    if (!cell) return null;
+    const n = h.face && h.face.normal;
+    const side = !n ? null : n.y > 0.7 ? 'top' : n.y < -0.7 ? 'bottom' : Math.abs(n.x) > Math.abs(n.z) ? (n.x > 0 ? 'e' : 'w') : (n.z > 0 ? 's' : 'n');
+    return { ...cell, side };
+  }
   // Where each body stands this frame: its square, the floor under it, whether it floats above it, whether it shares the square.
   function bodyInfo() {
     const counts = {};
@@ -1178,8 +1438,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   // The square under the cursor (terrain only; walls' own segments don't count).
   function cellAt(x, y) {
     ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera); ray.far = Infinity;
-    const hit = ray.intersectObjects(occluders(), false).find((h) => h.object.userData.cell);
-    return hit ? hit.object.userData.cell : null;
+    for (const h of ray.intersectObjects(occluders(), false)) { const c = terrainHit(h); if (c) return { x: c.x, y: c.y }; }
+    return null;
   }
   const cellOfBody = (g) => { const q = cellOf(lastState.creatures[g.userData.id].pos); return [q.x, q.y]; };
   // Hover from the pointer. `emit` (a real pointer move) always tells onHover; a frame only does when a body's square changed.
@@ -1282,28 +1542,60 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   });
   dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = null; hoverKey = null; if (onHover) onHover(-1, -1); });
 
+  // Walls between the camera and the creatures that matter fade. Merged wall pieces are tested as boxes (a ray-box test per
+  // piece, no triangle raycasts) and fade by rewriting their aFade range; door leaves and secret walls fade by material.
   const wallRay = new THREE.Raycaster();
+  function rayBox(r, b) {
+    let t0 = 0, t1 = r.far;
+    for (let a = 0; a < 3; a++) {
+      const o = r.o[a], d = r.d[a];
+      if (Math.abs(d) < 1e-9) { if (o < b[a] || o > b[a + 3]) return false; continue; }
+      let ta = (b[a] - o) / d, tb = (b[a + 3] - o) / d;
+      if (ta > tb) { const t = ta; ta = tb; tb = t; }
+      if (ta > t0) t0 = ta; if (tb < t1) t1 = tb;
+      if (t0 > t1) return false;
+    }
+    return true;
+  }
   function fadeOccludingWalls(dt) {
-    const blocked = new Set();
-    scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+    const rays = [], blocked = new Set(), k = 1 - Math.exp(-dt * 12);
+    camera.updateMatrixWorld(true);
     for (const id of new Set([lastState && lastState.current, lastSelected, ptrHover || hoveredId])) {
       const c = lastState && lastState.creatures[id], g = tokenObjs.get(id);
       if (!c || c.hidden || !g) continue;
       for (const up of [0.55, 0.95, g.userData.top]) {
-        const point = g.position.clone().add(new THREE.Vector3(0, up, 0));
-        const dir = point.sub(camera.position), distance = dir.length();
-        wallRay.set(camera.position, dir.normalize()); wallRay.far = Math.max(0, distance - 0.05);
-        for (const hit of wallRay.intersectObjects(wallMeshes, false)) blocked.add(hit.object);
+        const dir = g.position.clone().add(new THREE.Vector3(0, up, 0)).sub(camera.position), distance = dir.length();
+        dir.normalize();
+        rays.push({ o: camera.position.toArray(), d: dir.toArray(), far: Math.max(0, distance - 0.05), dir });
       }
     }
-    for (const mesh of wallMeshes) for (const material of [].concat(mesh.material)) {
-      const base = material.userData.occlusionBase;
-      const target = blocked.has(mesh) ? Math.min(base.opacity, 0.18) : base.opacity;
-      material.opacity += (target - material.opacity) * (1 - Math.exp(-dt * 12));
-      if (Math.abs(material.opacity - target) < 0.002) material.opacity = target;
-      const fading = material.opacity < base.opacity, transparent = fading || base.transparent;
-      if (material.transparent !== transparent) { material.transparent = transparent; material.needsUpdate = true; }
-      material.depthWrite = fading ? false : base.depthWrite;
+    for (const ch of chunks.values()) {
+      for (const f of ch.fades) {
+        let changed = false;
+        for (const p of f.pieces) {
+          const target = rays.length && rays.some((r) => rayBox(r, p.box)) ? 0.18 : 1;
+          if (p.op === target) continue;
+          p.op += (target - p.op) * k;
+          if (Math.abs(p.op - target) < 0.002) p.op = target;
+          f.attr.array.fill(p.op, p.start, p.start + p.count); changed = true;
+        }
+        if (changed) { f.attr.needsUpdate = true; f.ghost.visible = f.pieces.some((p) => p.op < 0.995); }
+      }
+      if (!ch.walls.length) continue;
+      if (rays.length) {
+        ch.group.updateMatrixWorld(true);
+        for (const r of rays) { wallRay.set(camera.position, r.dir); wallRay.far = r.far; for (const hit of wallRay.intersectObjects(ch.walls, false)) blocked.add(hit.object); }
+      }
+      for (const mesh of ch.walls) for (const material of [].concat(mesh.material)) {
+        const base = material.userData.occlusionBase;
+        const target = blocked.has(mesh) ? Math.min(base.opacity, 0.18) : base.opacity;
+        if (material.opacity === target && material.transparent === base.transparent) continue;
+        material.opacity += (target - material.opacity) * k;
+        if (Math.abs(material.opacity - target) < 0.002) material.opacity = target;
+        const fading = material.opacity < base.opacity, transparent = fading || base.transparent;
+        if (material.transparent !== transparent) { material.transparent = transparent; material.needsUpdate = true; }
+        material.depthWrite = fading ? false : base.depthWrite;
+      }
     }
   }
 
@@ -1317,9 +1609,32 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   };
   const ro = new ResizeObserver(resize); ro.observe(container); resize();
 
+  // Perf: frame times (last 300), per-section {last, max, n} timings, and the renderer's own counters.
+  const frames = [], sections = {}, PERF_LOG = /[?&]perf/.test(location.search);
+  const timed = (name, fn) => {
+    const t0 = performance.now(), r = fn();
+    const e = sections[name] || (sections[name] = { last: 0, max: 0, n: 0 });
+    e.last = performance.now() - t0; e.n++; if (e.last > e.max) e.max = e.last;
+    return r;
+  };
+  const pct = (a, q) => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(b.length * q))]; };
+  function perf() {
+    const sum = frames.reduce((a, b) => a + b, 0), avg = frames.length ? sum / frames.length : 0, mx = frames.length ? Math.max(...frames) : 0;
+    const i = renderer.info, r = (n) => Math.round(n * 100) / 100;
+    return {
+      fps: { avg: avg ? r(1000 / avg) : 0, min: mx ? r(1000 / mx) : 0 },
+      frameMs: { p50: r(pct(frames, 0.5)), p95: r(pct(frames, 0.95)), max: r(mx) },
+      drawCalls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures,
+      sections: Object.fromEntries(Object.entries(sections).map(([k, e]) => [k, { last: r(e.last), max: r(e.max), n: e.n }])),
+    };
+  }
+  let fpsNow = 0, fpsAt = performance.now(), fpsN = 0;
+  if (PERF_LOG) setInterval(() => { const p = perf(); console.log('[perf] ' + JSON.stringify(p)); for (const e of Object.values(sections)) e.max = 0; }, 5000);
+
   let raf = 0, prev = performance.now();
   function tick(now) {
     raf = requestAnimationFrame(tick);
+    { const ms = now - prev; if (ms > 0 && ms < 2000) { frames.push(ms); if (frames.length > 300) frames.shift(); } fpsN++; if (now - fpsAt >= 500) { fpsNow = Math.round(fpsN * 1000 / (now - fpsAt)); fpsN = 0; fpsAt = now; if (onFps) onFps(fpsNow, perf); } }
     const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
     const t = now / 1000;
     for (const s of flames) {
@@ -1327,8 +1642,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       s.scale.set(s.userData.base.x * (2 - k), s.userData.base.y * k, 1);
       s.position.y = s.userData.y + (k - 1) * 0.1;
     }
-    for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
-    for (const w of waters) { const m = w.material.map; if (m) { m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; } }
+    for (const l of lights) l.intensity = 5 * l.userData.on * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
+    for (const w of waters) { const m = w.map; if (m) { m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; } }
     stepSpectral(t, dt);
     for (const g of tokens.children) {
       const u = g.userData;
@@ -1366,16 +1681,17 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     camera.updateMatrixWorld(); rect = renderer.domElement.getBoundingClientRect(); viewCache.clear();
     if (lastState) {
       bodyInfo(); updateHover(false);
-      marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect });
+      timed('marksStep', () => marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect }));
       stepHighlights(dt * 1000); drawHits();
     }
-    fadeOccludingWalls(dt);
-    renderer.render(scene, camera);
+    timed('wallFade', () => fadeOccludingWalls(dt));
+    timed('render', () => renderer.render(scene, camera));
   }
   raf = requestAnimationFrame(tick);
 
   function signature(v) {
-    return JSON.stringify([v.width, v.height, wallsLow, v.walls, v.cells.map((r) => r.map((c) => [c.fog, c.ch, c.h, c.tags, c.obj]))]);
+    // geometry only: what is known, not whether it is seen now (that is the fog field's, see fogSignature)
+    return JSON.stringify([v.width, v.height, wallsLow, v.walls, v.cells.map((r) => r.map((c) => (c.fog === 'unknown' ? 0 : [c.ch, c.h, c.tags, c.obj])))]);
   }
 
   return {
@@ -1385,16 +1701,20 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
       if (pickedCell && !sqHold && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
-      const sig = signature(v);
-      if (sig !== built) { buildTerrain(v); built = sig; }
+      const sig = timed('signature', () => signature(v));
+      if (sig !== built) { timed('terrainBuild', () => buildTerrain(v)); built = sig; }
+      const fsig = fogSignature(v);
+      if (fsig !== fogBuilt) { timed('fogUpdate', () => updateFog(v)); fogBuilt = fsig; }
       if (!framed) { frame(v); framed = true; }
-      updateTokens(v);
+      timed('tokens', () => updateTokens(v));
       updateSpectral(v);
-      marks.sync(v.creatures, you, alts(v));
+      timed('marksSync', () => marks.sync(v.creatures, you, alts(v)));
       followTurn(v);
       setCursor(v, cursor);
     },
-    ping: addPing,
+    ping: addPing, perf,
+    abyss: () => abyss,   // chasm regions: { regionOf (id per square, -1 none), regions: [{ id, cells, rim, bottom }], width }
+    debug: { camera, controls, scene, renderer },   // for the console and perf checks
     setPath, shoot, bump, hit, glide, snap, showSquare,
     setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
@@ -1410,8 +1730,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     },
     dispose() {
       cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose();
-      clearWalls(); clearTrail();
-      disposables.forEach((g) => g.dispose());
+      clearTrail();
+      for (const ch of [...chunks.values()]) disposeChunk(ch);
+      clearGlobals();
+      if (fogPlane) { fogPlane.geometry.dispose(); fogPlane.material.dispose(); }
+      if (fogTex) fogTex.dispose();
       renderer.dispose(); renderer.domElement.remove();
     },
   };
