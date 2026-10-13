@@ -1665,8 +1665,8 @@ function closeWheel() {
 // 3D: a traced stem or a marker icon under the pointer outranks the wheel's buttons and ring (they often overlap a square's wheel).
 function wheelYields(ev) {
   const mk = THREE_D && map3d && map3d.marks();
-  if (!mk || !mk.active) return false;
-  const id = mk.pickAt(ev.clientX, ev.clientY);
+  if (!mk) return false;
+  const id = ev.type === 'pointerup' ? map3d.pressed : mk.active && mk.pickAt(ev.clientX, ev.clientY);
   return !!(id && state && state.creatures[id] && (!W || id !== W.id));
 }
 function calm3d() { // 3D: the other icons come back up and a square wheel's gold square goes (a leaf closes the wheel without onClose)

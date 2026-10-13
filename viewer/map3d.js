@@ -1193,7 +1193,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   // LMB drags the ground (the floor point under the cursor stays under it); RMB orbits, the wheel zooms, MMB dollies.
   // A click is a press and release under ~5 px without movement.
   const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  let grab = null, downAt = null;
+  let grab = null, downAt = null, pressed = null;   // pressed: the marker under the pointer at press time (pressing ends the trace and shrinks it)
   function groundAt(x, y) {
     ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera);
     return ray.ray.intersectPlane(ground, new THREE.Vector3());
@@ -1201,7 +1201,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   const dom = renderer.domElement;
   dom.addEventListener('pointerdown', (e) => {
     rect = dom.getBoundingClientRect(); camera.updateMatrixWorld();
-    downAt = [e.clientX, e.clientY, e.button]; mouse.btn = e.buttons;
+    downAt = [e.clientX, e.clientY, e.button]; pressed = e.button === 0 ? marks.pickAt(e.clientX, e.clientY) : null; mouse.btn = e.buttons;
     if (e.button === 0 && e.pointerType === 'mouse') { grab = groundAt(e.clientX, e.clientY); try { dom.setPointerCapture(e.pointerId); } catch { /* ignore */ } }
   });
   dom.addEventListener('pointermove', (e) => {
@@ -1224,7 +1224,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (e.pwHandled) return;   // the action wheel used this click
     if (!downAt || downAt[2] !== 0 || e.button !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !lastState) return;
     rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
-    const id = marks.pickAt(e.clientX, e.clientY);
+    const id = pressed || marks.pickAt(e.clientX, e.clientY);
     if (id) { showSquare(null); if (onSelect) onSelect(id); return; }
     const c = cellAt(e.clientX, e.clientY);
     if (c) { showSquare(c); if (onCell) onCell(c.x, c.y); }
@@ -1348,6 +1348,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
     screenOf, squareAnchor,
+    get pressed() { return pressed; },   // the marker a press began on (until the next press)
     marks: () => marks,   // icon element/position per id, setLow, active (icon mode or tracing)
     setFollow(on) {
       follow = !!on;
