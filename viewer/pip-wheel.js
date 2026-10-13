@@ -81,10 +81,11 @@ function tipHtml(s, root) {
   const role = root && s.role && s.role !== s.what ? `<div class="r">${esc(s.role)}</div>` : '';
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
     + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
+    + (s.info && !s.off ? `<div class="n">${esc(s.info)}</div>` : '')
     + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '');
 }
 
-export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, spinMs = () => 150 } = {}) {
+export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, onHot = () => {}, spinMs = () => 150 } = {}) {
   if (!document.getElementById('pw-css')) document.head.insertAdjacentHTML('beforeend', `<style id="pw-css">${CSS}</style>`);
   const el = document.createElement('div');
   el.className = 'pw'; el.hidden = true;
@@ -218,6 +219,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     const sl = k && slotOf(k);
     if (sl) S.tip.innerHTML = tipHtml(sl, S.stack.length === 1);
     placeTip();
+    onHot(sl && !sl.back ? sl : null);   // the host previews what the slot would do (a route on the map)
   }
 
   function choose(k, shift) {

@@ -1526,8 +1526,11 @@ function updatePath() {
     if (cursor.cell === cell) drawLook();
   }, 60);
 }
+// A hovered wheel slot that moves (Move here, Approach) shows its route in place of the cursor's.
+let routePreview = null;
+function previewRoute(r) { if (r === routePreview) return; routePreview = r || null; drawPath(); }
 function drawPath() {
-  const cells = pathData && pathData.path, ok = pathData && pathData.ok;
+  const pd = routePreview || pathData, cells = pd && pd.path, ok = pd && pd.ok;
   if (THREE_D) { if (map3d) map3d.setPath(cells, ok); return; }
   const g = svg && svg.querySelector('#pathfx');
   if (!g) return;
@@ -1537,7 +1540,7 @@ function drawPath() {
   el('polyline', { points: cells.map(parseCell).map((p) => `${p.x * CELL + CELL / 2},${p.y * CELL + CELL / 2}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 3, 'stroke-dasharray': '6 5', 'stroke-linecap': 'round' }, g);
   const e = parseCell(cells[cells.length - 1]);
   const t = el('text', { x: e.x * CELL + CELL / 2, y: e.y * CELL + CELL + 13, 'text-anchor': 'middle', fill: color, 'font-family': 'IBM Plex Mono', 'font-size': 11, 'font-weight': 500, stroke: '#14130f', 'stroke-width': 3, 'paint-order': 'stroke' }, g);
-  t.textContent = `${pathData.cost} ft` + (ok ? ` · ${pathData.left - pathData.cost} left` : pathData.dashLeft && pathData.cost <= pathData.dashLeft ? ' · dash' : ' · too far');
+  t.textContent = `${pd.cost} ft` + (ok ? ` · ${pd.left - pd.cost} left` : pd.dashLeft && pd.cost <= pd.dashLeft ? ' · dash' : ' · too far');
 }
 
 // The inspect card's buttons: move (squares), attacks (enemies), and a skill check (anything).
@@ -1612,7 +1615,7 @@ const wheelView = () => disp || state;
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
-    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev) });
+    pw = m.createPipWheel(document.body, { onLeaf: (s) => { const r = s.go ? s.go(s) : undefined; if (r !== 'keep') setTimeout(() => { if (!pw.isOpen) calm3d(); }); return r; }, onClose: () => closeWheel(), onInnerClick: (ev) => THREE_D && innerClick3d(ev), onHot: (s) => previewRoute(s && s.route) });
     return pw;
   }));
 }
@@ -1621,6 +1624,7 @@ function closeWheel() {
   calm3d(); W = null; wheelSeq++; if (pw) pw.close();
 }
 function calm3d() { // 3D: the other icons come back up and a square wheel's gold square goes (a leaf closes the wheel without onClose)
+  previewRoute(null);
   const mk = map3d && map3d.marks(); if (mk) mk.setLow();
   if (W && W.sq && map3d) { W.sq = null; map3d.showSquare(null); }
 }
@@ -1789,10 +1793,11 @@ function moveFields(cell, p, { dash = false, jump = false, fast = false, then = 
     if (p.ok) return { off: true, odds: 'no dash needed' };
     if (!(p.dashLeft && p.cost <= p.dashLeft)) return { off: true, odds: `too far even dashing (${p.cost} ft)` };
     if (!as) return { off: true, odds: 'no action left to dash' };
-  } else if (!p.ok) return { off: true, odds: `too far · ${base}, ${p.left} left` };
+  } else if (!p.ok) return { off: true, odds: `too far · ${base}, ${p.left} left`, route: p };
   const prov = p.provokers || [], verb = dash ? 'dash and move' : 'move', warn = `Provokes ${prov.join(', ')}. Choose again to ${verb}.`;
   return {
     odds: base + (dash ? ` · dash${as === 'bonus' ? ' (bonus)' : ''}` : ` · ${p.left - p.cost} left`), sug: dash,
+    route: dash ? Object.assign({}, p, { ok: true, left: p.dashLeft }) : p,
     go(s) {
       if (prov.length && !secondClick('wheel', { cell, dash, jump, fast }, warn)) {
         Object.assign(s, { warn: true, short: 'Provokes ' + (prov.length > 1 ? '×' + prov.length : prov[0].split(' ')[0]), odds: warn });
@@ -1856,7 +1861,7 @@ function approachLeaf(cx, T, appr, L, s) {
   if (appr && appr.here) return Object.assign({}, s, { odds: 'adjacent: ' + melee.name, go: () => { strike(melee); } });
   if (!appr) return Object.assign({}, s, { off: true, odds: myTurn() ? 'no way there' : noTurnWhy() });
   const f = moveFields(appr.cell, appr.p, { then: () => strike(melee) });
-  return Object.assign({}, s, f, f.off ? {} : { odds: `${appr.p.cost} ft, then ${melee.name}` });
+  return Object.assign({}, s, f, f.off ? {} : { odds: `${appr.p.cost} ft, then ${melee.name}`, info: `${melee.name} ${signed(melee.bonus)} to hit · ${melee.damage}` });
 }
 
 // ---- class defaults (Card 5b swaps this for the choice stored on the character) ----
