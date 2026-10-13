@@ -24,6 +24,7 @@ function run(...args) {
 function expect(name, cond, detail) {
   if (cond) { pass++; console.log(`  ok   ${name}`); } else { failed++; console.log(`  FAIL ${name}\n       ${detail}`); }
 }
+const edit = (fn) => { const s = C.loadState(); fn(s); C.saveState(s); };
 
 try {
   run('load', 'rope-bridge');
@@ -451,6 +452,15 @@ try {
   expect('its first use spends a 2nd-level slot', sa.creatures.ash.resources.slots2 === 1 && sa.creatures.ash.active['Spiritual Weapon'], JSON.stringify(sa.creatures.ash.resources));
   run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
   expect('later uses are free of slots', C.loadState().creatures.ash.resources.slots2 === 1, '');
+  expect('...and record when it was cast', C.loadState().creatures.ash.active['Spiritual Weapon'].round === 1, JSON.stringify(C.loadState().creatures.ash.active));
+  edit((s) => { s.round = 11; });
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('after 10 rounds the cast lapses, so it spends a slot again', C.loadState().creatures.ash.resources.slots2 === 0, JSON.stringify(C.loadState().creatures.ash.resources));
+  edit((s) => { s.creatures.ash.active = { 'Spiritual Weapon': true }; s.creatures.ash.resources.slots2 = 1; s.round = 99; });
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('an old-save `true` stays active until the next initiative', C.loadState().creatures.ash.resources.slots2 === 1, '');
+  run('initiative');
+  expect('a new initiative clears active spells', !C.loadState().creatures.ash.active, JSON.stringify(C.loadState().creatures.ash.active));
   r = run('attack', 'ash', 'gob1', 'mace');
   expect('a mace swing still spends the action', C.turnInfo(C.loadState(), 'ash').action, r.out);
   r = run('spend', 'ash', 'slots1');
@@ -463,6 +473,12 @@ try {
   run('spend', 'ash', 'slots2', '2');
   r = run('attack', 'ash', 'gob1', 'spiritual');
   expect('no slot, no Spiritual Weapon', !r.ok && /slot left/.test(r.out), r.out);
+  edit((s) => { s.creatures.ash.resources.slots1 = 'lots'; });
+  r = run('spend', 'ash', 'slots1');
+  expect('spend fails cleanly on a non-numeric resource', !r.ok && /isn't a number/.test(r.out) && !/TypeError/.test(r.out), r.out);
+  fs.unlinkSync(C.STATE);
+  r = run('spend', 'ash', 'slots1');
+  expect('spend with no encounter loaded fails cleanly', !r.ok && !/TypeError/.test(r.out), r.out);
 
   // Turns of creatures the party can't see: the player view says something is acting, not who.
   run('load', 'rope-bridge');
@@ -475,7 +491,6 @@ try {
   expect('the DM still sees whose turn it is', hd.current === 'grall' && /Grall the Bugbear's turn/.test(JSON.stringify(hd.log)), hd.current);
 
   // DM speed: the engine runs the turn order.
-  const edit = (fn) => { const s = C.loadState(); fn(s); C.saveState(s); };
   run('load', 'rope-bridge'); run('initiative'); run('seat', 'sam', 'wren');
   edit((s) => { s.turnOrder = ['rook', 'gob1', 'wren', 'ash', 'gob2']; s.turnIdx = 0; s.turn = {}; });
   run('dash', 'rook');

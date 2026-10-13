@@ -405,10 +405,11 @@ cmd('use', 'use <id> action|bonus|reaction        mark part of a turn as spent (
   console.log(`${c.name}'s ${pos[1] === 'bonus' ? 'bonus action' : pos[1]} is spent this turn.`); return s;
 });
 cmd('spend', 'spend <id> <resource> [n]           use up n (default 1) of a resource: slots2, secondWind, rage...  (negative n gives back)', (s, { pos }) => {
-  const c = who(s, pos[0]), k = pos[1], n = pos[2] === undefined ? 1 : Number(pos[2]);
+  const c = who(need(s), pos[0]), k = pos[1], n = pos[2] === undefined ? 1 : Number(pos[2]);
   if (!k || !Number.isFinite(n) || !n) fail('spend <id> <resource> [n]');
   const res = c.resources || {};
   if (!(k in res)) fail(`${c.name} has no "${k}". Has: ${Object.keys(res).join(', ') || 'nothing tracked'}.`);
+  if (typeof res[k] !== 'number') fail(`${c.name}'s "${k}" isn't a number, so it can't be spent.`);
   if (n > res[k]) fail(`${c.name} has only ${res[k]} ${k} left.`);
   res[k] -= n;
   const t = n > 0 ? `${c.name} spends ${n > 1 ? n + ' ' : ''}${k} (${res[k]} left).` : `${c.name} regains ${-n > 1 ? -n + ' ' : ''}${k} (${res[k]} now).`;
@@ -456,6 +457,13 @@ function spend(s, id, kind) {
   turnState(s, id)[kind === 'bonus' ? 'bonus' : 'action'] = true;
 }
 
+// Whether a cast spell is still running. Card 11b moves this into an `effects` entry.
+const CAST_ROUNDS = 10; // 1 minute
+function castActive(s, a, name) {
+  const v = (a.active || {})[name]; // a legacy `true` lasts until the next initiative
+  return !!v && (v === true || (s.round || 0) - (v.round || 0) < CAST_ROUNDS);
+}
+
 cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra 1d6] [--sneak] [--as bonus|reaction]   roll to hit + damage, checks reach/range/LOS/cover', (s, { pos, flags }) => {
   need(s);
   const a = who(s, pos[0]), t = who(s, pos[1]);
@@ -474,10 +482,10 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
   const ts = turnState(s, pos[0]);
   const cost = C.attackCost(w), as = flags.as === 'bonus' || flags.as === 'reaction' ? flags.as : cost.as;
   let cast = '';
-  if (cost.cast && !(a.active || {})[w.name]) {
+  if (cost.cast && !castActive(s, a, w.name)) {
     const key = Object.keys(a.resources || {}).filter((k) => /^slots\d$/.test(k) && Number(k.slice(5)) >= cost.cast && a.resources[k] > 0).sort()[0];
     if (!key) fail(`No ${cost.cast}${['', 'st', 'nd', 'rd'][cost.cast] || 'th'}-level slot left.`);
-    a.resources[key]--; (a.active = a.active || {})[w.name] = true;
+    a.resources[key]--; (a.active = a.active || {})[w.name] = { round: s.round || 0 };
     cast = ` (casts it, spending a level-${key.slice(5)} slot)`;
   }
   if (as === 'bonus' || as === 'reaction') spend(s, pos[0], as);
@@ -707,6 +715,7 @@ cmd('initiative', 'initiative                         roll initiative for everyo
     if (!c.pos || (c.hp <= 0 && c.side !== 'party')) continue;
     const r = C.d(20), b = c.initBonus !== undefined ? c.initBonus : mod((c.stats || {}).dex);
     c.init = r + b; rolls.push(`${c.name} ${c.init}`);
+    delete c.active; // a new fight ends lingering spells
   }
   s.turnOrder = Object.keys(s.creatures).filter((id) => s.creatures[id].init !== undefined)
     .sort((a, b) => s.creatures[b].init - s.creatures[a].init || ((s.creatures[b].stats || {}).dex || 10) - ((s.creatures[a].stats || {}).dex || 10));
