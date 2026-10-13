@@ -282,8 +282,12 @@ try {
     r = run('oa', rk.id, '--drop');
     expect('oa --drop declines', r.ok && !(C.loadState().pendingOA || []).some((x) => x.id === rk.id), r.out);
     run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
+    const waitingTurn = C.loadState().turnIdx;
     for (let i = 0; i < 3; i++) run('next', '--force');
-    expect('unanswered OAs lapse as turns pass', !(C.loadState().pendingOA || []).length, JSON.stringify(C.loadState().pendingOA));
+    expect('unanswered player OAs pause turn advancement', (C.loadState().pendingOA || []).length > 0 && C.loadState().turnIdx === waitingTurn, JSON.stringify(C.loadState().pendingOA));
+    for (const p of C.loadState().pendingOA || []) run('oa', p.id, '--drop');
+    r = run('next', '--force');
+    expect('declining player OAs resumes turn advancement', r.ok && C.loadState().turnIdx !== waitingTurn, r.out);
     run('load', 'rope-bridge'); run('initiative');
     expect('reaction pip data is available off-turn', C.turnInfo(C.loadState(), 'wren').reaction === false, '');
     const rs = C.loadState(); rs.creatures.wren.reactionUsed = true;

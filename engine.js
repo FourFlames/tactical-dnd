@@ -282,7 +282,7 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
 
 // Opportunity attacks are the reactor's choice. Each is recorded in s.pendingOA; a player-controlled
 // reactor (seated, or the local player) gets an offer, anyone else is left to the DM ("oa <id>").
-// Stale after two more turns or the end of the round.
+// Human choices pause turn advancement; DM choices lapse after two turns or the end of the round.
 const avgDmg = (e) => String(e).replace(/\s+/g, '').split(/(?=[+-])/).reduce((n, t) => { const m = /^([+-]?)(\d*)d(\d+)$/i.exec(t); return n + (m ? (m[1] === '-' ? -1 : 1) * (m[2] || 1) * (+m[3] + 1) / 2 : Number(t) || 0); }, 0);
 function bestMelee(o) {
   const ok = (o.attacks || []).filter((w) => !w.range && C.attackCost(w).as === 'action' && !C.attackCost(w).cast);
@@ -290,8 +290,18 @@ function bestMelee(o) {
 }
 function livePending(s) {
   const age = (p) => s.turnIdx - p.turnIdx;
-  s.pendingOA = (s.pendingOA || []).filter((p) => p.round === s.round && age(p) >= 0 && age(p) <= 2 && s.creatures[p.by] && s.creatures[p.target] && s.creatures[p.target].hp > 0);
+  s.pendingOA = (s.pendingOA || []).filter((p) => {
+    const a = s.creatures[p.by], t = s.creatures[p.target];
+    if (!a || !t || a.hp <= 0 || t.hp <= 0 || a.reactionUsed || ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'surrendered'].some((k) => hasCond(a, k))) return false;
+    return a.controller === 'player' || (p.round === s.round && age(p) >= 0 && age(p) <= 2);
+  });
   return s.pendingOA;
+}
+function awaitingReactions(s) {
+  const choices = livePending(s).filter((p) => s.creatures[p.by].controller === 'player');
+  if (!choices.length) return false;
+  console.log(`Waiting for opportunity attack choices: ${choices.map((p) => `${s.creatures[p.by].name} (${p.id})`).join(', ')}. Answer the offer, or run "oa <id>" / "oa <id> --drop", then "next" or "auto" to continue.`);
+  return true;
 }
 // Run fn with console output dropped, except lines passed to important() (offers that need the DM's eye).
 let KEEP = null;
@@ -320,7 +330,7 @@ cmd('oa', 'oa <id> [--drop]  |  oa <by> <target>   resolve a pending opportunity
   need(s);
   const pend = livePending(s);
   const p = pos[1] ? pend.filter((x) => x.by === pos[0] && x.target === pos[1]).pop() : pend.find((x) => x.id === pos[0]);
-  if (!p) fail(`No pending opportunity attack${pos[0] ? ` "${pos.join(' ')}"` : ''}. It may have lapsed (they last until two turns later or the end of the round).${pend.length ? ' Pending: ' + pend.map((x) => `${x.id} (${x.by} → ${x.target})`).join(', ') : ''}`);
+  if (!p) fail(`No pending opportunity attack${pos[0] ? ` "${pos.join(' ')}"` : ''}. It may have lapsed or the reactor can no longer react.${pend.length ? ' Pending: ' + pend.map((x) => `${x.id} (${x.by} → ${x.target})`).join(', ') : ''}`);
   s.pendingOA = pend.filter((x) => x !== p);
   if (flags.drop) { console.log(`Opportunity attack ${p.id} dropped.`); return s; }
   rollOA(s, p);
@@ -407,7 +417,10 @@ cmd('spend', 'spend <id> <resource> [n]           use up n (default 1) of a reso
 cmd('regain', 'regain <id> action|bonus|reaction     give back part of a turn (Action Surge, haste, and the like)', (s, { pos }) => {
   const c = who(need(s), pos[0]);
   if (!['action', 'bonus', 'reaction'].includes(pos[1])) fail('regain <id> action|bonus|reaction');
-  if (pos[1] === 'reaction') delete c.reactionUsed;
+  if (pos[1] === 'reaction') {
+    s.pendingOA = (s.pendingOA || []).filter((p) => p.by !== pos[0]);
+    delete c.reactionUsed;
+  }
   else { const ts = turnState(s, pos[0]); ts[pos[1]] = false; if (pos[1] === 'action') ts.attacks = 0; }
   const t = `${c.name} gets ${pos[1] === 'action' ? 'another action' : pos[1] === 'bonus' ? 'another bonus action' : 'their reaction back'}.`;
   C.appendLog(s, 'action', t); console.log(t); return s;
@@ -435,7 +448,11 @@ cmd('undo', 'undo <id>                        take back this turn\'s last move (
 // Action economy: `--as bonus|reaction` spends that instead of the action. Attacks spend the
 // action once the creature has made its attacksPerAction (Extra Attack) for the turn.
 function spend(s, id, kind) {
-  if (kind === 'reaction') { s.creatures[id].reactionUsed = true; return; }
+  if (kind === 'reaction') {
+    s.creatures[id].reactionUsed = true;
+    s.pendingOA = (s.pendingOA || []).filter((p) => p.by !== id);
+    return;
+  }
   turnState(s, id)[kind === 'bonus' ? 'bonus' : 'action'] = true;
 }
 
@@ -680,6 +697,7 @@ cmd('initiative', 'initiative                         roll initiative for everyo
   s.turnOrder = Object.keys(s.creatures).filter((id) => s.creatures[id].init !== undefined)
     .sort((a, b) => s.creatures[b].init - s.creatures[a].init || ((s.creatures[b].stats || {}).dex || 10) - ((s.creatures[a].stats || {}).dex || 10));
   s.round = 1; s.turnIdx = 0; s.turn = {};
+  delete s.pendingOA; delete s.awaitingOAAdvance;
   const first = s.creatures[s.turnOrder[0]];
   const t = `Roll for initiative! ${rolls.join(', ')}. Round 1 begins: ${first.name}'s turn.`;
   const seen = seenNow(s);
@@ -707,6 +725,11 @@ const controllerOf = (c) => c.controller || (c.side === 'party' ? 'llm' : 'dm');
 
 // Step to the next creature that can take a turn (one that has reached its way out leaves first).
 function advanceTurn(s) {
+  if (awaitingReactions(s)) {
+    s.awaitingOAAdvance = { round: s.round, turnIdx: s.turnIdx, id: s.turnOrder[s.turnIdx] };
+    return null;
+  }
+  delete s.awaitingOAAdvance;
   const gone = s.creatures[s.turnOrder[s.turnIdx]];
   if (gone && gone.fled) {
     const gid = s.turnOrder[s.turnIdx];
@@ -751,6 +774,10 @@ function combatOver(s) {
 async function autoRun(s) {
   const at = (s.mindConfig || {}).deliberateAt || 2;
   let round = s.round;
+  if (awaitingReactions(s)) return s;
+  const paused = s.awaitingOAAdvance;
+  if (paused && paused.round === s.round && paused.turnIdx === s.turnIdx && paused.id === s.turnOrder[s.turnIdx]) advanceTurn(s);
+  else delete s.awaitingOAAdvance;
   for (let guard = 0; guard < 300; guard++) {
     const over = combatOver(s);
     if (over) { console.log(over); break; }
@@ -777,7 +804,7 @@ async function autoRun(s) {
       const fl = flavourFor(s, id, act);
       if (fl) C.appendLog(s, 'narration', fl);
     }
-    advanceTurn(s);
+    if (advanceTurn(s) === null) break;
     if (s.round !== round) { round = s.round; console.log(`— Round ${round} —`); }
     if (!(s.turnOrder || []).length) break;
   }
@@ -795,6 +822,7 @@ cmd('next', 'next [--auto] [--force]            end the current turn, start the 
   const over = flags.auto && combatOver(s);
   if (over) { console.log(over); return null; }
   const t = advanceTurn(s);
+  if (t === null) return s;
   if (!flags.auto) { console.log(t + turnHint(s)); return s; }
   console.log(t);
   return autoRun(s);
@@ -812,6 +840,9 @@ cmd('turn', 'turn <id>                          repair the order: make it this c
   const c = who(s, pos[0]), idx = s.turnOrder.indexOf(pos[0]);
   if (idx < 0) fail(`${c.name} isn't in the turn order.`);
   s.turnIdx = idx;
+  // A repaired turn is a new reaction window; old choices cannot spend a refreshed reaction.
+  s.pendingOA = (s.pendingOA || []).filter((p) => p.by !== pos[0]);
+  delete s.awaitingOAAdvance;
   s.turn = s.turn || {};
   s.turn[pos[0]] = { used: 0, dash: false, disengage: false };
   delete c.reactionUsed;
@@ -1685,6 +1716,7 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
       if (Minds.wantsFight(s, s.minds[id])) { fight.push(id); continue; }
       s.turn = s.turn || {};
       s.turn[id] = { used: 0, dash: false, disengage: false };
+      s.pendingOA = (s.pendingOA || []).filter((p) => p.by !== id);
       delete c.reactionUsed;
       // News mid-tick: OpenRouter minds hold and think about it next tick instead of chasing it on the fallback.
       const lines = mindAct(s, id, { hold: !!process.env.OPENROUTER_API_KEY && !flags['no-think'] });
