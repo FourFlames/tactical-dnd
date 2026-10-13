@@ -22,26 +22,25 @@ const lastPost = new Map();
 const lastPing = new Map();
 const lastAct = new Map();
 // The seat's creature whose turn it is, with where it stands in its turn; null if it isn't theirs.
-// detail: the Hide preview and undo cost, which trace the party's whole view; only /api/seat shows them, so actions and routes skip them.
-function myTurn(seat, s = C.loadState(), { detail = false } = {}) {
+function myTurn(seat, s = C.loadState()) {
   if (!s || !s.turnOrder || !s.turnOrder.length) return null;
   const id = s.turnOrder[s.turnIdx];
   if (!seat.creatures.includes(id) || !s.creatures[id]) return null;
   const u = s.undo;
   const canUndo = !!(u && u.id === id && u.round === s.round && u.turnIdx === s.turnIdx && !u.rolled);
-  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), hide: detail ? Minds.hidePreview(s, id, { player: true }) : undefined, canUndo, undoCost: detail && canUndo ? C.undoCost(s, id, { player: true }) : null }, C.turnInfo(s, id));
+  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), hide: Minds.hidePreview(s, id, { player: true }), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null }, C.turnInfo(s, id));
 }
 // Out of combat (an encounter is loaded, no turn order) each of the seat's creatures that is on the map
 // and standing can act, one round's worth at a time: { id: turn-like info with explore: true }.
-function exploreOf(seat, s = C.loadState(), { detail = false } = {}) {
-  const out = {}, visible = detail && s && !(s.turnOrder && s.turnOrder.length) ? C.view(s, 'player').creatures : null;
+function exploreOf(seat, s = C.loadState()) {
+  const out = {};
   if (!s || (s.turnOrder && s.turnOrder.length)) return out;
   for (const id of seat.creatures) {
     const c = s.creatures[id];
     if (!c || !c.pos || !(c.hp > 0)) continue;
     const ti = C.turnInfo(s, id), u = s.undo;
     const canUndo = !!(u && u.id === id && !u.rolled && ti.used > 0);
-    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), hide: visible ? Minds.hidePreview(s, id, { player: true, visible }) : undefined, canUndo, undoCost: visible && canUndo ? C.undoCost(s, id, { player: true }) : null, explore: true }, ti);
+    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), hide: Minds.hidePreview(s, id, { player: true }), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null, explore: true }, ti);
   }
   return out;
 }
@@ -368,7 +367,7 @@ const server = http.createServer((req, res) => {
     const seat = seatOf(req, url.searchParams.get('token'));
     if (seat && seat.locked) return json(res, 429, { error: 'Too many wrong codes. Wait a few minutes, then check the code with the DM.' });
     if (!seat) return json(res, 404, { error: 'This link is not (or no longer) a seat at the table. Ask the DM for a new one.' });
-    const s0 = C.sightCached(C.loadState()); // read-only from here: the views below share one sight trace
+    const s0 = C.loadState();
     const intents = C.readIntents().filter((e) => e.player === seat.player && ((e.kind !== 'auto' && e.kind !== 'answer') || e.replies.length)).slice(-8)
       .map(({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }) => ({ id, t, creature, text, kind, target, cell, z, handled, seenAt, replies, done }));
     const live = new Set(((s0 && s0.pendingOA) || []).map((p) => p.id)); // an opportunity attack that lapsed takes its offer with it
@@ -378,7 +377,7 @@ const server = http.createServer((req, res) => {
     const reactions = {};
     if (s0 && s0.turnOrder && s0.turnOrder.length) for (const id of seat.creatures) if (s0.creatures[id]) reactions[id] = !!s0.creatures[id].reactionUsed;
     const wheels = wheelsFor(Object.fromEntries(seat.creatures.filter((id) => s0 && s0.creatures[id]).map((id) => [id, s0.creatures[id]])));
-    return json(res, 200, { player: seat.player, creatures: seat.creatures, wheels, intents, offers, reactions, turn: myTurn(seat, s0, { detail: true }), explore: exploreOf(seat, s0, { detail: true }), dm: C.dmPresence() });
+    return json(res, 200, { player: seat.player, creatures: seat.creatures, wheels, intents, offers, reactions, turn: myTurn(seat, s0), explore: exploreOf(seat, s0), dm: C.dmPresence() });
   }
   // A seated player's slot choice for the wheel, stored on their character: { token, id: creature id, slot: strike|sig|kit, name ('' = class default) }.
   if (url.pathname === '/api/wheel' && req.method === 'POST') {
