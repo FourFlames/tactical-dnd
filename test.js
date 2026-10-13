@@ -24,6 +24,7 @@ function run(...args) {
 function expect(name, cond, detail) {
   if (cond) { pass++; console.log(`  ok   ${name}`); } else { failed++; console.log(`  FAIL ${name}\n       ${detail}`); }
 }
+const edit = (fn) => { const s = C.loadState(); fn(s); C.saveState(s); };
 
 try {
   run('load', 'rope-bridge');
@@ -36,6 +37,7 @@ try {
   r = run('move', 'rook', 'O2');
   expect('speed limit enforced', !r.ok && /needs \d+ ft/.test(r.out), r.out);
   r = run('dash', 'rook'); r = run('move', 'rook', 'L4');
+  { const g0 = C.loadState(); g0.creatures.grall.hidden = true; C.saveState(g0); } // the move provoked (and revealed) him; hide him again for the view tests
   expect('dash doubles movement', r.ok, r.out);
   r = run('attack', 'rook', 'gob3', 'longsword');
   expect('melee reach enforced', !r.ok && /reach/.test(r.out), r.out);
@@ -46,6 +48,8 @@ try {
   const pv = C.view(st, 'player'), dv = C.view(st, 'dm');
   expect('hidden bugbear absent from player view', !pv.creatures.grall, JSON.stringify(Object.keys(pv.creatures)));
   expect('hidden bugbear present in DM view', !!dv.creatures.grall, '');
+  expect('view carries armor kind and shield', pv.creatures.rook && ['none', 'light', 'medium', 'heavy'].includes(pv.creatures.rook.armor.kind) && typeof pv.creatures.rook.armor.shield === 'boolean', JSON.stringify(pv.creatures.rook));
+  expect('armor from explicit field and keywords', C.armorOf({ armor: { kind: 'heavy', shield: true } }).kind === 'heavy' && C.armorOf({ notes: 'wears studded leather and carries a shield' }).kind === 'light' && C.armorOf({ notes: 'Plate armor' }).kind === 'heavy' && C.armorOf({ notes: 'Spell: Shield of Faith' }).shield === false && C.armorOf({}).kind === 'none', '');
   expect('enemy HP hidden from player view', pv.creatures.gob1 && pv.creatures.gob1.hp === undefined, JSON.stringify(pv.creatures.gob1));
 
   r = run('ruling', 'rook', 'athletics', '12');
@@ -211,6 +215,18 @@ try {
   expect('undo takes back a plain move', r.ok && C.loadState().creatures.wren.pos === 'K9', r.out);
   r = run('undo', 'wren');
   expect('undo only once', !r.ok, r.out);
+  run('sneak', 'wren', '--total', '20');
+  run('move', 'wren', 'K8'); r = run('undo', 'wren');
+  let wr = C.loadState().creatures.wren;
+  expect('undo puts hiding back', r.ok && wr.pos === 'K9' && wr.hidden === true && wr.stealth === 20, r.out);
+  run('move', 'wren', 'K8');
+  let ust = C.loadState(); ust.creatures.wren.hidden = false; delete ust.creatures.wren.stealth; ust.undo.noticedBy = ['gob1'];
+  ust.undo.know.cells = ust.undo.know.cells.slice(3); C.saveState(ust);
+  const uc = C.undoCost(C.loadState(), 'wren', { player: true });
+  expect('undoCost counts new squares and who noticed', uc.cells >= 3 && uc.noticedBy.length === 1, JSON.stringify(uc));
+  r = run('undo', 'wren');
+  wr = C.loadState().creatures.wren;
+  expect('undo after being noticed stays revealed', r.ok && wr.pos === 'K9' && !wr.hidden && /noticed/.test(r.out), r.out);
   r = run('dash', 'wren', '--as', 'bonus');
   let ti = C.turnInfo(C.loadState(), 'wren');
   expect('bonus-action dash leaves the action free', r.ok && ti.bonus && !ti.action && ti.dash, JSON.stringify(ti));
@@ -236,6 +252,76 @@ try {
   for (const f of [C.SEATS, C.INTENTS]) if (fs.existsSync(f)) fs.unlinkSync(f);
   run('seat', 'sam', 'wren');
   run('load', 'rope-bridge');
+  // opportunity attacks are the reactor's choice: pending entry + offer, resolved by `oa`
+  {
+    run('initiative');
+    run('place', 'wren', 'L3'); run('place', 'rook', 'D8'); run('place', 'gob3', 'M3');
+    r = run('move', 'gob3', 'N3');
+    let os = C.loadState(), po = (os.pendingOA || [])[0];
+    let of = C.readOffers().pop();
+    expect('a provoking move files a pending OA and an offer to the seated player', r.ok && po && po.by === 'wren' && po.target === 'gob3' && po.from === 'M3' && of && of.player === 'sam' && of.oa === po.id && /Opportunity attack with your Shortsword|Opportunity attack with your/.test(of.text), r.out + JSON.stringify(po));
+    const hpBefore = os.creatures.gob3.hp;
+    r = run('oa', po.id);
+    os = C.loadState();
+    expect('oa rolls an attack from the departure cell and spends the reaction', r.ok && /Wren attacks Goblin Archer/.test(r.out) && os.creatures.wren.reactionUsed === true && !(os.pendingOA || []).length && (os.creatures.gob3.hp < hpBefore || /miss/.test(r.out)), r.out);
+    expect('a target that survives stays where it moved to', os.creatures.gob3.hp <= 0 || os.creatures.gob3.pos === 'N3', os.creatures.gob3.pos);
+    r = run('oa', po.id);
+    expect('a pending OA is used up', !r.ok && /No pending/.test(r.out), r.out);
+    // a drop puts the target back at `from`
+    run('load', 'rope-bridge'); run('initiative');
+    run('place', 'wren', 'L3'); run('place', 'gob3', 'M3');
+    let g = C.loadState(); g.creatures.gob3.hp = 1; g.creatures.wren.attacks.forEach((w) => { w.bonus = 99; }); C.saveState(g);
+    run('move', 'gob3', 'N3');
+    po = C.loadState().pendingOA[0];
+    r = run('oa', po.id);
+    expect('a dropped target is placed back where it left reach', r.ok && C.loadState().creatures.gob3.hp === 0 && C.loadState().creatures.gob3.pos === 'M3', r.out);
+    // lapsing and declining
+    run('place', 'rook', 'L4'); run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
+    g = C.loadState();
+    expect('a second provoker is queued too', (g.pendingOA || []).some((x) => x.by === 'rook'), JSON.stringify(g.pendingOA));
+    const rk = g.pendingOA.find((x) => x.by === 'rook');
+    r = run('oa', rk.id, '--drop');
+    expect('oa --drop declines', r.ok && !(C.loadState().pendingOA || []).some((x) => x.id === rk.id), r.out);
+    run('place', 'gob1', 'M4'); run('move', 'gob1', 'N4');
+    const waitingTurn = C.loadState().turnIdx;
+    for (let i = 0; i < 3; i++) run('next', '--force');
+    expect('unanswered player OAs pause turn advancement', (C.loadState().pendingOA || []).length > 0 && C.loadState().turnIdx === waitingTurn, JSON.stringify(C.loadState().pendingOA));
+    for (const p of C.loadState().pendingOA || []) run('oa', p.id, '--drop');
+    r = run('next', '--force');
+    expect('declining player OAs resumes turn advancement', r.ok && C.loadState().turnIdx !== waitingTurn, r.out);
+    run('load', 'rope-bridge'); run('initiative');
+    expect('reaction pip data is available off-turn', C.turnInfo(C.loadState(), 'wren').reaction === false, '');
+    const rs = C.loadState(); rs.creatures.wren.reactionUsed = true;
+    expect('turnInfo carries a spent reaction', C.turnInfo(rs, 'wren').reaction === true, '');
+  }
+  run('load', 'rope-bridge');
+  // event stream: n = log line number, game id, older-log paging
+  {
+    const g1 = C.loadState().game;
+    expect('load sets a game id', !!g1 && C.view(C.loadState(), 'player').game === g1, String(g1));
+    let s = C.loadState();
+    for (let i = 0; i < 90; i++) C.appendLog(s, 'narration', 'line ' + i);
+    C.appendLog(s, 'secret', 'hush');
+    C.appendLog(s, 'narration', 'last');
+    const total = C.readLog(1e6).length;
+    const w = C.view(s, 'player').log;
+    expect('player window ends at the last line with increasing n', w.length === 79 || w.length === 80 ? w[w.length - 1].n === total && w.every((e, i) => !i || e.n > w[i - 1].n) : false, JSON.stringify(w.slice(-2)));
+    const same = C.readLog(1e6).filter((e) => e.t === C.readLog(1).pop().t);
+    expect('entries in one ms keep distinct ns', new Set(same.map((e) => e.n)).size === same.length, '');
+    const old = C.logFor(s, 'player', { before: w[0].n, limit: 10 });
+    expect('before= returns older entries', old.length === 10 && old.every((e) => e.n < w[0].n), JSON.stringify(old.map((e) => e.n)));
+    const sec = C.readLog(1e6).find((e) => e.type === 'secret');
+    expect('older pages hold no secrets', !C.logFor(s, 'player', { before: total + 1, limit: 1000 }).some((e) => e.type === 'secret') && C.logFor(s, 'dm', { before: total + 1, limit: 1000 }).some((e) => e.n === sec.n), '');
+    expect('nothing before n 1', C.logFor(s, 'player', { before: 1 }).length === 0, '');
+    // a hidden turn is reworded but keeps its source n
+    C.appendLog(s, 'turn', 'Round 2: Zork the Unseen\'s turn.', { id: 'zork', unseen: true });
+    const hn = C.readLog(1).pop().n;
+    const hid = C.view(s, 'player').log.find((e) => e.n === hn);
+    expect('reworded hidden turn keeps n', hid && /something moves out of sight/.test(hid.text), JSON.stringify(hid));
+    run('load', 'rope-bridge');
+    const lg = C.view(C.loadState(), 'player');
+    expect('load gives a new game and n restarts at 1', lg.game !== g1 && lg.log[0].n === 1, `${g1} ${lg.game}`);
+  }
   expect('seats survive a reload', C.loadState().creatures.wren.player === 'sam', '');
   r = run('unseat', 'sam');
   expect('unseat revokes the link', r.ok && !C.loadSeats().sam && !C.loadState().creatures.wren.player, r.out);
@@ -330,6 +416,23 @@ try {
   c2 = Chars.load(ch.id);
   Chars.answerSuggestion(tester.name, c2, c2.suggestions[1].id, 'accept'); Chars.save(c2);
   expect('a DM-written homebrew is approved on accept and applies', c2.build.homebrew[1].status === 'approved' && Chars.derive(c2).creature.ac === 19, `${c2.build.homebrew[1].status} ac ${Chars.derive(c2).creature.ac}`);
+
+  // The action wheel reads the character: a structured block, and slot choices stored on the sheet.
+  c2 = Chars.load(ch.id);
+  const w0 = Chars.wheelOf(c2);
+  expect('the wheel block carries class, level, attacks, features and cost-tagged spells', w0.class === 'fighter' && w0.level === 3 && w0.attacks.length > 0 && w0.features.some((f) => f.name === 'Second Wind' && f.cost === 'bonusAny') && Array.isArray(w0.spells) && Chars.view(c2).wheel.class === 'fighter', JSON.stringify(w0).slice(0, 200));
+  const wiz = Chars.create(tester.name, 'Wheel Wiz', 5); madeChars.push(wiz.id);
+  wiz.build = Chars.mergeBuild(wiz.build, R.recommend(Object.assign(wiz.build, { class: 'wizard' }), { config: Chars.config() }));
+  const ww = Chars.wheelOf(wiz);
+  expect('a caster lists spells with their casting cost (Shield is a reaction)', ww.spells.some((x) => x.name === 'Shield' && x.cost === 'reaction') && ww.cantrips.length > 0 && R.spellCost('Healing Word') === 'bonusAny', JSON.stringify(ww.spells.map((x) => x.name + ':' + x.cost)));
+  const alt = ww.options.sig.find((x) => x !== ww.defaults.sig);
+  expect('a slot choice is stored on the character', !Chars.setWheel(wiz, 'sig', alt).error && wiz.build.wheel.sig === alt, JSON.stringify(wiz.build.wheel));
+  Chars.save(wiz);
+  expect('...and survives a save, showing in the wheel block', Chars.wheelOf(Chars.load(wiz.id)).slots.sig === alt, '');
+  expect('a choice the character does not have is refused', !!Chars.setWheel(wiz, 'sig', 'Wish').error && !!Chars.setWheel(wiz, 'bogus', alt).error, '');
+  expect('an empty name clears the slot back to the default', !Chars.setWheel(wiz, 'sig', '').error && !wiz.build.wheel, JSON.stringify(wiz.build.wheel));
+  wiz.build.wheel = { sig: 'Wish', kit: ww.options.kit[0] };
+  expect('a stale saved choice is dropped from the block', !('sig' in Chars.wheelOf(wiz).slots) && Chars.wheelOf(wiz).slots.kit === ww.options.kit[0], '');
   run('load', 'rope-bridge');
   C.saveSeats({ 'test-player-x': { token: tester.code, creatures: [] } });
   r = run('char', ch.id, 'spawn', 'G8');
@@ -338,6 +441,44 @@ try {
   C.saveSeats({});
   r = run('seat', 'test-player-x', ch.id);
   expect('seating reuses the player\'s sign-in code', C.loadSeats()['test-player-x'].token === tester.code, r.out);
+
+
+  // Costs: a bonus-action attack spends the bonus action, not the action; Spiritual Weapon is cast (a slot) on first use only.
+  run('load', 'rope-bridge'); run('initiative');
+  run('place', 'ash', 'G3'); run('place', 'gob1', 'G4');
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  let sa = C.loadState(), ta = C.turnInfo(sa, 'ash');
+  expect('Spiritual Weapon spends the bonus action, not the action', r.ok && ta.bonus && !ta.action && ta.attacks === 0, r.out + JSON.stringify(ta));
+  expect('its first use spends a 2nd-level slot', sa.creatures.ash.resources.slots2 === 1 && sa.creatures.ash.active['Spiritual Weapon'], JSON.stringify(sa.creatures.ash.resources));
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('later uses are free of slots', C.loadState().creatures.ash.resources.slots2 === 1, '');
+  expect('...and record when it was cast', C.loadState().creatures.ash.active['Spiritual Weapon'].round === 1, JSON.stringify(C.loadState().creatures.ash.active));
+  edit((s) => { s.round = 11; });
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('after 10 rounds the cast lapses, so it spends a slot again', C.loadState().creatures.ash.resources.slots2 === 0, JSON.stringify(C.loadState().creatures.ash.resources));
+  edit((s) => { s.creatures.ash.active = { 'Spiritual Weapon': true }; s.creatures.ash.resources.slots2 = 1; s.round = 99; });
+  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
+  expect('an old-save `true` stays active until the next initiative', C.loadState().creatures.ash.resources.slots2 === 1, '');
+  run('initiative');
+  expect('a new initiative clears active spells', !C.loadState().creatures.ash.active, JSON.stringify(C.loadState().creatures.ash.active));
+  r = run('attack', 'ash', 'gob1', 'mace');
+  expect('a mace swing still spends the action', C.turnInfo(C.loadState(), 'ash').action, r.out);
+  r = run('spend', 'ash', 'slots1');
+  expect('spend uses a resource', r.ok && C.loadState().creatures.ash.resources.slots1 === 3, r.out);
+  r = run('spend', 'ash', 'slots1', '-1');
+  expect('negative spend gives it back', r.ok && C.loadState().creatures.ash.resources.slots1 === 4, r.out);
+  r = run('spend', 'ash', 'slots2', '5');
+  expect('spend refuses more than is left', !r.ok && /only 1/.test(r.out), r.out);
+  run('load', 'rope-bridge'); run('place', 'ash', 'G3'); run('place', 'gob1', 'G4');
+  run('spend', 'ash', 'slots2', '2');
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('no slot, no Spiritual Weapon', !r.ok && /slot left/.test(r.out), r.out);
+  edit((s) => { s.creatures.ash.resources.slots1 = 'lots'; });
+  r = run('spend', 'ash', 'slots1');
+  expect('spend fails cleanly on a non-numeric resource', !r.ok && /isn't a number/.test(r.out) && !/TypeError/.test(r.out), r.out);
+  fs.unlinkSync(C.STATE);
+  r = run('spend', 'ash', 'slots1');
+  expect('spend with no encounter loaded fails cleanly', !r.ok && !/TypeError/.test(r.out), r.out);
 
   // Turns of creatures the party can't see: the player view says something is acting, not who.
   run('load', 'rope-bridge');
@@ -348,6 +489,93 @@ try {
   expect('a hidden creature\'s turn is anonymous to players', hp.current === null && hp.currentUnseen && /something moves out of sight/.test(said) && !/Grall/.test(said), said.slice(-400));
   expect('players see unseen turns as a ? in the order', hp.turnOrder.includes('?') && !hp.turnOrder.includes('grall'), JSON.stringify(hp.turnOrder));
   expect('the DM still sees whose turn it is', hd.current === 'grall' && /Grall the Bugbear's turn/.test(JSON.stringify(hd.log)), hd.current);
+
+  // DM speed: the engine runs the turn order.
+  run('load', 'rope-bridge'); run('initiative'); run('seat', 'sam', 'wren');
+  edit((s) => { s.turnOrder = ['rook', 'gob1', 'wren', 'ash', 'gob2']; s.turnIdx = 0; s.turn = {}; });
+  run('dash', 'rook');
+  r = run('turn', 'wren');
+  let ts = C.loadState();
+  expect('turn <id> makes it that creature turn and says so', r.ok && ts.turnOrder[ts.turnIdx] === 'wren' && /Wren/.test(r.out) && /restored/.test(r.out), r.out);
+  expect('turn leaves other other trackers alone', ts.turn.rook && ts.turn.rook.dash && !ts.turn.wren.dash, JSON.stringify(ts.turn));
+  r = run('turn', 'nobody');
+  expect('turn rejects an unknown creature', !r.ok, r.out);
+  r = run('dash', 'wren'); r = run('info', 'wren');
+  expect('info shows HP, the turn tracker, position and whose turn it is', r.ok && /HP 20\/20/.test(r.out) && /action used/.test(r.out) && /movement 0\/50/.test(r.out) && /dashing/.test(r.out) && /IT IS THEIR TURN/.test(r.out) && /at K9/.test(r.out), r.out);
+  r = run('next');
+  expect('next will not end a a seated player turn', !r.ok && /It's Wren's turn \(sam\)\. They end it with End turn; use --force/.test(r.out) && C.loadState().turnOrder[C.loadState().turnIdx] === 'wren', r.out);
+  r = run('next', '--by-player');
+  expect('...unless the player pressed End turn', r.ok && /Ash/.test(r.out) && /→ Brother Ash/.test(r.out), r.out);
+  run('turn', 'wren'); r = run('next', '--force');
+  expect('...or the DM forces it', r.ok && /→ Brother Ash/.test(r.out), r.out);
+  edit((s) => { s.turnIdx = 0; });
+  r = run('next', '--auto');
+  expect('next --auto stops at a monster with no mind', r.ok && /Goblin Cutter: no mind, DM to act/.test(r.out) && /→ Goblin Cutter \[gob1\]/.test(r.out) && C.loadState().turnOrder[C.loadState().turnIdx] === 'gob1', r.out);
+  edit((s) => { s.turnOrder = ['gob1', 'gob2', 'wren']; s.turnIdx = 0; Object.assign(s.creatures.gob2, { hp: 0 }); });
+  r = run('next', '--auto');
+  expect('next --auto skips the downed and stops at a seated player', r.ok && /→ Wren \[wren\].*REMOTE PLAYER "sam"/.test(r.out), r.out);
+  edit((s) => { for (const id of ['gob1', 'gob2', 'gob3', 'grall']) s.creatures[id].hp = 0; s.turnOrder = ['rook', 'gob1', 'wren']; s.turnIdx = 0; });
+  r = run('next', '--auto');
+  expect('next --auto says when combat is over, and moves nothing', r.ok && /Combat is over/.test(r.out) && C.loadState().turnIdx === 0, r.out);
+
+  // Monster opportunity attacks are rolled on the move.
+  let oaDone = false, oaDown = false;
+  for (let i = 0; i < 8 && !(oaDone && oaDown); i++) {
+    run('load', 'rope-bridge'); run('initiative');
+    edit((s) => { Object.assign(s.creatures.rook, { pos: 'H4', ac: 0, hp: 1 }); s.creatures.gob1.pos = 'H3'; s.creatures.gob1.attacks = [{ name: 'Scimitar', bonus: 20, damage: '5', type: 'slashing' }]; s.turnOrder = ['rook', 'gob1']; s.turnIdx = 0; });
+    r = run('move', 'rook', 'H6');
+    const os = C.loadState();
+    oaDone = r.ok && /Opportunity attack from Goblin Cutter/.test(r.out) && os.creatures.gob1.reactionUsed === true;
+    oaDown = oaDone && os.creatures.rook.hp === 0 && os.creatures.rook.pos === 'H4';
+  }
+  expect('a party creature move provokes a monster opportunity attack, rolled during the move', oaDone, r.out);
+  expect('...and if it drops the mover, the mover stops where it left reach', oaDown, r.out);
+  run('load', 'rope-bridge'); run('initiative');
+  edit((s) => { s.creatures.rook.pos = 'H4'; s.creatures.gob1.pos = 'H3'; s.turnOrder = ['rook', 'gob1']; s.turnIdx = 0; });
+  r = run('move', 'rook', 'H6', '--force');
+  expect('--force moves provoke nothing', r.ok && !/opportunity/i.test(r.out) && !C.loadState().creatures.gob1.reactionUsed, r.out);
+
+  // Tracks: soft ground keeps prints; Survival reads them by age and ground; results can be recorded as facts.
+  run('load', 'rope-bridge');
+  run('terrain', 'D3:L4', 'add', 'tracks');
+  run('move', 'gob1', 'L4');
+  expect('a creature crossing tagged ground leaves tracks (who, when, where from)', ((C.loadState().trails || {}).L4 || [])[0] && C.loadState().trails.L4[0].who === 'gob1' && C.loadState().trails.L4[0].from, JSON.stringify(C.loadState().trails));
+  expect('bare stone keeps none', !C.loadState().trails.H8 && !C.loadState().trails.K9, JSON.stringify(Object.keys(C.loadState().trails)));
+  r = run('track', 'rook', '4', '--total', '15', '--note');
+  expect('track: a fresh trail reads as size, kind, age and heading, never a name', r.ok && /^\s+a (small|medium) humanoid passed this way, fresh, heading/.test(r.out.split('\n')[1]) && !/Goblin/.test(r.out.split('\n')[1]), r.out);
+  expect('...and --note records it for the inspect card', (C.loadState().known.L4 || []).some((f) => /^Tracks: .*fresh/.test(f)), JSON.stringify(C.loadState().known));
+  r = run('track', 'rook', '4', '--total', '11');
+  expect('track: a low roll on the same ground reads nothing', r.ok && /nothing readable/.test(r.out) && /too faint/.test(r.out), r.out);
+  r = run('track', 'rook', '4', '--total', '12');
+  expect('track: a middling roll gets the trail but not the kind', r.ok && /something passed this way/.test(r.out), r.out);
+  edit((s) => { s.mtime = 25; });
+  r = run('track', 'rook', '4', '--total', '12');
+  expect('track: age raises the DC', /nothing readable/.test(r.out), r.out);
+  r = run('track', 'rook', '4', '--total', '18');
+  expect('...and is reported', /a while old/.test(r.out), r.out);
+  edit((s) => { s.mtime = 70; });
+  r = run('track', 'rook', '4', '--total', '30');
+  expect('old tracks fade away entirely', /nothing readable/.test(r.out) && !/too faint/.test(r.out), r.out);
+  edit((s) => { s.creatures.rook.pos = 'E4'; s.mtime = 0; const e = { who: 'gob1', t: 0, seq: 1, from: 'E6', size: 'small', kind: 'humanoid', base: 12 }; s.trails = { E5: [e], E3: [e], G4: [e] }; });
+  r = run('track', 'rook', 'E5', '--total', '30');
+  expect('track <cell> reads only that cell, not a trail two squares away', r.ok && /passed this way/.test(r.out) && !/E3|G4/.test(r.out) && C.trackCells(C.loadState(), C.loadState().creatures.rook, 'e5').join() === 'E5', r.out);
+  expect('...whereas a radius takes in the neighbours', C.trackCells(C.loadState(), C.loadState().creatures.rook, '2').length > 1, '');
+  {
+    // readLog parses only what it returns: same entries and n values as parsing every line.
+    const lines = ['{"type":"a"}', '', '{"type":"b"}', '{"type":"c"}', '{"type":"d"}'];
+    require('fs').writeFileSync(C.LOG, lines.join('\n') + '\n');
+    const old = (n, before = Infinity) => { const o = []; lines.forEach((l, i) => { if (l.trim() && i + 1 < before) o.push(Object.assign(JSON.parse(l), { n: i + 1 })); }); return o.slice(-n); };
+    const same = (n, b) => JSON.stringify(C.readLog(n, b)) === JSON.stringify(old(n, b));
+    expect('readLog matches parse-everything output across a blank line, a limit and before', same(200) && same(2) && same(10, 4) && same(1, 5) && JSON.stringify(C.readLog(10, 4).map((e) => e.n)) === '[1,3]', JSON.stringify(C.readLog(10, 4)));
+  }
+  edit((s) => { s.creatures.gob1.pos = 'H3'; s.mtime = 0; s.trails = {}; });
+  run('terrain', 'D3:L4', 'remove', 'tracks');
+  run('move', 'gob1', 'L4');
+  expect('without tagged or soft terrain nothing is recorded', !Object.keys(C.loadState().trails || {}).length, JSON.stringify(C.loadState().trails));
+  run('terrain', 'D3:L4', 'add', 'wet');
+  edit((s) => { s.creatures.gob1.pos = 'L2'; });
+  run('move', 'gob1', 'L3');
+  expect('wet stone takes prints at a higher DC', ((C.loadState().trails || {}).L3 || [])[0] && C.loadState().trails.L3[0].base === 14, JSON.stringify(C.loadState().trails));
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }

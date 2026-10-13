@@ -311,7 +311,7 @@ const openSugs = () => (view.suggestions || []).filter((s) => s.status === 'open
 const STEP_OF_PATH = (path) => {
   const [a, b] = path.split('.');
   if (a === 'picks') { const n = d.needs.find((x) => x.key === b); return n ? n.step : 'class'; }
-  return { name: 'concept', level: 'concept', species: 'species', class: 'class', subclass: 'class', background: 'background', bgBonus: 'background', abilities: 'abilities', gear: 'gear', homebrew: 'homebrew', details: 'finish', hp: 'finish' }[a] || 'concept';
+  return { name: 'concept', level: 'concept', species: 'species', class: 'class', subclass: 'class', background: 'background', bgBonus: 'background', abilities: 'abilities', gear: 'gear', homebrew: 'homebrew', wheel: 'wheel', details: 'finish', hp: 'finish' }[a] || 'concept';
 };
 function sugsFor(path) { return openSugs().filter((s) => Object.keys(s.patch || {}).some((k) => k === path || k.startsWith(path + '.') || path.startsWith(k + '.'))); }
 function sugValue(path) { for (const s of openSugs()) if (Object.prototype.hasOwnProperty.call(s.patch || {}, path)) return s.patch[path]; return undefined; }
@@ -388,7 +388,7 @@ function renderTop() {
   const sc = openSugs().length;
   $('tStatus').innerHTML = (sc ? `<span class="pill gold" style="cursor:pointer" data-go="${STEP_OF_PATH(Object.keys(openSugs()[0].patch || {})[0] || 'name')}">★ ${sc} DM suggestion${sc > 1 ? 's' : ''}</span> ` : '') + st;
 }
-function stepVisible(s) { return s.id !== 'spells' || d.needs.some((n) => n.step === 'spells'); }
+function stepVisible(s) { return s.id === 'wheel' ? !!build.class : s.id !== 'spells' || d.needs.some((n) => n.step === 'spells'); }
 function renderNav() {
   const sugSteps = new Set(openSugs().flatMap((s) => Object.keys(s.patch || {}).map(STEP_OF_PATH)));
   $('nav').innerHTML = Rules.STEPS.filter(stepVisible).map((s) => {
@@ -592,6 +592,15 @@ const STEP_RENDER = {
       <button class="btn" data-act="newhb">+ New homebrew</button>
       ${d.pool.used ? `<p class="muted" style="margin-top:14px">Power creep used: ${d.pool.used} of ${d.pool.pool} FP.</p>` : ''}
       ${stepIssues('homebrew')}`;
+  },
+  wheel() {
+    const w = Rules.wheelFor(build, d);
+    const row = (key, label, hint, def) => `<div data-path="wheel.${key}" style="margin-bottom:14px"><label class="f">${label}</label><div class="dim" style="font-size:12px;margin-bottom:4px">${hint}</div>
+      <select data-wheel="${key}" style="min-width:260px"><option value="">${esc(def)}</option>${w.options[key].map((o) => `<option ${w.slots[key] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`;
+    return `<h2>Your action wheel</h2><p class="lede">On the map, right-clicking a creature opens a wheel of quick actions. Three of its slots are yours to set; the rest are fixed. You can also swap them in play, with a right-click on the slot.</p>
+      ${row('strike', 'Strike', 'The attack the wheel makes when you click Strike.', 'Best attack (automatic)')}
+      ${row('sig', 'Signature', 'Your go-to move.', 'Class default: ' + w.defaults.sig)}
+      ${w.options.kit.length ? row('kit', 'Kit', 'Your toolbox slot: one thing from your class features or spells.', 'Class default: ' + w.defaults.kit) : '<p class="muted">Your class has nothing for the Kit slot yet.</p>'}`;
   },
   finish() {
     const items = [...d.errors.map((e) => `<li class="e">${esc(e.msg)} <button class="link" data-go="${e.step}">fix</button></li>`), ...d.todo.map((t) => `<li>${esc(t.msg)} <button class="link" data-go="${t.step}">go</button></li>`), ...d.dm.map((x) => `<li class="m">${esc(x.what)}</li>`)];
@@ -813,6 +822,7 @@ document.addEventListener('change', (e) => {
   if (ds.assign) { build.abilities.base[ds.assign] = t.value === '' ? null : Number(t.value); return changed(); }
   if (ds.armor !== undefined) { build.gear.armor = t.value || null; return changed(); }
   if (ds.shield !== undefined) { build.gear.shield = t.checked; return changed(); }
+  if (ds.wheel) { const w = Object.assign({}, build.wheel); if (t.value) w[ds.wheel] = t.value; else delete w[ds.wheel]; if (Object.keys(w).length) build.wheel = w; else delete build.wheel; return changed(); }
   if (ds.manual) return changed();
   if (ds.hbf === 'slot') { hb(t.closest('[data-hb]').dataset.hb).slot = t.value; return changed(); }
   if (ds.eff !== undefined && t.tagName === 'SELECT') {

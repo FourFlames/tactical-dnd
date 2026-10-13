@@ -72,7 +72,7 @@ try {
   expect('B: Hask gets a REPORTED track, not a sighting', rep && rep.direct === false && /reported by .*Bram/.test(rep.label), JSON.stringify(hk.tracks));
   expect('B: Hask has the message as evidence, with its source (through the walls: muffled, the voice only maybe Bram\'s)', hk.obs.some((o) => o.kind === 'message' && /Bram/.test(o.fromLabel) && /muffled/.test(o.text)), JSON.stringify(hk.obs.slice(-2)));
   expect('B: Hask has no visual observation of the intruder', !hk.obs.some((o) => o.kind === 'sight'), JSON.stringify(hk.obs));
-  expect('B: the party overhears the shout in the chronicle', C.readLog(50).some((e) => e.type === 'narration' && /hear/.test(e.text) && /Someone by the path/.test(e.text)), JSON.stringify(C.readLog(10)));
+  expect('B: the party overhears the shout in the chronicle', C.readLog(50).some((e) => e.type === 'narration' && e.data && e.data.sense === 'hear' && e.data.perceivers.length && /Someone by the path/.test(e.text)), JSON.stringify(C.readLog(10)));
 
   // ---------- Scenario C: conflicting sightings ----------
   setup((s) => { s.minds.tilly.alarm.intensity = 30; });
@@ -146,7 +146,7 @@ try {
   expect('a well-hidden creature in the dark passes unnoticed', !Object.values(M('bram').tracks).some((t) => t.side !== 'ally'), JSON.stringify(M('bram').tracks));
   run('place', 'wren', 'G12');
   r = run('move', 'wren', 'G13');
-  expect('...but not in plain sight, in torchlight, right in front of a guard', !S().creatures.wren.hidden && Object.values(M('bram').tracks).some((t) => t.side === 'hostile' && t.inView), r.out);
+  expect('...but not in plain sight, in torchlight, right in front of a guard', S().creatures.wren.hideState.detectedBy.includes('bram') && C.observerSees(S(), S().creatures.bram, S().creatures.wren) && Object.values(M('bram').tracks).some((t) => t.side === 'hostile' && t.inView), r.out);
 
   // ---------- the dog: sleeping, woken by noise, smells intruders ----------
   run('load', 'tollhouse');
@@ -206,7 +206,7 @@ try {
   run('load', 'goblin-warren-caves');
   run('place', 'rook', 'M23');
   r = decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger down past K29! Hold L18!' }] });
-  const heardLine = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'narration' && /hear/.test(e.text)).pop();
+  const heardLine = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'narration' && e.data && e.data.sense === 'hear').pop();
   expect('speech: the party hears place names, not squares', heardLine && /the west gap/.test(heardLine.text) && /the crack mouth/.test(heardLine.text) && !/K29|L18/.test(heardLine.text), heardLine ? heardLine.text : r.out);
   const snik = M('snikka').obs.filter((o) => o.kind === 'message').pop();
   expect('speech: NPC listeners hear the same words', snik && /the west gap/.test(snik.text) && !/K29/.test(snik.text), JSON.stringify(snik));
@@ -482,6 +482,94 @@ try {
   expect('a comrade named instead of their id, and ["all"], are understood', r.ok && /"Ilse" read as ilse/.test(r.out) && /"all" in a list read as everyone/.test(r.out) && !/don't know anyone/.test(r.out), r.out);
   r = decide('pell', { orderResponses: [{ order: 'hold-post', response: 'accept', reply: 'Aye!' }, { order: M('pell').orders[0].via, response: 'accept' }] });
   expect('answers to a standing order, or to the message that carried an order, are read', r.ok && /is a standing order, not a task/.test(r.out) && new RegExp(`read as ${M('pell').orders[0].id}`).test(r.out) && !/no order/.test(r.out), r.out);
+
+  // ---------- DM speed: morale and the turn order ----------
+  const dist = (a, b) => C.distFeet(C.parseCell(a), C.parseCell(b));
+  run('load', 'tollhouse');
+  run('place', 'wren', 'H13'); run('move', 'wren', 'H12');
+  const d0 = dist(S().creatures.bram.pos, 'H12'), wrenHp = S().creatures.wren.hp;
+  r = run('mind', 'bram', 'rout');
+  expect('rout: the DM can make an NPC run', r.ok && M('bram').morale && M('bram').morale.state === 'rout', r.out);
+  r = run('mind', 'bram', 'act', '--brief');
+  expect('rout: --brief shows one line of world effects', r.ok && r.out.split('\n').filter((l) => /^Bram: /.test(l)).length === 1 && !/\[(fallback|morale)/.test(r.out), r.out);
+  expect('rout: he runs from the enemy he can see instead of fighting', dist(S().creatures.bram.pos, 'H12') > d0 && S().creatures.wren.hp === wrenHp, r.out + S().creatures.bram.pos);
+  expect('rout: panic is shouted where the party can hear', C.readLog(8).some((e) => e.type === 'narration' && /Bram/.test(e.text) && /shout|says/.test(e.text)), JSON.stringify(C.readLog(4)));
+  run('mind', 'bram', 'stand');
+  expect('stand: clears it', !M('bram').morale, JSON.stringify(M('bram').morale));
+  run('mind', 'bram', 'fallback');
+  expect('without rout the same mind does not flee', !/Rout|Fall back/.test(run('mind', 'bram').out.split('Doing:')[1].split('\n')[0]), run('mind', 'bram').out.split('Doing:')[1].split('\n')[0]);
+  run('mind', 'tilly', 'surrender'); r = run('mind', 'tilly', 'act', '--brief');
+  expect('surrender: hands up, no more fighting, and says so', r.ok && S().creatures.tilly.conditions.some((c) => c.name === 'surrendered') && !/attack|Spear/i.test(r.out), r.out);
+  run('load', 'tollhouse');
+  r = run('morale', 'bram,tilly', '--dc', '30');
+  expect('morale rolls for the listed minds and routs the failures', r.ok && (r.out.match(/ROUTS/g) || []).length === 2 && M('bram').morale && M('tilly').morale && !M('fang').morale, r.out);
+  r = run('morale', 'all', '--dc', '30');
+  expect('morale all skips the already routed and routs the rest of the hostile minds', /already rout/.test(r.out) && M('fang').morale && M('hask').morale && M('morrow').morale, r.out);
+  // a routed NPC that reaches its way out leaves when its turn ends
+  run('load', 'tollhouse');
+  const edgeCell = Object.values(S().creatures).length && require('./lib/minds').exitCells(S())[0];
+  setup((s) => { s.creatures.bram.pos = edgeCell; s.turnOrder = ['bram', 'fang', 'wren']; s.turnIdx = 0; s.round = 1; s.turn = {}; });
+  run('mind', 'bram', 'rout');
+  for (let i = 0; i < 6 && !(S().creatures.bram && S().creatures.bram.fled); i++) { run('turn', 'bram'); run('mind', 'bram', 'act', '--brief'); }
+  expect('a routed NPC runs to an exit and has fled', S().creatures.bram && S().creatures.bram.fled === true, S().creatures.bram && S().creatures.bram.pos);
+  r = run('next');
+  expect('...and leaves the battlefield on the next turn change, without skipping anyone', r.ok && !S().creatures.bram && !S().turnOrder.includes('bram') && /→ Fang/.test(r.out), r.out);
+  // next --auto
+  run('load', 'tollhouse');
+  run('seat', 'sam', 'wren');
+  setup((s) => { s.turnOrder = ['bram', 'fang', 'tilly', 'wren', 'hask']; s.turnIdx = 0; s.round = 1; s.turn = {}; });
+  r = run('next', '--auto');
+  expect('next --auto runs the minds in order, quietly, and stops at the seated player', r.ok && /Tilly: /.test(r.out) && !/\[fallback/.test(r.out) && /→ Wren \[wren\].*REMOTE PLAYER "sam"/.test(r.out) && S().turnOrder[S().turnIdx] === 'wren', r.out);
+  setup((s) => { s.turnOrder = ['bram', 'hask', 'fang']; s.turnIdx = 0; s.minds.hask.profile.model = 'sonnet'; s.minds.hask.pending.push({ why: 'test', urgency: 3, refs: [] }); });
+  r = run('next', '--auto');
+  expect('next --auto stops at a mind that needs a Claude model', r.ok && /Sergeant Hask needs a Claude mind \(sonnet\)/.test(r.out) && S().turnOrder[S().turnIdx] === 'hask', r.out);
+
+  // ---------- Hide: a Stealth total judged against everyone who could see the hider ----------
+  run('load', 'tollhouse');
+  setup((s) => { s.creatures.wren.pos = 'P4'; }); // bright room, Hask a few squares off, nothing to hide behind
+  r = run('hide', 'wren', '--total', '25');
+  expect('hide: a plain-sight watcher notices without exposing the hider to other watchers', r.ok && /NOTICES Sergeant Hask/.test(r.out) && S().creatures.wren.hideState.detectedBy.includes('hask') && !S().creatures.wren.hideState.detectedBy.includes('bram') && S().creatures.wren.hidden && S().creatures.wren.stealth === 25, r.out);
+  run('load', 'tollhouse');
+  setup((s) => { s.creatures.wren.pos = 'D12'; }); // behind the hedge, Bram 15 ft away looking south
+  r = run('hide', 'wren', '--total', '30');
+  expect('hide: a high total behind cover hides, and the table says who would not notice', r.ok && S().creatures.wren.hidden === true && S().creatures.wren.stealth === 30 && /misses +Bram/.test(r.out) && /no view +Tilly/.test(r.out), r.out);
+  r = run('hide', 'wren', '--total', '3');
+  expect('hide: a low total is seen by Bram without erasing other watchers concealment', r.ok && S().creatures.wren.hideState.detectedBy.includes('bram') && !S().creatures.wren.hideState.detectedBy.includes('tilly') && /NOTICES +Bram/.test(r.out) && Object.values(M('bram').tracks).some((t) => t.cell === 'D12'), r.out);
+  r = run('hide', 'wren', '--auto');
+  expect('hide --auto rolls Stealth and judges it', r.ok && /Stealth \[\d+\]\+7 = \d+/.test(r.out), r.out);
+  r = run('hide', 'rook');
+  expect('plain hide still just toggles hidden', r.ok && S().creatures.rook.hidden === true && /is hidden/.test(r.out), r.out);
+
+  // ---------- Sounds the party hears say who heard them, and where from ----------
+  run('load', 'tollhouse');
+  r = run('noise', 'D12', 'a thrown stone', '--by', 'wren');
+  let sound = C.readLog(10).filter((e) => e.type === 'narration' && e.data && e.data.perceivers).pop();
+  expect('noise: the thrower sees their own stone land, at its square', sound && sound.data.sense === 'see' && sound.data.at === 'D12' && sound.data.perceivers.includes('wren') && /thrown stone/i.test(sound.text), JSON.stringify(sound));
+  run('load', 'tollhouse');
+  r = run('noise', 'G5', 'a crash', '--loud', '200');
+  sound = C.readLog(10).filter((e) => e.type === 'narration' && e.data && e.data.perceivers).pop();
+  expect('noise: out of sight it is heard with a bearing and a distance word, no square', sound && sound.data.sense === 'hear' && /^to the /.test(sound.data.dir) && sound.data.dist && !sound.data.at && !/G5/.test(sound.text) && sound.data.perceivers.length, JSON.stringify(sound));
+  const pubSound = C.logFor(S(), 'player', {}).filter((e) => e.data && e.data.sense === 'hear').pop();
+  expect('...the player view keeps the perception data but not the raw noise record', pubSound && pubSound.data.perceivers.length && !C.logFor(S(), 'player', {}).some((e) => /A sound at/.test(e.text)), JSON.stringify(pubSound));
+  const n0 = C.readLog(50).length;
+  run('noise', 'P4', 'a far clatter', '--loud', '20');
+  expect('noise: nothing the party can neither see nor hear reaches the chronicle', !C.readLog(50).slice(n0 - 1).some((e) => e.type === 'narration'), JSON.stringify(C.readLog(3)));
+  r = run('door', 'front', 'open', '--by', 'bram');
+  sound = C.readLog(15).filter((e) => e.data && e.data.perceivers).pop();
+  expect('door: an NPC opening it out of sight is a sound with a bearing, not a name', sound && !/Bram/.test(sound.text) && /door/.test(sound.text) && sound.data.sense === 'hear' && sound.data.dir, JSON.stringify(sound));
+  expect('...and the party never reads "The door front swings open" for it', !C.logFor(S(), 'player', {}).some((e) => /swings open/.test(e.text)), '');
+  run('load', 'tollhouse');
+  setup((s) => { s.minds.bram.alarm = { level: 'routine', intensity: 0, causes: [] }; });
+  run('place', 'wren', 'G13'); // in Bram's torchlight, in plain view of the party too
+  run('tick');
+  const cue = C.readLog(30).filter((e) => e.type === 'narration' && e.data && e.data.id === 'bram').pop();
+  expect('a reaction the party can see names who saw it and where', !cue || (cue.data.sense === 'see' && cue.data.perceivers.length && cue.data.at === S().creatures.bram.pos), JSON.stringify(cue));
+
+  run('load', 'tollhouse');
+  run('move', 'bram', 'F12');
+  run('move', 'bram', 'G12');
+  const steps = C.readLog(30).filter((e) => e.data && e.data.perceivers && /footsteps/.test(e.text));
+  expect('footsteps out of sight are heard with a bearing, once per creature per round', steps.length === 1 && steps[0].data.sense === 'hear' && !/Bram/.test(steps[0].text), JSON.stringify(steps));
 
   // ---------- encounters without minds are untouched ----------
   r = run('load', 'rope-bridge');

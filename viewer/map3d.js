@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as TX from './textures.js';
 import { buildBarracksProp } from './barracks-props.js';
+import { createMarks, STEM_W } from './marks3d.js';
 
 const FT = 1 / 5;
 const VARIANTS = 4;
@@ -13,6 +14,31 @@ const SIDE_COLOR = { party: '#4fb3a4', enemy: '#cf6a4c', neutral: '#a59f8e' };
 const SECRET = '#a98bd6';
 const GOLD = '#d8b45a';
 const WALL_FT = { wall: 8, door: 7, window: 8, low: 3 };
+
+// Floors are the mockup's flat checkerboard: two shades per terrain, alternating by (x + y) % 2, no texture. Flip TEXTURED to
+// bring the painted textures back (that path is untouched). A bare string is one flat tone with no checker.
+const TEXTURED = false;
+const FLOOR_TONES = {
+  flagstone: ['#3d382e', '#37332a'], dirt: ['#403628', '#3a3023'], grass: ['#363b2a', '#313625'], planks: ['#4d3b25', '#46351f'],
+  water: ['#27414a', '#233b44'], oil: ['#2a2622', '#25221e'], rubble: ['#4a4338', '#433c32'], chasm: '#16130f',
+};
+// Walls are checkered too, in 5-ft blocks that line up with the floor grid (and alternate up the height).
+const WALL_TONES = ['#575043', '#4d473b'];
+
+// Bodies: deliberately simple (capsule, head, base disc). Armor shows on the torso; the table is the one place to retune it.
+const ARMOR_LOOK = {
+  none: { color: '#8a806c', roughness: 0.95, metalness: 0 },
+  light: { color: '#7b5231', roughness: 0.42, metalness: 0.05 },
+  medium: { color: '#7c8087', roughness: 0.6, metalness: 0.55 },
+  heavy: { color: '#c5ccd6', roughness: 0.26, metalness: 0.9 },
+};
+const SKIN = '#d8c7a8';
+
+// Highlight (mockup HL0): a fresnel rim, a floor halo and a gold floor ring. Retune here.
+const HL = { fre: true, halo: true, gfx: true, apC: '#d8b45a', apInt: 0.35, gamma: 2.2, range: 3, full: 1,
+  pkC: '#ffe08a', pkInt: 1.3, snap: 100, over: true, frePow: 2.5, freBias: 0, grow: true, growCurve: 1.3 };
+const HOVER_PAD = 6, HOVER_MIN = 12, STICKY = 0.8;
+const DEBUG = /[?&]debug\b/.test(location.search);
 
 // ---------- textures & materials (cached for the page's lifetime) ----------
 const texCache = new Map();
@@ -41,6 +67,31 @@ function mat(name, variant = 0, { dim = false, rough = 0.9, metal = 0, opacity =
     matCache.set(key, m);
   }
   return matCache.get(key);
+}
+
+function wallTone(i, dim, { tint = null, opacity = 1 } = {}) {
+  const key = ['wall', i & 1, dim, tint, opacity].join('|');
+  if (!flatCache.has(key)) {
+    const m = new THREE.MeshStandardMaterial({ color: WALL_TONES[i & 1], roughness: 0.9 });
+    if (tint) m.color.lerp(new THREE.Color(tint), 0.5);
+    if (dim) m.color.multiplyScalar(0.38);
+    if (opacity < 1) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    flatCache.set(key, m);
+  }
+  return flatCache.get(key);
+}
+// A flat floor material for a square: the terrain's tone, the checker shade by parity. Untextured.
+const flatCache = new Map();
+function floorMat(name, x, y, dim, { rough = 0.85, metal = 0, opacity = 1 } = {}) {
+  const tone = FLOOR_TONES[name] || FLOOR_TONES.flagstone, col = typeof tone === 'string' ? tone : tone[(x + y) % 2];
+  const key = [col, dim, rough, metal, opacity].join('|');
+  if (!flatCache.has(key)) {
+    const m = new THREE.MeshStandardMaterial({ color: col, roughness: rough, metalness: metal });
+    if (dim) m.color.multiplyScalar(0.38);
+    if (opacity < 1) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    flatCache.set(key, m);
+  }
+  return flatCache.get(key);
 }
 
 // A box whose texture keeps its real-world scale on every face (1 tile per world unit), so tall
@@ -79,6 +130,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   controls.minDistance = 3;
   controls.maxDistance = 80;
   controls.screenSpacePanning = false;
+  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }; // LMB is our ground drag (below)
+  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
 
   scene.add(new THREE.HemisphereLight('#d4dbe6', '#3b3122', 1.1));
   const sun = new THREE.DirectionalLight('#ffe6c4', 2.2);
@@ -98,10 +151,11 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   let disposables = [];      // geometries made for the current terrain
   let flames = [], waters = [], lights = [];
   let framed = false, wallsLow = false;
-  let lastState = null, lastSelected = null, hoveredId = null;
-  let previousLog = null, turnKey = null, follow = true, followYielded = false;
-  const moveQueue = [];
-  let activeMove = null;
+  let lastState = null, lastSelected = null, hoveredId = null; // hoveredId: set from outside (a portrait); ptrHover: under the pointer
+  let ptrHover = null, marks = null, hoverKey = null, pickedCell = null, lastCursorCell = null;
+  const mouse = { x: -1e4, y: -1e4, btn: 0 };
+  let turnKey = null, follow = true, followYielded = false, speed = 1;
+  const glides = new Map(); // creature id -> resolve, for glides still walking
   const wallMeshes = [], wallMaterials = [];
   const tokenObjs = new Map();
   let trail = null;
@@ -130,7 +184,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     wallMaterials.length = 0; wallMeshes.length = 0;
   }
   function buildTerrain(v) {
-    clearWalls();
+    clearWalls(); occ = null;
     for (const o of [...terrain.children]) {
       terrain.remove(o);
       if (o.userData.dispose) { o.userData.dispose.dispose(); o.material.dispose(); }
@@ -156,6 +210,18 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }));
     const bottom = minH * FT - (anyChasm ? 3.5 : 0.6);
     const colTops = v.cells.map((row) => row.map(() => 0));
+    // Deep rock: known wall squares with no floor (or unseen square) around them, drawn as one low rough mass instead of columns.
+    let massFt = 0;
+    const deep = v.cells.map((row, y) => row.map((c, x) => {
+      if (c.fog === 'unknown' || !c.tags.includes('wall') || c.obj) return false;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const n = v.cells[y + dy] && v.cells[y + dy][x + dx];
+        if (n && (n.fog === 'unknown' || !n.tags.includes('wall'))) return false;
+      }
+      massFt = Math.max(massFt, (v.legend[c.ch] && v.legend[c.ch].height) || 6);
+      return true;
+    }));
+    const massH = (wallsLow ? 1.5 : massFt) * FT;
 
     for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) {
       const c = v.cells[y][x];
@@ -167,8 +233,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const at = { x, y };
       const legend = v.legend[c.ch] || {};
 
+      if (deep[y][x]) { colTops[y][x] = massH * 0.6; continue; }
       if (surf === 'chasm') {
-        const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), mat('chasm', 0, { dim })), at);
+        const m = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('chasm', 0, { dim }) : floorMat('chasm', x, y, dim)), at);
         m.rotation.x = -Math.PI / 2; m.position.set(x + 0.5, bottom + 0.01, y + 0.5);
         colTops[y][x] = bottom;
         continue;
@@ -186,20 +253,32 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const g = geo(box(1, h, 1, bottom));
       const sideName = c.tags.includes('wall') && /brick|masonry|tower|built/.test((c.terrain || '').toLowerCase()) ? 'masonry' : SIDE_FOR[surf] || 'rock';
       const topName = surf === 'water' ? 'dirt' : surf === 'oil' ? 'flagstone' : c.tags.includes('wall') ? sideName : surf;
-      const topMat = mat(topName, variant, { dim });
+      const flatKey = surf === 'water' ? 'dirt' : surf;
+      const rubble = !c.tags.includes('wall') && c.tags.includes('difficult') && (flatKey === 'flagstone' || flatKey === 'dirt' || flatKey === 'grass');
+      const topMat = TEXTURED || c.tags.includes('wall') ? mat(topName, variant, { dim }) : floorMat(rubble ? 'rubble' : flatKey, x, y, dim);
       const side = mat(sideName, variant, { dim });
+      if (c.tags.includes('wall') && !TEXTURED) {
+        for (let y0 = bottom, i = Math.floor(bottom + 1e-6); y0 < colTop - 1e-6; i++) {
+          const y1 = Math.min(colTop, i + 1), m = wallTone(x + y + i, dim);
+          const b = add(new THREE.Mesh(geo(box(1, y1 - y0, 1, y0)), m), at);
+          b.position.set(x + 0.5, (y0 + y1) / 2, y + 0.5); markWall(b);
+          y0 = y1;
+        }
+        colTops[y][x] = colTop;
+        continue;
+      }
       if (c.tags.includes('stairs') && buildStairs(v, x, y, bottom, [side, side, topMat, side, side, side], add, geo)) { colTops[y][x] = top; continue; }
       const col = add(new THREE.Mesh(g, [side, side, topMat, side, side, side]), at);
       col.position.set(x + 0.5, bottom + h / 2, y + 0.5);
       if (c.tags.includes('wall')) markWall(col);
       colTops[y][x] = colTop;
-      if (surf === 'oil') {
+      if (surf === 'oil' && TEXTURED) {
         const o = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1.15, 1.15)), mat('oil', variant, { dim, rough: 0.1, metal: 0, opacity: 0.999 })), at);
         o.rotation.x = -Math.PI / 2; o.rotation.z = variant; o.position.set(x + 0.5, top + 0.005, y + 0.5);
         o.castShadow = false;
       }
       if (surf === 'water') {
-        const w = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), mat('water', variant, { dim, rough: 0.15, metal: 0.1, opacity: 0.78 })), at);
+        const w = add(new THREE.Mesh(geo(new THREE.PlaneGeometry(1, 1)), TEXTURED ? mat('water', variant, { dim, rough: 0.15, metal: 0.1, opacity: 0.78 }) : floorMat('water', x, y, dim, { rough: 0.15, metal: 0.1, opacity: 0.85 })), at);
         w.rotation.x = -Math.PI / 2; w.position.set(x + 0.5, top - 0.06, y + 0.5);
         w.castShadow = false;
         waters.push(w);
@@ -215,9 +294,165 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
     }
     for (const w of v.walls || []) buildWall(v, w, add, geo);
-    // coordinate labels along the north and west edges
-    for (let x = 0; x < v.width; x++) addLabel(String.fromCharCode(65 + x), x + 0.5, Math.max(0, colTops[0][x]) + 0.02, -0.4, geo);
-    for (let y = 0; y < v.height; y++) addLabel(String(y + 1), -0.4, Math.max(0, colTops[y][0]) + 0.02, y + 0.5, geo);
+    buildRockMass(v, deep, bottom, massH);
+    buildChasmDepth(v, bottom);
+    buildUncharted(v);
+    buildBackdrop(v);
+    // coordinate labels in a straight line along the north and west edges of what's known
+    const known = (x, y) => v.cells[y][x].fog !== 'unknown';
+    let x0 = v.width, y0 = v.height;
+    for (let y = 0; y < v.height; y++) for (let x = 0; x < v.width; x++) if (known(x, y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); }
+    const lh = (x, y) => (known(x, y) ? Math.max(0, colTops[y][x]) : 0) + 0.02;
+    for (let x = 0; x < v.width; x++) if (v.cells.some((r, y) => known(x, y))) addLabel(String.fromCharCode(65 + x), x + 0.5, lh(x, y0), y0 - 0.4, geo);
+    for (let y = 0; y < v.height; y++) if (v.cells[y].some((c, x) => known(x, y))) addLabel(String(y + 1), x0 - 0.4, lh(x0, y), y + 0.5, geo);
+  }
+
+  // Ground you can't make out: one merged mesh under every unknown cell plus a margin round the map. Vertices are shared so the
+  // frontier fades (known-adjacent corners are mostly transparent, tinted toward the neighbouring floor) and the margin dissolves outward.
+  const UNCHARTED = '#26221c', UNCH_MARGIN = 3;
+  function buildUncharted(v) {
+    const M = UNCH_MARGIN, W = v.width, H = v.height, nx = W + 2 * M + 1, ny = H + 2 * M + 1;
+    const cellAt = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? v.cells[y][x] : null);
+    const base = new THREE.Color(UNCHARTED), tmp = new THREE.Color();
+    const pos = new Float32Array(nx * ny * 3), col = new Float32Array(nx * ny * 4), idx = [];
+    const dimTone = (c) => { // the neighbouring known floor, dimmed like remembered ground
+      const t = c.tags.includes('wall') ? WALL_TONES[0] : FLOOR_TONES[TX.surfaceFor(c) === 'water' ? 'water' : TX.surfaceFor(c)] || FLOOR_TONES.flagstone;
+      return tmp.set(typeof t === 'string' ? t : t[0]).multiplyScalar(0.38);
+    };
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const vx = i - M, vy = j - M, k = j * nx + i;
+      pos.set([vx, 0, vy], k * 3);
+      const r = TX.rng(TX.hash(vx + 100, vy + 100, 31)), tone = 1 + (r() - 0.5) * 0.12;
+      const c = new THREE.Color().copy(base).multiplyScalar(tone);
+      let a = 1, nb = null;
+      for (const [cx, cy] of [[vx - 1, vy - 1], [vx, vy - 1], [vx - 1, vy], [vx, vy]]) {
+        const n = cellAt(cx, cy);
+        if (n && n.fog !== 'unknown') { nb = n; break; }
+      }
+      if (nb) { a = 0.35; c.lerp(dimTone(nb), 0.5); }
+      else { const d = Math.max(0, -vx, vx - W, -vy, vy - H); a = 1 - d / M; }
+      col.set([c.r, c.g, c.b, a], k * 4);
+    }
+    for (let y = -M; y < H + M; y++) for (let x = -M; x < W + M; x++) {
+      const c = cellAt(x, y);
+      if (c && c.fog !== 'unknown') continue;
+      const a = (y + M) * nx + x + M, b = a + 1, d = a + nx, e = d + 1;
+      idx.push(a, d, b, b, d, e);
+    }
+    if (!idx.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+    g.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from({ length: nx * ny * 3 }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false }));
+    m.receiveShadow = true; m.renderOrder = -1;
+    m.userData.dispose = g; // also keeps it out of picking and wall-fade occlusion (see occluders)
+    terrain.add(m);
+  }
+
+  // Wall squares nothing can see past are one merged, lumpy mass: corner heights come from a hash so the same map always rises the
+  // same way, shared by the squares round each corner so it stays one surface. Only the map's outer edge needs a skirt.
+  function buildRockMass(v, deep, bottom, wallH) {
+    const W = v.width, H = v.height, pos = [], col = [];
+    const base = new THREE.Color('#2f2b24'), c = new THREE.Color(), corners = new Map();
+    const isDeep = (x, y) => x >= 0 && y >= 0 && x < W && y < H && deep[y][x];
+    const corner = (i, j) => {
+      const key = i * 4096 + j;
+      if (!corners.has(key)) {
+        const f = 0.35 + 0.45 * (0.65 * TX.hash(i, j, 53) / 4294967296 + 0.35 * TX.hash(i >> 1, j >> 1, 59) / 4294967296);
+        const inner = isDeep(i - 1, j - 1) && isDeep(i, j - 1) && isDeep(i - 1, j) && isDeep(i, j);
+        const jit = (k) => (inner ? (TX.hash(i, j, k) / 4294967296 - 0.5) * 0.3 : 0);
+        corners.set(key, [i + jit(61), wallH * f, j + jit(67), f]);
+      }
+      return corners.get(key);
+    };
+    const tri = (a, b, d, dim) => {
+      for (const q of [a, b, d]) {
+        pos.push(q[0], q[1], q[2]);
+        c.copy(base).multiplyScalar((0.7 + 0.7 * q[3]) * (dim ? 0.38 : 1)); col.push(c.r, c.g, c.b);
+      }
+    };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!deep[y][x]) continue;
+      const dim = v.cells[y][x].fog === 'remembered';
+      const A = corner(x, y), B = corner(x + 1, y), C = corner(x, y + 1), D = corner(x + 1, y + 1);
+      if ((x + y) & 1) { tri(A, C, D, dim); tri(A, D, B, dim); } else { tri(A, C, B, dim); tri(B, C, D, dim); }
+      for (const [dx, dy, p, q] of [[0, -1, A, B], [0, 1, C, D], [-1, 0, A, C], [1, 0, B, D]]) {
+        if (x + dx >= 0 && y + dy >= 0 && x + dx < W && y + dy < H) continue; // only the map's outer edge
+        const lo = (r) => [r[0], bottom, r[2], 0];
+        tri(p, lo(p), q, dim); tri(q, lo(p), lo(q), dim);
+      }
+    }
+    if (!pos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+    m.castShadow = true; m.receiveShadow = true;
+    m.userData.dispose = g; // not pickable and never fades: it is low and nothing stands behind it
+    terrain.add(m);
+  }
+
+  // Chasms read as deep: stacked dark veils (denser the lower they sit) darken the cliff faces and the floor with depth, and a
+  // faint mist rests near the bottom. One merged mesh, kept out of picking like the uncharted ground.
+  function buildChasmDepth(v, bottom) {
+    const cells = [];
+    let rim = -Infinity;
+    v.cells.forEach((row, y) => row.forEach((c, x) => {
+      if (c.fog === 'unknown' || TX.surfaceFor(c) !== 'chasm') return;
+      cells.push([x, y]);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const n = v.cells[y + dy] && v.cells[y + dy][x + dx];
+        if (n && n.fog !== 'unknown' && TX.surfaceFor(n) !== 'chasm' && !n.tags.includes('wall')) rim = Math.max(rim, (n.h || 0) * FT);
+      }
+    }));
+    if (!cells.length) return;
+    if (rim === -Infinity) rim = 0;
+    const D = rim - bottom, dark = new THREE.Color('#050506'), mist = new THREE.Color('#7d8794');
+    const layers = [0.05, 0.14, 0.26, 0.4, 0.56, 0.74, 0.92].map((f, k) => [rim - D * f, dark, 0.1 + k * 0.03])
+      .concat([[bottom + 0.7, mist, 0.07], [bottom + 0.3, mist, 0.1]]);
+    const pos = [], col = [], idx = [];
+    for (const [x, y] of cells) for (const [ly, c, a] of layers) {
+      const n = pos.length / 3;
+      pos.push(x, ly, y, x + 1, ly, y, x, ly, y + 1, x + 1, ly, y + 1);
+      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
+      idx.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    m.renderOrder = -1;
+    m.userData.dispose = g;
+    terrain.add(m);
+  }
+
+  // A big dark ground round the map so it doesn't end in a void: a frame of bands from the map's edge outward that thins to
+  // nothing, in the same tone and lighting as the uncharted margin it runs on from.
+  function buildBackdrop(v) {
+    const W = v.width, H = v.height, U = UNCH_MARGIN;
+    const steps = [[0, 1], [U, 1], [U + 6, 0.85], [U + 18, 0.5], [U + 40, 0.2], [U + 90, 0]];
+    const pos = [], col = [], idx = [], c = new THREE.Color(UNCHARTED).multiplyScalar(0.85);
+    for (const [d, a] of steps) {
+      pos.push(-d, 0, -d, W + d, 0, -d, W + d, 0, H + d, -d, 0, H + d);
+      for (let i = 0; i < 4; i++) col.push(c.r, c.g, c.b, a);
+    }
+    for (let s = 0; s < steps.length - 1; s++) for (let i = 0; i < 4; i++) {
+      const a = s * 4 + i, b = s * 4 + (i + 1) % 4;
+      idx.push(a, a + 4, b, b, a + 4, b + 4);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(Float32Array.from({ length: pos.length }, (_, n) => (n % 3 === 1 ? 1 : 0)), 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, roughness: 1, metalness: 0, depthWrite: false, side: THREE.DoubleSide }));
+    m.position.y = -0.02; m.renderOrder = -2;
+    m.userData.dispose = g;
+    terrain.add(m);
   }
 
   // Stairs climb from the lower neighbour to the higher one in four steps across the square,
@@ -243,7 +478,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   function buildBridge(v, x, y, top, dim, add, geo) {
-    const plank = mat('planks', TX.hash(x, y) % VARIANTS, { dim });
+    const plank = mat('planks', TX.hash(x, y) % VARIANTS, { dim }); // the bridge keeps its texture
     const slab = add(new THREE.Mesh(geo(box(0.92, 0.1, 1)), plank), { x, y });
     slab.position.set(x + 0.5, top - 0.05, y + 0.5);
     // rope rails on the sides that don't continue into more bridge
@@ -307,7 +542,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       }
       case 'brazier': {
         const ironM = mat('iron', 0, { dim, rough: 0.55, metal: 0.6 });
-        const bowl = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.3, 0.16, 0.2, 14)), ironM), at);
+        // open-topped, so the coals sit inside it instead of fighting its lid
+        const bowlM = ironM.clone(); bowlM.side = THREE.DoubleSide;
+        const bowl = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.3, 0.16, 0.2, 14, 1, true)), bowlM), at);
         bowl.position.set(cx, top + H - 0.1, cz);
         for (let i = 0; i < 3; i++) {
           const a = (i / 3) * Math.PI * 2;
@@ -315,7 +552,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
           leg.position.set(cx + Math.cos(a) * 0.16, top + (H - 0.15) / 2, cz + Math.sin(a) * 0.16);
         }
         const coals = add(new THREE.Mesh(geo(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 14)), new THREE.MeshStandardMaterial({ color: '#2a1a10', emissive: '#ff5a1a', emissiveIntensity: dim ? 0.2 : 1.4 })), at);
-        coals.position.set(cx, top + H - 0.01, cz);
+        coals.position.set(cx, top + H - 0.06, cz);
         addFire(cx, top + H, cz, 0.9, dim, true);
         break;
       }
@@ -406,7 +643,15 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       for (let i = 1; i < 4; i++) piece(0.03, rim + 3 * FT, rim + 6 * FT, bar, -len / 2 + (i * len) / 4);
       return;
     }
-    piece(len + T * 0.01, base, rim + ft * FT, w.kind === 'low' ? mat('masonry', 2, opts) : stone);
+    if (TEXTURED) { piece(len + T * 0.01, base, rim + ft * FT, w.kind === 'low' ? mat('masonry', 2, opts) : stone); return; }
+    const start = vertical ? Math.min(w.y1, w.y2) : Math.min(w.x1, w.x2), across = vertical ? w.x1 : w.y1;
+    for (let k = 0; k < len; k++) {
+      for (let y0 = base, i = Math.floor(base + 1e-6); y0 < rim + ft * FT - 1e-6; i++) {
+        const y1 = Math.min(rim + ft * FT, i + 1);
+        piece(1 + (k === len - 1 ? T * 0.01 : 0), y0, y1, wallTone(start + k + across + i, false, opts), k + 0.5 - len / 2);
+        y0 = y1;
+      }
+    }
   }
 
   function addLabel(text, x, y, z, geo) {
@@ -423,58 +668,102 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   // ---------- tokens ----------
-  function tokenCanvas(c, label, isTurn) {
-    const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S;
-    const ctx = cv.getContext('2d');
-    const down = c.hp !== undefined ? c.hp <= 0 : c.health === 'down';
-    const color = SIDE_COLOR[c.side] || SIDE_COLOR.neutral;
-    const R = 50;
-    ctx.globalAlpha = down ? 0.55 : 1;
-    ctx.fillStyle = '#1b1a15'; ctx.beginPath(); ctx.arc(64, 64, R, 0, 7); ctx.fill();
-    ctx.lineWidth = 8; ctx.strokeStyle = color;
-    if (c.hidden) ctx.setLineDash([12, 8]);
-    ctx.beginPath(); ctx.arc(64, 64, R, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-    if (c.hp !== undefined && c.maxHp) {
-      const f = Math.max(0, Math.min(1, c.hp / c.maxHp));
-      ctx.lineWidth = 5; ctx.strokeStyle = f > 0.5 ? '#6fbf73' : f > 0.25 ? '#d8b45a' : '#d25b4a';
-      ctx.beginPath(); ctx.arc(64, 64, R - 10, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.stroke();
-    }
-    ctx.fillStyle = '#e9e3d3'; ctx.font = '700 44px "Cormorant SC", Georgia, serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, 64, 68);
-    if (down) {
-      ctx.globalAlpha = 1; ctx.strokeStyle = '#d25b4a'; ctx.lineWidth = 7;
-      ctx.beginPath(); ctx.moveTo(40, 40); ctx.lineTo(88, 88); ctx.moveTo(88, 40); ctx.lineTo(40, 88); ctx.stroke();
-    }
-    const conds = (c.conditions || []).filter((x) => x.name !== 'unconscious' || !down);
-    if (conds.length) { ctx.globalAlpha = 1; ctx.fillStyle = SECRET; ctx.beginPath(); ctx.arc(108, 20, 12, 0, 7); ctx.fill(); }
-    if (isTurn) { ctx.globalAlpha = 1; ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(64, 64, R + 9, 0, 7); ctx.stroke(); }
-    return cv;
+  // The body: a capsule torso (armor), a head, a dark base disc with a side-coloured ring. `top` and `half` are kept for
+  // hover and highlight. Materials are per body (the highlight shader is attached to each) and disposed with it.
+  const BASE_GEO = new THREE.CylinderGeometry(0.34, 0.36, 0.06, 24), RIM_GEO = new THREE.TorusGeometry(0.35, 0.025, 8, 36);
+  const TORSO_GEO = new THREE.CapsuleGeometry(0.2, 0.5, 6, 14), HEAD_GEO = new THREE.SphereGeometry(0.15, 16, 12);
+  const SHIELD_GEO = new THREE.CylinderGeometry(0.17, 0.17, 0.035, 18), SIDE_HALO = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const hlTex = (n, draw) => { const c = document.createElement('canvas'); c.width = c.height = n; draw(c.getContext('2d'), n); const t = new THREE.CanvasTexture(c); return t; };
+  const haloTex = hlTex(128, (g, n) => {
+    const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    r.addColorStop(0, 'rgba(255,255,255,.3)'); r.addColorStop(0.55, 'rgba(255,255,255,.85)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = r; g.fillRect(0, 0, n, n);
+  });
+  const gfxTex = hlTex(256, (g, n) => { // a thin ring with four bold brackets on the diagonals
+    g.strokeStyle = '#fff'; g.lineCap = 'round';
+    g.globalAlpha = 0.45; g.lineWidth = 2; g.beginPath(); g.arc(n / 2, n / 2, n * 0.4, 0, 7); g.stroke();
+    g.globalAlpha = 1; g.lineWidth = 9;
+    for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(n / 2, n / 2, n * 0.4, Math.PI * (0.25 + i / 2) - 0.42, Math.PI * (0.25 + i / 2) + 0.42); g.stroke(); }
+  });
+  const flatGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const hlMat = (map) => new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const hlG = new THREE.Group(); scene.add(hlG);   // floor halos and rings (not in `tokens`: those are walked by the glide loop)
+
+  function applyArmor(u, a) {
+    const look = ARMOR_LOOK[a && a.kind] || ARMOR_LOOK.none, m = u.torso.material;
+    m.color.set(look.color); m.roughness = look.roughness; m.metalness = look.metalness;
+    u.shield.visible = !!(a && a.shield);
+  }
+  // The highlight's rim shader, added to every mesh of a body; its uniforms ride on u.fu.
+  function hlAttach(g, u) {
+    const fu = u.fu = { uRimC: { value: new THREE.Color() }, uRimK: { value: 0 }, uRimP: { value: 2.5 }, uRimB: { value: 0 } };
+    g.traverse((o) => {
+      if (!o.isMesh || !o.userData.rim) return;
+      o.material.onBeforeCompile = (sh) => { // facing-ratio rim added to the emissive term
+        Object.assign(sh.uniforms, fu);
+        sh.fragmentShader = 'uniform vec3 uRimC; uniform float uRimK, uRimP, uRimB;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+           totalEmissiveRadiance += uRimC * uRimK * mix(uRimB, 1., pow(1. - abs(dot(normalize(vNormal), normalize(vViewPosition))), uRimP));`);
+      };
+    });
+    u.halo = new THREE.Mesh(flatGeo, hlMat(haloTex)); u.gfx = new THREE.Mesh(flatGeo, hlMat(gfxTex));
+    for (const m of [u.halo, u.gfx]) { m.visible = false; m.renderOrder = 1; m.frustumCulled = false; hlG.add(m); }
+    Object.assign(u, { apL: 0, pr: 0, lvl: 0, pk: 0 });
+  }
+  const easeBack = (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
+  const easeOut = (t) => 1 - (1 - t) ** 3;
+  const cA = new THREE.Color(), cB = new THREE.Color();
+  // tg: 0 / .55 (square-mate) / 1 (hovered or selected); u.apL is the smoothed approach 0..1
+  function hlStep(g, u, tg, dt) {
+    u.lvl += (tg - u.lvl) * 0.4;
+    const up = tg > 0;
+    u.pr = up ? Math.min(1, u.pr + dt / HL.snap) : Math.max(0, u.pr - dt / (HL.snap * 0.6));
+    u.pk = u.lvl * (up && HL.over ? easeBack(u.pr) : easeOut(u.pr));
+    const kk = Math.min(u.pk, 1), a0 = HL.apInt * Math.pow(u.apL, HL.gamma), I = Math.max(0, a0 + (HL.pkInt - a0) * u.pk), on = I > 0.003;
+    cA.set(HL.apC).lerp(cB.set(HL.pkC), kk);
+    const fu = u.fu;
+    fu.uRimK.value = HL.fre && on ? I * 1.8 : 0; fu.uRimP.value = HL.frePow; fu.uRimB.value = HL.freBias; fu.uRimC.value.copy(cA);
+    // Sized from the body's own half-width; never past the edge of its square (radius .5).
+    const R = u.half * 1.35 + 0.04, CAP = 0.48, p = g.position, y = u.floorY, h = u.halo, r = u.gfx;
+    h.visible = HL.halo && on;
+    if (h.visible) { h.material.color.copy(cA); h.material.opacity = Math.min(1, I * 0.5); h.scale.setScalar(2 * Math.min(0.5, R * 1.5 * (1.25 - 0.25 * u.pk))); h.position.set(p.x, y + 0.015, p.z); }
+    r.visible = HL.gfx && kk > 0.01;
+    if (r.visible) { r.material.color.copy(cA); r.material.opacity = Math.min(1, kk * HL.pkInt * 0.8); r.scale.setScalar(Math.min(CAP, R * (1.5 - 0.5 * u.pk)) / 0.4); r.position.set(p.x, y + 0.025, p.z); r.rotation.y = u.pr < 1 ? (1 - u.pr) * 0.9 : 0; }
   }
 
   function makeToken(c) {
-    const g = new THREE.Group();
-    const color = new THREE.Color(SIDE_COLOR[c.side] || SIDE_COLOR.neutral);
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.38, 0.08, 28), new THREE.MeshStandardMaterial({ color: '#1f1d18', roughness: 0.6 }));
-    base.position.y = 0.04; base.castShadow = true; base.receiveShadow = true;
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.03, 8, 40), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, roughness: 0.4 }));
-    rim.rotation.x = Math.PI / 2; rim.position.y = 0.08;
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6), new THREE.MeshStandardMaterial({ color: '#2a2822' }));
-    stem.position.y = 0.33;
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
-    sprite.scale.set(0.72, 0.72, 1); sprite.position.y = 0.92;
+    const g = new THREE.Group(), color = new THREE.Color(SIDE_COLOR[c.side] || SIDE_COLOR.neutral);
+    const add = (geo, m, x, y, z, rim = true) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; o.userData.rim = rim; g.add(o); return o; };
+    const std = (col, o = {}) => new THREE.MeshStandardMaterial({ color: col, roughness: 0.6, ...o });
+    const base = add(BASE_GEO, std('#1f1d18'), 0, 0.03, 0);
+    const ring = add(RIM_GEO, std(color, { emissive: color, emissiveIntensity: 0.35, roughness: 0.4 }), 0, 0.065, 0, false);
+    ring.rotation.x = Math.PI / 2; ring.castShadow = false;
+    const torso = add(TORSO_GEO, std('#8a806c'), 0, 0.5, 0), head = add(HEAD_GEO, std(SKIN), 0, 1.05, 0);
+    const shield = add(SHIELD_GEO, std('#8b8f96', { metalness: 0.7, roughness: 0.4 }), 0.27, 0.55, 0); shield.rotation.z = Math.PI / 2; shield.visible = false;
+    const sideHalo = new THREE.Mesh(SIDE_HALO, new THREE.MeshBasicMaterial({ map: haloTex, color, transparent: true, opacity: 0.2, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    sideHalo.position.y = 0.01; sideHalo.scale.setScalar(1.1); g.add(sideHalo);
     const turnRing = new THREE.Mesh(new THREE.TorusGeometry(0.47, 0.025, 8, 48), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true }));
     turnRing.rotation.x = Math.PI / 2; turnRing.position.y = 0.03;
-    const selRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.53, 48), new THREE.MeshBasicMaterial({ color: '#e9e3d3', side: THREE.DoubleSide, transparent: true, opacity: 0.8 }));
-    selRing.rotation.x = -Math.PI / 2; selRing.position.y = 0.025;
-    g.add(base, rim, stem, sprite, turnRing, selRing);
-    g.traverse((o) => { o.userData.id = c.id; });
-    g.userData = { id: c.id, sprite, turnRing, selRing, rim, stem, key: null, path: [], target: null, offset: new THREE.Vector3() };
+    g.add(turnRing);
+    g.userData = { id: c.id, turnRing, torso, head, shield, base, ring, sideHalo, path: [], target: null, offset: new THREE.Vector3(),
+      top: 1.25, half: 0.26, prone: false, floorY: 0, apL: 0 };
+    hlAttach(g, g.userData);
     tokens.add(g);
     return g;
   }
+  function disposeToken(g) {
+    const u = g.userData;
+    for (const m of [u.halo, u.gfx]) { hlG.remove(m); m.material.dispose(); }
+    g.traverse((o) => { if (o.material) { if (o.material.map && o.material.map !== haloTex) o.material.map.dispose(); o.material.dispose(); } });
+  }
+  function posture(u, prone) {
+    u.prone = prone;
+    if (prone) { u.torso.rotation.z = Math.PI / 2; u.torso.position.set(0, 0.22, 0); u.head.position.set(0.5, 0.2, 0); u.shield.position.set(0, 0.3, 0.27); u.shield.rotation.set(Math.PI / 2, 0, 0); }
+    else { u.torso.rotation.z = 0; u.torso.position.set(0, 0.5, 0); u.head.position.set(0, 1.05, 0); u.shield.position.set(0.27, 0.55, 0); u.shield.rotation.set(0, 0, Math.PI / 2); }
+    u.top = prone ? 0.45 : 1.25; u.half = prone ? 0.45 : 0.26;
+  }
 
-  function updateTokens(v, selected) {
-    const labels = tokenLabels(v);
+  function updateTokens(v) {
     const seen = new Set();
     for (const c of Object.values(v.creatures)) {
       seen.add(c.id);
@@ -482,30 +771,24 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       const p = cellOf(c.pos);
       const target = new THREE.Vector3(p.x + 0.5, (c.elev || 0) * FT, p.y + 0.5);
       if (!g) { g = makeToken(c); tokenObjs.set(c.id, g); g.position.copy(target); }
-      g.userData.target = target;
+      const u = g.userData;
+      u.target = target;
       const isTurn = v.current === c.id;
-      const key = JSON.stringify([labels[c.id], c.hp, c.maxHp, c.health, c.hidden, c.conditions, c.side, isTurn]);
-      if (key !== g.userData.key) {
-        const old = g.userData.sprite.material.map;
-        const t = new THREE.CanvasTexture(tokenCanvas(c, labels[c.id], isTurn)); t.colorSpace = THREE.SRGBColorSpace;
-        g.userData.sprite.material.map = t; g.userData.sprite.material.needsUpdate = true;
-        if (old) old.dispose();
-        g.userData.key = key;
-      }
       const down = c.hp !== undefined ? c.hp <= 0 : c.health === 'down';
-      g.userData.sprite.material.opacity = c.hidden ? 0.55 : 1;
-      g.userData.sprite.position.y = down ? 0.3 : 0.92;
-      g.userData.stem.visible = !down;
-      g.userData.turnRing.visible = isTurn;
-      g.userData.selRing.visible = selected === c.id;
+      const prone = down || (c.conditions || []).some((x) => x.name === 'prone');
+      if (prone !== u.prone || !u.armored) posture(u, prone);
+      const ak = JSON.stringify(c.armor || null);
+      if (ak !== u.armored) { applyArmor(u, c.armor); u.armored = ak; }
+      const fade = c.hidden ? 0.55 : 1;
+      g.traverse((o) => { if (o.material && o.userData.rim !== undefined && o.material.opacity !== fade) { o.material.transparent = fade < 1; o.material.opacity = fade; o.material.needsUpdate = true; } });
+      u.turnRing.visible = isTurn;
     }
     for (const [id, g] of tokenObjs) if (!seen.has(id)) {
       tokens.remove(g); tokenObjs.delete(id);
-      g.traverse((o) => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
-      });
+      if (glides.has(id)) { const r = glides.get(id); glides.delete(id); r(); }
+      disposeToken(g);
       if (hoveredId === id) hoveredId = null;
+      if (ptrHover === id) ptrHover = null;
     }
   }
 
@@ -514,68 +797,45 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     fx.remove(trail); trail.geometry.dispose(); trail.material.dispose(); trail = null;
   }
   function resetMoves() {
-    moveQueue.length = 0; activeMove = null; clearTrail();
+    clearTrail(); settleGlides();
     for (const g of tokenObjs.values()) {
       g.userData.path = [];
       if (g.userData.target) g.position.copy(g.userData.target);
       g.userData.applied = null;
     }
   }
-  const logKey = (entry) => JSON.stringify(entry);
-  // Ordered snapshot overlap handles batched moves and equal timestamps. Replaced
-  // or rewound history establishes a new baseline instead of replaying a load.
-  function playMoves(v) {
-    const entries = v.log || [], keys = entries.map(logKey);
-    let fresh = [];
-    if (previousLog !== null) {
-      let overlap = Math.min(previousLog.length, keys.length);
-      while (overlap && !previousLog.slice(-overlap).every((key, i) => key === keys[i])) overlap--;
-      const oldTail = previousLog[previousLog.length - 1], oldTime = oldTail ? JSON.parse(oldTail).t : null;
-      if (overlap) fresh = entries.slice(overlap);
-      else if (!previousLog.length || (entries.length && entries[0].t > oldTime)) fresh = entries;
-      else { resetMoves(); turnKey = null; }
-    }
-    previousLog = keys;
-    if (fresh.some((entry) => entry.type === 'scene')) {
-      resetMoves(); turnKey = null; hoveredId = null; ease = null; return;
-    }
-    for (const entry of fresh) {
-      const data = entry.data;
-      if (entry.type !== 'move' || !data || !Array.isArray(data.path) || data.path.length < 2) continue;
-      const c = v.creatures[data.id];
-      if (!c || c.hidden) continue;
-      const pts = data.path.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(v, p.x, p.y) * FT, p.y + 0.5); });
-      const g = tokenObjs.get(data.id);
-      if (g && !(activeMove && activeMove.id === data.id) && !moveQueue.some((move) => move.id === data.id)) {
-        // Hold each waiting token at its first path square, rather than showing the
-        // polled destination and snapping back when its place in the queue arrives.
-        g.position.copy(pts[0]); g.userData.applied = null;
-      }
-      moveQueue.push({ id: data.id, pts });
-    }
-    for (let i = moveQueue.length - 1; i >= 0; i--)
-      if (!v.creatures[moveQueue[i].id] || v.creatures[moveQueue[i].id].hidden) moveQueue.splice(i, 1);
-    if (activeMove && (!v.creatures[activeMove.id] || v.creatures[activeMove.id].hidden)) {
-      const g = tokenObjs.get(activeMove.id);
-      if (g) { g.userData.path = []; g.position.copy(g.userData.target); g.userData.applied = null; }
-      activeMove = null; clearTrail();
-    }
+  function settleGlides() { const rs = [...glides.values()]; glides.clear(); rs.forEach((r) => r()); }
+  // Walks a token along a path of cells; resolves on arrival (at once if it has no token). The
+  // caller decides when it starts, so a goblin's move plays in log order, not on arrival.
+  function glide(id, cells) {
+    const g = tokenObjs.get(id);
+    if (!g || !lastState || !cells || cells.length < 2) return Promise.resolve();
+    const pts = cells.map((id) => { const p = cellOf(id); return new THREE.Vector3(p.x + 0.5, cellElev(lastState, p.x, p.y) * FT, p.y + 0.5); });
+    if (glides.has(id)) glides.get(id)();
+    if (follow && !followYielded) focusOn(id, cells[cells.length - 1]); // track whoever is actually moving
+    g.position.copy(pts[0]); g.userData.applied = null; g.userData.path = pts.slice(1);
+    clearTrail();
+    const geometry = new THREE.BufferGeometry().setFromPoints(pts.map((p) => p.clone().setY(p.y + 0.06)));
+    trail = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
+    trail.computeLineDistances(); trail.userData.born = performance.now(); fx.add(trail);
+    // Frames stop in a background tab or on a lost GL context; never let one glide wedge the queue.
+    let len = 0; for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+    return new Promise((done) => {
+      const finish = () => { clearTimeout(timer); if (glides.get(id) === finish) glides.delete(id); done(); };
+      const timer = setTimeout(() => {
+        if (glides.get(id) !== finish) return;
+        g.userData.path = []; g.position.copy(pts[pts.length - 1]); g.userData.applied = null; finish();
+      }, (len / 7 * 1000 + 1500) / speed);
+      glides.set(id, finish);
+    });
   }
-  function startNextMove(now) {
-    if (activeMove) {
-      const g = tokenObjs.get(activeMove.id);
-      if (g && g.userData.path.length) return;
-      activeMove = null;
-    }
-    while (moveQueue.length) {
-      const move = moveQueue.shift(), g = tokenObjs.get(move.id);
-      if (!g) continue;
-      activeMove = move;
-      g.position.copy(move.pts[0]); g.userData.applied = null; g.userData.path = move.pts.slice(1);
-      clearTrail();
-      const geometry = new THREE.BufferGeometry().setFromPoints(move.pts.map((p) => p.clone().setY(p.y + 0.06)));
-      trail = new THREE.Line(geometry, new THREE.LineDashedMaterial({ color: GOLD, dashSize: 0.12, gapSize: 0.14, transparent: true }));
-      trail.computeLineDistances(); trail.userData.born = now; fx.add(trail); break;
+  // Finish every glide where it stands: tokens jump to their (already updated) targets.
+  function snap() {
+    clearTrail(); settleGlides();
+    for (const g of tokenObjs.values()) {
+      g.userData.path = [];
+      if (g.userData.target) g.position.copy(g.userData.target);
+      g.userData.applied = null;
     }
   }
 
@@ -615,10 +875,12 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const q = cellOf(p.cell), y = (p.z || cellElev(lastState, q.x, q.y)) * FT + 0.06;
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.42, 40), new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, depthTest: false, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.set(q.x + 0.5, y, q.y + 0.5);
-    const label = labelSprite(p.label ? `${p.who}: ${p.label}` : p.who);
-    label.position.set(q.x + 0.5, y + 0.9, q.y + 0.5);
-    fx.add(ring, label);
-    pings.push({ ring, label, born: performance.now() });
+    // quiet: a bare, shorter ring (where a heard sound came from) with no name tag
+    const label = p.quiet ? null : labelSprite(p.label ? `${p.who}: ${p.label}` : p.who);
+    if (label) label.position.set(q.x + 0.5, y + 0.9, q.y + 0.5);
+    if (p.quiet) ring.material.opacity = 0.7;
+    fx.add(...(label ? [ring, label] : [ring]));
+    pings.push({ ring, label, born: performance.now(), life: p.quiet ? 1600 : 3000 });
   }
 
   // ---------- move preview ----------
@@ -641,7 +903,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     cold: { color: '#9fe3ff', shape: 'orb', glow: true }, necrotic: { color: '#b48cff', shape: 'orb', glow: true }, lightning: { color: '#cfe8ff', shape: 'orb', glow: true },
     default: { color: GOLD, shape: 'orb' },
   };
-  const tokenPoint = (id, up = 0.7) => { const g = tokenObjs.get(id); return g ? g.position.clone().setY(g.position.y + up) : null; };
+  const tokenPoint = (id, up) => { const g = tokenObjs.get(id); return g ? g.position.clone().setY(g.position.y + (up ?? g.userData.top * 0.7)) : null; };
   function shoot(fromId, toId, kind) {
     return new Promise((done) => {
       const a = tokenPoint(fromId), b = tokenPoint(toId);
@@ -653,7 +915,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       let light = null;
       if (look.glow) { light = new THREE.PointLight(look.color, 3, 3); mesh.add(light); }
       fx.add(mesh);
-      const dur = Math.min(650, 160 + a.distanceTo(b) * 45), born = performance.now(), arc = Math.min(1.2, a.distanceTo(b) * 0.08);
+      const dur = Math.min(650, 160 + a.distanceTo(b) * 45) / speed, born = performance.now(), arc = Math.min(1.2, a.distanceTo(b) * 0.08);
+      setTimeout(done, dur + 400); // no frames (background tab): don't hold up the playback queue
       const at = (k) => a.clone().lerp(b, k).setY(a.y + (b.y - a.y) * k + Math.sin(Math.PI * k) * arc);
       effects.push((now) => {
         const k = Math.min(1, (now - born) / dur), p = at(k);
@@ -673,9 +936,10 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (dir.lengthSq() < 1e-6) return done();
       dir.normalize();
       const born = performance.now();
+      setTimeout(done, 550 / speed); // as above
       let prev = 0, hitSent = false;
       effects.push((now) => {
-        const k = Math.min(1, (now - born) / 300), off = Math.sin(Math.PI * k) * 0.38;
+        const k = Math.min(1, (now - born) * speed / 300), off = Math.sin(Math.PI * k) * 0.38;
         g.userData.offset.addScaledVector(dir, off - prev); prev = off;
         if (k >= 0.5 && !hitSent) { hitSent = true; done(); }
         return k >= 1;
@@ -693,9 +957,9 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
     s.scale.set(big ? 1.5 : 1.1, big ? 0.75 : 0.55, 1);
     fx.add(s);
-    const born = performance.now(), base = g.position.clone().setY(g.position.y + 1.4);
+    const born = performance.now(), base = g.position.clone().setY(g.position.y + g.userData.top + 0.35);
     effects.push((now) => {
-      const k = (now - born) / 1300;
+      const k = (now - born) * speed / 1300;
       s.position.copy(base).setY(base.y + k * 0.8);
       s.material.opacity = k < 0.7 ? 1 : Math.max(0, 1 - (k - 0.7) / 0.3);
       if (k < 1) return false;
@@ -708,35 +972,67 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     if (!g) return;
     if (text) floatText(id, text, color, big);
     if (!flash) return;
-    const m = g.userData.sprite.material, born = performance.now();
+    const u = g.userData, ms = [u.torso.material, u.head.material, u.base.material], born = performance.now();
     let prev = new THREE.Vector3();
     effects.push((now) => {
-      const k = Math.min(1, (now - born) / (big ? 520 : 380));
-      m.color.setRGB(1, 0.35 + 0.65 * k, 0.3 + 0.7 * k);
+      const k = Math.min(1, (now - born) * speed / (big ? 520 : 380));
+      for (const m of ms) { m.emissive.setRGB(1, 0.2, 0.12); m.emissiveIntensity = (1 - k) * 0.9; }
       const amp = (1 - k) * (big ? 0.12 : 0.07), off = new THREE.Vector3(Math.sin(now / 18) * amp, 0, Math.cos(now / 23) * amp);
       g.userData.offset.add(off.clone().sub(prev)); prev = off;
       if (k < 1) return false;
-      g.userData.offset.sub(prev); m.color.setRGB(1, 1, 1); return true;
+      g.userData.offset.sub(prev); for (const m of ms) { m.emissive.setRGB(0, 0, 0); m.emissiveIntensity = 1; } return true;
     });
   }
 
   // ---------- camera ----------
   let defDist = 30, ease = null;
-  function focusOn(id) {
+  // id: a creature, or a cell name (eases to that square).
+  function focusOn(id, at) {
+    if (lastState && !lastState.creatures[id] && /^[A-Za-z]\d+$/.test(id || '')) at = id.toUpperCase();
     const c = lastState && lastState.creatures[id];
-    if (!c || !c.pos || c.hidden) return;
-    const p = cellOf(c.pos);
-    const to = new THREE.Vector3(p.x + 0.5, (c.elev || 0) * FT + 0.5, p.y + 0.5);
+    if (!at && (!c || !c.pos || c.hidden)) return;
+    const p = cellOf(at || c.pos);
+    const to = new THREE.Vector3(p.x + 0.5, (at ? cellElev(lastState, p.x, p.y) : c.elev || 0) * FT + 0.5, p.y + 0.5);
     const off = camera.position.clone().sub(controls.target), d = off.length();
     if (d > defDist * 2.5) off.setLength(defDist);
     ease = { t0: performance.now(), fromT: controls.target.clone(), toT: to, fromO: camera.position.clone().sub(controls.target), toO: off };
   }
+  // Where a creature (by id, at its current glide position) or a cell (by name) is on screen, in client px:
+  // { x, y, r } with r the on-screen radius of its base. null when it's behind the camera or unknown.
+  const projV = new THREE.Vector3();
+  function screenOf(ref) {
+    const g = tokenObjs.get(ref), ic = g && marks.screenOf(ref);
+    if (ic && ic.icon) return { x: ic.x, y: ic.y, r: ic.r }; // the marker's icon, once it has grown
+    let p, half = 0.4;
+    if (g) { p = g.position.clone().setY(g.position.y + g.userData.top); half = Math.max(0.2, g.userData.half); }
+    else if (lastState && /^[A-Za-z]\d+$/.test(ref)) { const q = cellOf(ref.toUpperCase()); p = new THREE.Vector3(q.x + 0.5, cellElev(lastState, q.x, q.y) * FT, q.y + 0.5); half = 0.5; }
+    else return null;
+    camera.updateMatrixWorld();
+    const rc = renderer.domElement.getBoundingClientRect();
+    const to = (v) => { projV.copy(v).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
+    const a = to(p);
+    if (a.z > 1) return null;
+    const b = to(p.clone().addScaledVector(projV.set(1, 0, 0).transformDirection(camera.matrixWorld), half));
+    return { x: a.x, y: a.y, r: Math.hypot(b.x - a.x, b.y - a.y) };
+  }
+  // A square's screen centre and half its diagonal, in client px (the square wheel's anchor).
+  function squareAnchor(ref) {
+    if (!lastState || !/^[A-Za-z]\d+$/.test(ref)) return null;
+    const q = cellOf(ref.toUpperCase()), y = cellElev(lastState, q.x, q.y) * FT;
+    camera.updateMatrixWorld();
+    const rc = renderer.domElement.getBoundingClientRect();
+    const to = (x, z) => { projV.set(x, y, z).project(camera); return { x: rc.left + (projV.x + 1) / 2 * rc.width, y: rc.top + (1 - projV.y) / 2 * rc.height, z: projV.z }; };
+    const m = to(q.x + 0.5, q.y + 0.5), a = to(q.x, q.y), b = to(q.x + 1, q.y + 1);
+    return m.z > 1 ? null : { x: m.x, y: m.y, r: Math.hypot(a.x - b.x, a.y - b.y) / 2 };
+  }
   function followTurn(v) {
+    // v is the viewer's display state: its log stops at what has played, so a new turn entry means that
+    // turn has started on screen (v.current may already be ahead of it while the queue plays out).
     const turns = (v.log || []).filter((e) => e.type === 'turn'), latest = turns[turns.length - 1];
-    const key = JSON.stringify([v.round, v.current, latest || null, latest ? turns.filter((e) => logKey(e) === logKey(latest)).length : 0]);
+    const key = JSON.stringify([v.name, v.round, latest ? latest.n : v.current]);
     if (key === turnKey) return;
     turnKey = key; followYielded = false;
-    if (follow) focusOn(v.current);
+    if (follow) focusOn((latest && latest.data && latest.data.id) || v.current);
   }
   // Yield to the player's own camera moves (press, drag, zoom), not to a pointer just passing over the map.
   const stopEase = () => { ease = null; followYielded = true; };
@@ -764,45 +1060,185 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     sun.target.position.set(cx, 0, cz);
   }
 
-  // ---------- picking ----------
+  // ---------- hover & picking (screen space, from the mockup) ----------
+  // Each body is an ellipse on screen (its projected height and width plus its footprint on the floor, padded, never tiny); its
+  // score is the cursor's distance from the centre in units of those radii, so < 1 is inside. Where ellipses overlap, the body
+  // the cursor is relatively nearer to wins. Line of sight (the costly part) is only checked for bodies the cursor is inside.
   const ray = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
-  function pick(e) {
-    const r = renderer.domElement.getBoundingClientRect();
-    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
-    const hit = ray.intersectObjects([...tokens.children, ...terrain.children], true).find((h) => h.object.userData.id || h.object.userData.cell);
-    if (!hit) return null;
-    if (hit.object.userData.id) return { id: hit.object.userData.id };
-    return { cell: hit.object.userData.cell };
+  const tmp = new THREE.Vector3(), camRight = new THREE.Vector3(), camFwd = new THREE.Vector3(), shapePts = [];
+  let rect = renderer.domElement.getBoundingClientRect(), occ = null;
+  const viewCache = new Map();
+  const toScr = (v) => {
+    tmp.copy(v).project(camera);
+    return { x: rect.left + (tmp.x + 1) / 2 * rect.width, y: rect.top + (1 - tmp.y) / 2 * rect.height, front: tmp.z < 1 && Math.abs(tmp.x) < 1.15 && Math.abs(tmp.y) < 1.15 };
+  };
+  const occluders = () => occ || (occ = terrain.children.filter((o) => o.isMesh && !o.userData.dispose));
+  // Where each body stands this frame: its square, the floor under it, whether it floats above it, whether it shares the square.
+  function bodyInfo() {
+    const counts = {};
+    for (const g of tokens.children) {
+      const u = g.userData, cx = Math.floor(g.position.x), cy = Math.floor(g.position.z);
+      u.cellKey = cx + ',' + cy; u.floorY = lastState ? cellElev(lastState, cx, cy) * FT : 0; u.alt = g.position.y - u.floorY > 0.08;
+      if (!u.alt) counts[u.cellKey] = (counts[u.cellKey] || 0) + 1;
+    }
+    for (const g of tokens.children) g.userData.shared = !g.userData.alt && counts[g.userData.cellKey] > 1;
   }
-  let downAt = null;
-  renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
-  renderer.domElement.addEventListener('pointerup', (e) => {
-    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
-    const p = pick(e);
-    if (p && p.id && onSelect) onSelect(p.id);
-    else if (p && p.cell && onCell) onCell(p.cell.x, p.cell.y);
+  // In view = some part of the body or of its stem (middle, top, or along the stem) has a clear line from the camera.
+  function inView(g) {
+    if (viewCache.has(g)) return viewCache.get(g);
+    const u = g.userData, occs = occluders();
+    let ok = false;
+    for (const h of [u.top, u.top / 2, u.top + STEM_W * 0.5, u.top + STEM_W]) {
+      const p = g.position.clone().setY(g.position.y + h + 0.02), d = p.distanceTo(camera.position);
+      ray.set(camera.position, p.sub(camera.position).normalize()); ray.far = d - 0.05;
+      if (!ray.intersectObjects(occs, false).length) { ok = true; break; }
+    }
+    viewCache.set(g, ok); return ok;
+  }
+  // A body's screen shape: the box around its top, its sides and its footprint (a 0.7-wide square under a body alone in its
+  // square), so the centre sits low and hovering the ground under a body counts a little. Flyers use their own underside.
+  function shapeOf(g) {
+    const u = g.userData, p = g.position, mid = p.y + u.top / 2, foot = u.alt ? p.y : u.floorY;
+    camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    camera.getWorldDirection(camFwd).setY(0).normalize();
+    shapePts.length = 0;
+    const at = (y, rs, fs) => shapePts.push(toScr(tmp.set(p.x, y, p.z).addScaledVector(camRight, rs).addScaledVector(camFwd, fs)));
+    at(p.y + u.top, 0, 0); at(mid, u.half, 0); at(mid, -u.half, 0);
+    const f = u.alt || u.shared ? u.half + 0.06 : Math.max(u.half, 0.35);
+    at(foot, f, 0); at(foot, -f, 0); at(foot, 0, f); at(foot, 0, -f);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const q of shapePts) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+    return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, front: shapePts[1].front,
+      rx: Math.max((x1 - x0) / 2, HOVER_MIN) + HOVER_PAD, ry: Math.max((y1 - y0) / 2, HOVER_MIN) + HOVER_PAD };
+  }
+  function hoverScores(x, y) {
+    for (const g of tokens.children) {
+      const h = g.userData.hv = shapeOf(g);
+      h.s = h.front && x > -1e3 ? Math.hypot((x - h.x) / h.rx, (y - h.y) / h.ry) : Infinity;
+    }
+  }
+  // The body at (x, y). `cur` (the last pick) holds on until another body scores clearly better, so edges don't flicker.
+  function bodyAt(x, y, cur) {
+    hoverScores(x, y);
+    const best = tokens.children.filter((g) => g.userData.hv.s < 1).sort((a, b) => a.userData.hv.s - b.userData.hv.s).find(inView) || null;
+    if (cur && cur.parent === tokens && cur !== best && cur.userData.hv.s < 1 && (!best || best.userData.hv.s > cur.userData.hv.s * STICKY) && inView(cur)) return cur;
+    return best;
+  }
+  // The square under the cursor (terrain only; walls' own segments don't count).
+  function cellAt(x, y) {
+    ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera); ray.far = Infinity;
+    const hit = ray.intersectObjects(occluders(), false).find((h) => h.object.userData.cell);
+    return hit ? hit.object.userData.cell : null;
+  }
+  const cellOfBody = (g) => { const q = cellOf(lastState.creatures[g.userData.id].pos); return [q.x, q.y]; };
+  // Hover from the pointer. `emit` (a real pointer move) always tells onHover; a frame only does when a body's square changed.
+  function updateHover(emit) {
+    const free = mouse.x > -1e3 && !mouse.btn && lastState;
+    ptrHover = marks.hover(!!free);   // icons and traced stems first, then the body ellipses
+    const hg = ptrHover && tokenObjs.get(ptrHover);
+    renderer.domElement.style.cursor = ptrHover ? 'pointer' : '';
+    if (!free || !onHover) return;
+    let c = null;
+    if (hg) c = cellOfBody(hg); else if (emit) { const q = cellAt(mouse.x, mouse.y); c = q ? [q.x, q.y] : [-1, -1]; } else return;
+    const key = c.join(',');
+    if (emit || key !== hoverKey) { hoverKey = key; onHover(c[0], c[1]); }
+  }
+  // Debug (?debug): draw the hover ellipses.
+  let dbg = null;
+  function drawHits() {
+    if (!DEBUG) return;
+    if (!dbg) { dbg = document.createElement('canvas'); dbg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none'; container.style.position = container.style.position || 'relative'; container.appendChild(dbg); }
+    const w = container.clientWidth, h = container.clientHeight; if (dbg.width !== w) dbg.width = w; if (dbg.height !== h) dbg.height = h;
+    const g = dbg.getContext('2d'); g.clearRect(0, 0, w, h);
+    for (const t of tokens.children) { const q = t.userData.hv; if (!q || !q.front) continue;
+      g.strokeStyle = t === lastBody ? '#d8b45a' : 'rgba(233,227,211,.4)'; g.setLineDash(q.s < 1 ? [] : [3, 3]);
+      g.beginPath(); g.ellipse(q.x - rect.left, q.y - rect.top, q.rx, q.ry, 0, 0, 7); g.stroke(); }
+  }
+
+  // Markers (stems, icons, labels, tracing, icon mode). They get first say on what the pointer is on.
+  marks = createMarks({ scene, camera, renderer, container, tokenObjs, inView, bodyAt, hoverScores, mouse });
+  // Feet each creature stands above its floor (for the "N ft up" label).
+  const alts = (v) => { const o = {}; for (const c of Object.values(v.creatures)) { const p = c.pos && cellOf(c.pos); if (p) o[c.id] = Math.max(0, Math.round((c.elev || 0) - cellElev(v, p.x, p.y))); } return o; };
+
+  // The highlight each frame: hovered or selected 1, their square-mates .55; the approach grows as the cursor nears.
+  function stepHighlights(dt) {
+    const eff = ptrHover || hoveredId, cells = new Set();
+    for (const id of [eff, lastSelected]) { const g = id && tokenObjs.get(id); if (g) cells.add(g.userData.cellKey); }
+    for (const g of tokens.children) {
+      const u = g.userData, sel = lastSelected === u.id, hov = eff === u.id;
+      let ap = 0;
+      const s = u.hv ? u.hv.s : Infinity, q = Math.min(1, (HL.range - s) / Math.max(0.05, HL.range - HL.full));
+      if (hov) ap = 1; else if (q > 0 && inView(g)) ap = Math.min(q, 0.97);
+      u.apL += (ap - u.apL) * 0.35; if (u.apL < 0.002) u.apL = 0;
+      hlStep(g, u, hov || sel ? 1 : cells.has(u.cellKey) ? 0.55 : 0, dt);
+    }
+  }
+
+  // The selected square on the floor: a gold fill plus an outline, for a picked square.
+  const selSq = new THREE.Group();
+  {
+    const g = new THREE.PlaneGeometry(0.94, 0.94).rotateX(-Math.PI / 2);
+    selSq.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.22, depthWrite: false })),
+      new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: GOLD })));
+    selSq.visible = false; scene.add(selSq);
+  }
+  let sqHold = false;   // a wheel is on the square: keep it lit even where the cursor marks it
+  function showSquare(cell, hold = false) { // cell: {x, y} or null
+    pickedCell = cell; sqHold = !!cell && hold;
+    selSq.visible = !!cell;
+    if (cell && lastState) selSq.position.set(cell.x + 0.5, cellElev(lastState, cell.x, cell.y) * FT + 0.012, cell.y + 0.5);
+  }
+
+  // ---------- input ----------
+  // LMB drags the ground (the floor point under the cursor stays under it); RMB orbits, the wheel zooms, MMB dollies.
+  // A click is a press and release under ~5 px without movement.
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  let grab = null, downAt = null, pressed = null;   // pressed: the marker under the pointer at press time (pressing ends the trace and shrinks it)
+  function groundAt(x, y) {
+    ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera);
+    return ray.ray.intersectPlane(ground, new THREE.Vector3());
+  }
+  const dom = renderer.domElement;
+  dom.addEventListener('pointerdown', (e) => {
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld();
+    downAt = [e.clientX, e.clientY, e.button]; pressed = e.button === 0 ? marks.pickAt(e.clientX, e.clientY) : null; mouse.btn = e.buttons;
+    if (e.button === 0 && e.pointerType === 'mouse') { grab = groundAt(e.clientX, e.clientY); try { dom.setPointerCapture(e.pointerId); } catch { /* ignore */ } }
   });
-  renderer.domElement.addEventListener('pointermove', (e) => {
-    if (e.buttons) { hoveredId = null; return; }
-    const p = pick(e);
-    hoveredId = p && p.id || null;
-    if (!onHover) return;
-    if (p && p.id && lastState) { const q = cellOf(lastState.creatures[p.id].pos); onHover(q.x, q.y); }
-    else if (p && p.cell) onHover(p.cell.x, p.cell.y);
-    else onHover(-1, -1);
+  dom.addEventListener('pointermove', (e) => {
+    mouse.x = e.clientX; mouse.y = e.clientY; mouse.btn = e.buttons;
+    if (e.buttons) {
+      ptrHover = null;
+      if (grab && (e.buttons & 1)) {
+        const p = groundAt(e.clientX, e.clientY);
+        if (p && p.distanceTo(grab) < 30) { const d = grab.clone().sub(p); camera.position.add(d); controls.target.add(d); camera.updateMatrixWorld(); } // near the horizon the plane runs away
+      }
+      return;
+    }
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
+    updateHover(true);
   });
-  renderer.domElement.addEventListener('pointerleave', () => { hoveredId = null; if (onHover) onHover(-1, -1); });
+  const release = () => { grab = null; mouse.btn = 0; };
+  dom.addEventListener('pointercancel', release);
+  dom.addEventListener('pointerup', (e) => {
+    release();
+    if (e.pwHandled) return;   // the action wheel used this click
+    if (!downAt || downAt[2] !== 0 || e.button !== 0 || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !lastState) return;
+    rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
+    const id = pressed || marks.pickAt(e.clientX, e.clientY);
+    if (id) { showSquare(null); if (onSelect) onSelect(id); return; }
+    const c = cellAt(e.clientX, e.clientY);
+    if (c) { showSquare(c); if (onCell) onCell(c.x, c.y); }
+  });
+  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = null; hoverKey = null; if (onHover) onHover(-1, -1); });
 
   const wallRay = new THREE.Raycaster();
   function fadeOccludingWalls(dt) {
     const blocked = new Set();
     scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
-    for (const id of new Set([lastState && lastState.current, lastSelected, hoveredId])) {
+    for (const id of new Set([lastState && lastState.current, lastSelected, ptrHover || hoveredId])) {
       const c = lastState && lastState.creatures[id], g = tokenObjs.get(id);
       if (!c || c.hidden || !g) continue;
-      for (const up of [0.55, 0.95]) {
+      for (const up of [0.55, 0.95, g.userData.top]) {
         const point = g.position.clone().add(new THREE.Vector3(0, up, 0));
         const dir = point.sub(camera.position), distance = dir.length();
         wallRay.set(camera.position, dir.normalize()); wallRay.far = Math.max(0, distance - 0.05);
@@ -841,8 +1277,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       s.position.y = s.userData.y + (k - 1) * 0.1;
     }
     for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
-    for (const w of waters) { const m = w.material.map; m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; }
-    startNextMove(now);
+    for (const w of waters) { const m = w.material.map; if (m) { m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; } }
     for (const g of tokens.children) {
       const u = g.userData;
       // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
@@ -850,31 +1285,38 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       u.applied = u.offset.clone();
       if (u.path.length) {
         const next = u.path[0];
-        const step = 7 * dt;
+        const step = 7 * speed * dt;
         const d = g.position.distanceTo(next);
         if (d <= step) { g.position.copy(next); u.path.shift(); } else g.position.lerp(next, step / d);
-      } else if (u.target && !(activeMove && activeMove.id === u.id) && !moveQueue.some((move) => move.id === u.id)) g.position.lerp(u.target, 1 - Math.exp(-dt * 10));
+        if (!u.path.length && glides.has(u.id)) { const r = glides.get(u.id); glides.delete(u.id); r(); }
+      } else if (u.target && !glides.has(u.id)) g.position.lerp(u.target, 1 - Math.exp(-dt * 10 * speed));
       g.position.add(u.applied);
       u.turnRing.material.opacity = 0.55 + Math.sin(t * 4) * 0.35;
     }
     for (let i = effects.length - 1; i >= 0; i--) if (effects[i](now)) effects.splice(i, 1);
     for (let i = pings.length - 1; i >= 0; i--) {
-      const pg = pings[i], age = (now - pg.born) / 3000;
+      const pg = pings[i], age = (now - pg.born) / pg.life;
       pg.ring.scale.setScalar(1 + ((age * 3) % 1) * 1.5);
       pg.ring.material.opacity = Math.max(0, 1 - age);
-      pg.label.material.opacity = Math.max(0, Math.min(1, (1 - age) * 2));
+      if (pg.label) pg.label.material.opacity = Math.max(0, Math.min(1, (1 - age) * 2));
       if (age >= 1) {
-        for (const o of [pg.ring, pg.label]) { fx.remove(o); o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+        for (const o of [pg.ring, pg.label].filter(Boolean)) { fx.remove(o); o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
         pings.splice(i, 1);
       }
     }
     if (trail) {
-      const age = (now - trail.userData.born) / 2400;
+      const age = (now - trail.userData.born) * speed / 2400;
       trail.material.opacity = Math.max(0, 0.9 * (1 - age));
       if (age >= 1) clearTrail();
     }
     stepEase(now);
     controls.update();
+    camera.updateMatrixWorld(); rect = renderer.domElement.getBoundingClientRect(); viewCache.clear();
+    if (lastState) {
+      bodyInfo(); updateHover(false);
+      marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect });
+      stepHighlights(dt * 1000); drawHits();
+    }
     fadeOccludingWalls(dt);
     renderer.render(scene, camera);
   }
@@ -885,31 +1327,36 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   }
 
   return {
-    update(v, { selected, cursor, hovered } = {}) {
+    update(v, { selected, cursor, hovered, you } = {}) {
       const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
-      if (encounterChanged) { previousLog = null; turnKey = null; resetMoves(); hoveredId = null; ease = null; framed = false; }
+      if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = ptrHover = null; ease = null; framed = false; showSquare(null); }
       lastState = v; lastSelected = selected;
       if (hovered !== undefined) hoveredId = hovered;
+      if (pickedCell && !sqHold && cursor && cursor.cell === cellName(pickedCell.x, pickedCell.y)) showSquare(null);
       const sig = signature(v);
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
-      updateTokens(v, selected);
-      playMoves(v);
+      updateTokens(v);
+      marks.sync(v.creatures, you, alts(v));
       followTurn(v);
       setCursor(v, cursor);
     },
     ping: addPing,
-    setPath, shoot, bump, hit,
+    setPath, shoot, bump, hit, glide, snap, showSquare,
+    setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
     focus: focusOn,
+    screenOf, squareAnchor,
+    get pressed() { return pressed; },   // the marker a press began on (until the next press)
+    marks: () => marks,   // icon element/position per id, setLow, active (icon mode or tracing)
     setFollow(on) {
       follow = !!on;
       if (!follow) ease = null;
       else if (!followYielded && lastState) focusOn(lastState.current);
     },
     dispose() {
-      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose();
+      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose();
       clearWalls(); clearTrail();
       disposables.forEach((g) => g.dispose());
       renderer.dispose(); renderer.domElement.remove();
@@ -919,14 +1366,4 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
 
 function cellOf(id) { return { x: id.charCodeAt(0) - 65, y: parseInt(id.slice(1), 10) - 1 }; }
 
-// Same two-letter labels as the 2D map.
-function tokenLabels(v) {
-  const base = {}, count = {};
-  for (const c of Object.values(v.creatures)) {
-    base[c.id] = c.name.replace(/^(Goblin|Brother|Sister|the)\s+/i, '').slice(0, 2);
-    count[base[c.id]] = (count[base[c.id]] || 0) + 1;
-  }
-  const out = {};
-  for (const [id, b] of Object.entries(base)) out[id] = count[b] > 1 ? b[0] + ((id.match(/\d+$/) || [''])[0] || id.slice(-1)) : b;
-  return out;
-}
+function cellName(x, y) { return String.fromCharCode(65 + x) + (y + 1); }

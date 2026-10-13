@@ -2,8 +2,11 @@
 // short caption right under it; the details (role, odds, why it's greyed) go in one tooltip for the slot under the
 // pointer. Only icons and captions are hit targets. Clicking the target backs out (closes at the root).
 //
-// Menus: { title, slots: { 1..6: { what, short?, odds?, role?, icon?, sub?(), full?(), off?, self?, back? } } }. Slot 1
-// is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes.
+// Menus: { title, slots: { 1..6: { what, short?, odds?, role?, icon?, sub?(), full?(), off?, self?, warn?, sug?, back? } } }.
+// Slot 1 is at 12 o'clock, clockwise. Inside a submenu slot 4 is Back. Leaves go to onLeaf(slot); the wheel then closes,
+// unless onLeaf returns 'keep': then it stays open and redraws that slot (the host may have changed the leaf's `what`,
+// `short`, `odds` or `warn` fields: a red ring, for "this will hurt, choose again to confirm"). `sug` is a gold ring
+// (the suggested move). The host may also open another wheel from inside onLeaf.
 //
 //   const pw = createPipWheel(document.body, { onLeaf, onClose, spinMs: () => 150 });
 //   pw.open(menu, () => ({ x, y, r, s }));   // anchor in client px, polled every frame; r = target's screen radius,
@@ -14,7 +17,8 @@
 // The grey ring is the cutoff: leave it (other than onto an icon or caption) and the wheel folds without closing:
 // the icons fan in to one line and slide back under the target; coming back they rush out along that line and fan
 // out to the hexagon. The same unfold plays on open. Keys still work and clicks pass through while folded.
-// The host can stack the wheel under its target: `pw.el` is the wheel's element.
+// The host can stack the wheel under its target: `pw.el` is the wheel's element (the 3D viewer moves it into its icon layer
+// and sets its z-index there; it stays position: fixed, so the anchor is still in client px).
 // A click inside the ring goes to onInnerClick(ev) first; if that returns true (the host picked something else
 // there) the wheel leaves it, otherwise it backs out.
 
@@ -31,15 +35,29 @@ const CSS = `
   white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: #14130fd9; color: var(--ink, #e9e3d3); font-size: 11px; font-weight: 600; }
 .pw .b.off { opacity: .5; }
 .pw .b.off .i { color: var(--ink-faint, #6b6557); }
+.pw .b .seen-badge { position: absolute; left: -6px; bottom: -4px; width: 23px; height: 16px; display: flex; align-items: center; gap: 1px;
+  border: 1px solid #9b6749; border-radius: 5px; background: #201a13; color: #e5b27c; font: 800 11px/1 system-ui; }
+.pw .b .seen-badge svg { position: static; width: 15px; height: 11px; }
+.pw .b.off:has(.seen-badge) { opacity: 1; }
+.pw .b.off:has(.seen-badge) .i { color: #777065; border-color: #49443c; }
+.pw .b.off:has(.seen-badge) .c, .pw .b.off:has(.seen-badge) .k { opacity: .55; }
+.pw .tip .watchers { margin-top: 5px; border-top: 1px solid #4a4538; padding-top: 4px; }
+.pw .tip .watcher { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--ink-dim, #9c9584); font-size: 11px; }
+.pw .tip .watcher .face { border: 1px solid #756750; border-radius: 50%; width: 17px; height: 17px; display: grid; place-items: center; font: 700 9px/1 system-ui; flex: none; }
 .pw .b.back .i { color: var(--ink, #e9e3d3); }
+.pw .b.sug .i { border-color: #d8b45a99; }
+.pw .b.warn .i { border-color: #d25b4a; background: #2e1a16; color: #e8826f; box-shadow: 0 0 0 2px #d25b4a55, 0 1px 5px #000a; }
 .pw .b.hot { scale: 1.08; }
 .pw .b.hot .i { border-color: var(--gold, #d8b45a); background: #2e2a1e; }
+.pw .b.warn.hot .i { border-color: #ef7a66; background: #3a1f1a; }
 .pw .b.hot .c { color: var(--gold, #d8b45a); }
+.pw.tight .b:not(.hot) .c { display: none; }
 .pw .tip { position: absolute; left: 0; top: 0; z-index: 2; display: none; width: max-content; max-width: 190px; padding: 6px 9px; border-radius: 7px; background: #1c1b16f5;
   border: 1px solid #4a4538; color: var(--ink, #e9e3d3); box-shadow: 0 3px 10px #000b; font-size: 12px; line-height: 1.3; white-space: normal; }
 .pw .tip .r { color: var(--ink-faint, #6b6557); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; }
 .pw .tip .w { font-weight: 600; }
 .pw .tip .o { color: var(--gold, #d8b45a); }
+.pw .tip .o.w2 { color: #e8826f; }
 .pw .tip .n { color: var(--ink-dim, #9c9584); font-size: 11px; }
 .pw .tip .self { font-size: 9px; color: var(--party, #4fb3a4); border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 4px; }
 .pw .crumb { position: absolute; white-space: nowrap; transform: translate(-50%, -100%); color: var(--ink-dim, #9c9584); font-size: 11px;
@@ -58,6 +76,7 @@ const rad = (a) => a * Math.PI / 180;
 const slotAngle = (k) => -90 + (k - 1) * 60;
 // Icons (D px) sit on a hexagon; their captions hang under them, tucked 4 px behind the circle's bottom.
 const D = 34, GAP = 6, GRACE = 10;   // GRACE: see pointermove
+const TIGHT = 50;   // px: the ring's least layout radius at full size (see frame)
 const UNFOLD_MS = 190, FOLD_MS = 150;
 const angTo = (a, b) => ((b - a) % 360 + 540) % 360 - 180;   // shortest turn from a to b, degrees
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -70,11 +89,14 @@ function tipHtml(s, root) {
   if (s.back) return '<div class="w">Back</div><div class="n">Esc, right-click or the target also go back</div>';
   const role = root && s.role && s.role !== s.what ? `<div class="r">${esc(s.role)}</div>` : '';
   return role + `<div class="w">${esc(s.what)}${s.self ? '<span class="self">self</span>' : ''}</div>`
-    + (s.odds ? `<div class="${s.off ? 'n' : 'o'}">${esc(s.odds)}</div>` : '')
-    + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '');
+    + (s.odds ? `<div class="${s.off ? 'n' : s.warn ? 'o w2' : 'o'}">${esc(s.odds)}</div>` : '')
+    + (s.info && !s.off ? `<div class="n">${esc(s.info)}</div>` : '')
+    + ((s.watchers || []).length ? `<div class="watchers"><div class="r">Line of sight</div>${s.watchers.map((w) => `<div class="watcher"><span class="face" aria-hidden="true">${esc((w.name || '?').slice(0, 1))}</span><span>${esc(w.name)} · ${w.plainSight ? 'clear view' : w.los ? 'cover or dim light' : 'view blocked'}</span></div>`).join('')}</div>` : '')
+    + (s.sub ? '<div class="n">Opens a menu</div>' : s.full ? '<div class="n">Shift-click: every option</div>' : '')
+    + (s.alt ? '<div class="n">Right-click: alternatives</div>' : s.swap ? '<div class="n">Right-click: put in the slot</div>' : '');
 }
 
-export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, spinMs = () => 150 } = {}) {
+export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, onInnerClick = () => false, onHot = () => {}, yields = () => false, spinMs = () => 150 } = {}) {
   if (!document.getElementById('pw-css')) document.head.insertAdjacentHTML('beforeend', `<style id="pw-css">${CSS}</style>`);
   const el = document.createElement('div');
   el.className = 'pw'; el.hidden = true;
@@ -107,7 +129,8 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     for (let k = 1; k <= 6; k++) {
       const s = slotOf(k);
       if (!s) continue;
-      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}" data-k="${k}"><span class="i">${iconOf(s, k)}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
+      const badge = s.badge === 'seen' ? '<span class="seen-badge" aria-label="In view"><svg viewBox="0 0 20 12" aria-hidden="true"><path d="M1 6Q10-3 19 6Q10 15 1 6Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6" r="2" fill="currentColor"/></svg>!</span>' : '';
+      html += `<div class="b${s.off ? ' off' : ''}${s.back ? ' back' : ''}${s.warn ? ' warn' : ''}${s.sug ? ' sug' : ''}" data-k="${k}"${s.off ? ' aria-disabled="true"' : ''}><span class="i">${iconOf(s, k)}${badge}<span class="k">${k}</span></span><span class="c">${esc(caption(s))}</span></div>`;
     }
     el.innerHTML = html;
     S.btns = [...el.querySelectorAll('.b')];
@@ -127,8 +150,13 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
       if (t >= 1) S.spin = null;
     }
     const a = S.anchor();
-    S.k = (S.k || a.s || 1) + ((a.s || 1) - (S.k || a.s || 1)) * .25;
-    S.r = Math.max(70, Math.min(120, (a.r || 0) + D / 2 + GAP));   // layout radius; 70: the least that keeps neighbouring captions apart
+    // The buttons ring the target just clear of it, so the ring (the fold cutoff) follows the zoom. Down to TIGHT px the buttons
+    // keep their size and captions; zoomed out past that the whole wheel shrinks with the square, captions only on the hot one.
+    // (r 0: an icon anchor, which keeps its size on screen, so the wheel does too)
+    const rr = a.r ? a.r + D / 2 + GAP : 70, f = Math.max(.45, Math.min(1, rr / TIGHT)), k = (a.s || 1) * f;
+    S.k = (S.k || k) + (k - (S.k || k)) * .25;
+    S.r = Math.max(TIGHT, Math.min(140, rr));
+    el.classList.toggle('tight', f < 1);
     S.R = S.r * S.k;   // on screen
     // fold/unfold: u runs to 0 or 1. Each time it turns, the line they travel is re-aimed at the pointer (up if it's on the target)
     const goal = S.folded ? 0 : 1, dt = Math.min(50, now - (S.t ?? now)); S.t = now;
@@ -203,6 +231,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     const sl = k && slotOf(k);
     if (sl) S.tip.innerHTML = tipHtml(sl, S.stack.length === 1);
     placeTip();
+    onHot(sl && !sl.back ? sl : null);   // the host previews what the slot would do (a route on the map)
   }
 
   function choose(k, shift) {
@@ -211,8 +240,9 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     if (s.back) return back();
     if (shift && s.full && S.stack.length === 1) return drill(s.full());
     if (s.sub) return drill(s.sub());
-    close(true);
-    onLeaf(s);
+    const was = S, r = onLeaf(s);
+    if (S !== was) return;   // the host closed or replaced the wheel itself
+    if (r === 'keep') build(); else close(true);
   }
   function drill(menu) { S.folded = false; S.stack.push(menu); build(); spin(+1); }
   function back() {
@@ -226,6 +256,7 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointermove', (ev) => {
       last = { x: ev.clientX, y: ev.clientY };
       if (ev.buttons) return;   // dragging the camera: leave the wheel as it is
+      if (yields(ev)) { S.folded = true; setHot(0); return; }   // the host has the pointer (a traced stem or its icon): step aside
       // The ring is the cutoff; an icon or caption holds it open past it. Folding is instant (the look animates).
       // Open = inside the full-size ring or on a full-size icon/caption, plus GRACE px (a few more to stay open, so
       // the edge doesn't flicker). A folded wheel pops back to full as soon as the pointer is there.
@@ -237,16 +268,29 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     ['pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }],
     ['pointerup', (ev) => {
       // a drag (e.g. orbiting the camera) passes through; so does a click that isn't on a button or the target
-      if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+      if (!down || ev.button !== 0 || S.folded || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5 || yields(ev)) return;
       const k = hit(ev.clientX, ev.clientY);
       if (k) { ev.pwHandled = true; return choose(k, ev.shiftKey); }
-      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; return onInnerClick(ev) || back(); }
+      if (away(ev.clientX, ev.clientY) < 0) { ev.pwHandled = true; const r = onInnerClick(ev) || back(); if (!S) ev.pwClosed = true; return r; } // pwClosed: the click folded the wheel away
       close();
     }],
     ['contextmenu', (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       if (S.folded) return;
-      if (!down || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) <= 5) back();
+      // A right-drag orbits the camera (it ends here too, far from where it began): only a right-click counts.
+      if (down && Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 5) return;
+      // On a slot, right-click is its contextual alternate: `alt()` drills into a menu of alternatives; in that menu `swap()`
+      // puts the option into the slot it came from ({ k, leaf }) and goes back. Anywhere else (or a slot with neither) it's Back.
+      const s = slotOf(hit(ev.clientX, ev.clientY));
+      if (s && s.alt) { const d = S.stack.length; drill(s.alt()); S.altFrom = d; return; }
+      if (s && s.swap) {
+        const r = s.swap();
+        S.stack.length = S.altFrom || S.stack.length - 1;
+        if (r && r.leaf) cur().slots[r.k] = r.leaf;
+        build(); spin(-1);
+        return;
+      }
+      back();
     }],
     ['keydown', (ev) => {
       if (/^Digit[1-6]$/.test(ev.code)) { ev.stopPropagation(); const k = +ev.code.slice(5); setHot(k); choose(k, ev.shiftKey); }
