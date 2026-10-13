@@ -1452,7 +1452,7 @@ function drawTurn() {
   if (t.explore) {
     document.getElementById('tBtns').innerHTML =
       b('Dash', 'dash', { disabled: t.dash }) + b('Disengage', 'disengage', { disabled: true, small: 'in a fight' }) + b('Dodge', 'dodge', { disabled: true, small: 'in a fight' })
-      + b('Hide', 'hide', { small: 'sneak' }) + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
+      + b('Hide', 'hide', { small: 'sneak' }) + (t.canUndo ? b(confirmation('undo') ? 'Click again to undo' : 'Undo move', 'undo', { cls: 'warn' }) : '')
       + b('Ready', 'end', { cls: 'gold', title: 'Let a round pass' });
   } else
   document.getElementById('tBtns').innerHTML =
@@ -1460,11 +1460,11 @@ function drawTurn() {
     + b('Disengage', 'disengage', { disabled: t.action || t.disengage }) + (bonusMoves ? b('Disengage', 'disengage', { as: 'bonus', small: 'bonus', disabled: t.bonus || t.disengage }) : '')
     + b('Dodge', 'dodge', { disabled: t.action })
     + b('Hide', 'hide', bonusMoves ? { as: 'bonus', small: 'bonus', disabled: t.bonus } : { disabled: t.action })
-    + (t.canUndo ? b('Undo move', 'undo', { cls: 'warn' }) : '')
+    + (t.canUndo ? b(confirmation('undo') ? 'Click again to undo' : 'Undo move', 'undo', { cls: 'warn' }) : '')
     + b(confirmation('end') ? 'Click again to end turn' : 'End turn', 'end', { cls: 'gold' });
   const msg = document.getElementById('tMsg');
   msg.className = 'tmsg' + (turnMsg.err ? ' err' : '');
-  msg.textContent = (confirmation('end') || {}).text || turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.');
+  msg.textContent = (confirmation('end') || confirmation('undo') || {}).text || turnMsg.text || (cursor.mode === 'square' ? 'Hover a square to see the route; click it to move.' : 'Square mode (M) to move. Click an enemy to attack.');
 }
 document.getElementById('turnSec').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
@@ -1473,6 +1473,14 @@ document.getElementById('turnSec').addEventListener('click', (e) => {
   if (action === 'end') {
     const t = myTurn();
     if (t && !t.explore && !t.action && !secondClick('end', {}, 'Your action is unused. Click again to end your turn.')) return;
+  }
+  if (action === 'undo') {
+    const t = myTurn(), uc = t && t.undoCost;
+    const seen = uc && [uc.cells ? `${uc.cells} new square${uc.cells > 1 ? 's' : ''}` : '', ...uc.creatures, ...uc.other].filter(Boolean);
+    if (seen && seen.length) {
+      const who = uc.noticedBy.length ? ` ${uc.noticedBy.join(', ')} noticed you; you'll stay seen.` : '';
+      if (!secondClick('undo', {}, `During that move you saw ${seen.join(', ')}. Undo is for misclicks, not for unseeing things.${who} Click again to undo.`)) return;
+    }
   }
   act(action, btn.dataset.as ? { as: btn.dataset.as } : {});
 });

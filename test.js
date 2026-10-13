@@ -213,6 +213,18 @@ try {
   expect('undo takes back a plain move', r.ok && C.loadState().creatures.wren.pos === 'K9', r.out);
   r = run('undo', 'wren');
   expect('undo only once', !r.ok, r.out);
+  run('sneak', 'wren', '--total', '20');
+  run('move', 'wren', 'K8'); r = run('undo', 'wren');
+  let wr = C.loadState().creatures.wren;
+  expect('undo puts hiding back', r.ok && wr.pos === 'K9' && wr.hidden === true && wr.stealth === 20, r.out);
+  run('move', 'wren', 'K8');
+  let ust = C.loadState(); ust.creatures.wren.hidden = false; delete ust.creatures.wren.stealth; ust.undo.noticedBy = ['gob1'];
+  ust.undo.know.cells = ust.undo.know.cells.slice(3); C.saveState(ust);
+  const uc = C.undoCost(C.loadState(), 'wren', { player: true });
+  expect('undoCost counts new squares and who noticed', uc.cells >= 3 && uc.noticedBy.length === 1, JSON.stringify(uc));
+  r = run('undo', 'wren');
+  wr = C.loadState().creatures.wren;
+  expect('undo after being noticed stays revealed', r.ok && wr.pos === 'K9' && !wr.hidden && /noticed/.test(r.out), r.out);
   r = run('dash', 'wren', '--as', 'bonus');
   let ti = C.turnInfo(C.loadState(), 'wren');
   expect('bonus-action dash leaves the action free', r.ok && ti.bonus && !ti.action && ti.dash, JSON.stringify(ti));

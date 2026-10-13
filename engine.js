@@ -198,7 +198,8 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
   if (path.cost > left && !flags.force) fail(`${c.name} needs ${path.cost} ft to reach ${dest} but has ${left} ft left this turn${ts.dash ? '' : ' (could dash)'}.`);
   // Remember where the creature stood, so a plain move can be taken back with `undo`.
   s.undo = { id, round: s.round, turnIdx: s.turnIdx, pos: c.pos, z: c.z, hp: c.hp, conditions: JSON.parse(JSON.stringify(c.conditions || [])),
-    used: ts.used, action: !!ts.action, bonus: !!ts.bonus, attacks: ts.attacks || 0, rolled: path.steps.some((st) => st.check) };
+    used: ts.used, action: !!ts.action, bonus: !!ts.bonus, attacks: ts.attacks || 0, rolled: path.steps.some((st) => st.check),
+    hidden: !!c.hidden, stealth: c.stealth, know: C.knowledge(s) }; // stealth and party knowledge, for undo
   // Walk the path, rolling for risky climbs and jumps as they come; a failure stops the move.
   const from = c.pos;
   const walked = [from];
@@ -321,11 +322,16 @@ cmd('undo', 'undo <id>                        take back this turn\'s last move (
   if (u.rolled) fail('That move involved a roll; it stands.');
   const ts = turnState(s, pos[0]);
   if (!!ts.action !== u.action || !!ts.bonus !== u.bonus || (ts.attacks || 0) !== u.attacks) fail(`${c.name} has acted since moving; the move stands.`);
+  const cost = C.undoCost(s, pos[0]);
   Object.assign(c, { pos: u.pos, conditions: u.conditions, hp: u.hp });
   if (u.z === undefined) delete c.z; else c.z = u.z;
   ts.used = u.used;
+  // Hiding comes back unless an NPC spotted the mover during the move (they keep what they saw).
+  const noticed = cost && cost.noticedBy.length > 0;
+  if (u.hidden && !c.hidden && !noticed) { c.hidden = true; if (u.stealth !== undefined) c.stealth = u.stealth; }
   delete s.undo;
-  const t = `${c.name} takes back the move (back at ${c.pos}).`;
+  const t = `${c.name} takes back the move (back at ${c.pos}${noticed ? `; ${cost.noticedBy.join(', ')} noticed, so no longer hidden` : u.hidden && c.hidden ? '; still hidden' : ''}).`;
+  if (cost && C.undoCostAny(cost)) console.log(`Learned during that move: ${cost.cells} new squares${cost.creatures.length ? '; saw ' + cost.creatures.join(', ') : ''}${cost.other.length ? '; ' + cost.other.join(' | ') : ''}.`);
   C.appendLog(s, 'move', t, { id: pos[0], to: c.pos, path: [c.pos] }); console.log(t); return s;
 });
 

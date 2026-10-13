@@ -27,7 +27,7 @@ function myTurn(seat, s = C.loadState()) {
   if (!seat.creatures.includes(id) || !s.creatures[id]) return null;
   const u = s.undo;
   const canUndo = !!(u && u.id === id && u.round === s.round && u.turnIdx === s.turnIdx && !u.rolled);
-  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), canUndo }, C.turnInfo(s, id));
+  return Object.assign({ id, name: s.creatures[id].name, features: C.featuresOf(s.creatures[id]), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null }, C.turnInfo(s, id));
 }
 // Out of combat (an encounter is loaded, no turn order) each of the seat's creatures that is on the map
 // and standing can act, one round's worth at a time: { id: turn-like info with explore: true }.
@@ -38,7 +38,8 @@ function exploreOf(seat, s = C.loadState()) {
     const c = s.creatures[id];
     if (!c || !c.pos || !(c.hp > 0)) continue;
     const ti = C.turnInfo(s, id), u = s.undo;
-    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), canUndo: !!(u && u.id === id && !u.rolled && ti.used > 0), explore: true }, ti);
+    const canUndo = !!(u && u.id === id && !u.rolled && ti.used > 0);
+    out[id] = Object.assign({ id, name: c.name, features: C.featuresOf(c), canUndo, undoCost: canUndo ? C.undoCost(s, id, { player: true }) : null, explore: true }, ti);
   }
   return out;
 }
