@@ -1625,7 +1625,7 @@ function closeWheel() {
 }
 function calm3d() { // 3D: the other icons come back up and a square wheel's gold square goes (a leaf closes the wheel without onClose)
   previewRoute(null);
-  const mk = map3d && map3d.marks(); if (mk) mk.setLow();
+  const mk = map3d && map3d.marks(); if (mk) { mk.setLow(); mk.layer.style.zIndex = ''; }
   if (W && W.sq && map3d) { W.sq = null; map3d.showSquare(null); }
 }
 // 3D: the wheel's element rides in the marks icon layer, stacked between the other icons and its own; `id` is the icon it came out of
@@ -1635,6 +1635,7 @@ function wheel3d(id) {
   const mk = map3d && map3d.marks();
   if (!mk) return;
   if (pw.el.parentNode !== mk.layer) mk.layer.appendChild(pw.el);
+  mk.layer.style.zIndex = 6;   // an open wheel sits over the floating panels (they're z 5)
   mk.setLow(id, pw.el);
 }
 // Inside the ring in 3D: the icon it came out of deselects and closes; another body under the pointer (a square-mate, a flier above) re-picks.
