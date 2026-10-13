@@ -188,22 +188,24 @@ export function createMarks({ scene, camera, renderer, container, tokenObjs, inV
     trace.e = best; trace.t = bt;
     return best;
   }
-  // In icon mode the icons catch the pointer 25% wider than they're drawn; where those overlap, the nearest centre wins.
+  // In icon mode the icons catch the pointer half again wider than they're drawn (the one you're on, at least 20 px);
+  // where those overlap, the nearest centre wins.
   function iconHit(x, y) {
     if (mouse.btn || mouse.x < -1e3 || busy()) return null;
     let best = null, bd = Infinity;
     for (const e of iconMode.list) {
       const d = Math.hypot(x - e.x, y - e.y);
-      if (e.op > 0.3 && e.front && d < 11 * (e.sc || 1) * 1.25 && d < bd) { bd = d; best = e; }
+      if (e.op > 0.3 && e.front && d < Math.max(11 * (e.sc || 1) * 1.5, e === iconMode.from ? 20 : 0) && d < bd) { bd = d; best = e; }
     }
     return best;
   }
-  // Outside icon mode an icon is hit as drawn, once it has grown enough to be pointed at.
+  // Outside icon mode an icon is hit a bit wider than drawn once it has grown enough to be pointed at; the traced or hovered
+  // one, at least 20 px, so a click on an icon you've climbed to can't miss.
   function plainHit(x, y) {
     let best = null, bd = Infinity;
     for (const e of ents.values()) {
       const d = Math.hypot(x - e.x, y - e.y);
-      if (e.ik > 0.6 && e.front && d < 11 * (e.sc || 1) && d < bd) { bd = d; best = e; }
+      if (e.ik > 0.6 && e.front && d < Math.max(11 * (e.sc || 1) * 1.25, e === trace.e || e === hoverEnt ? 20 : 0) && d < bd) { bd = d; best = e; }
     }
     return best;
   }
@@ -314,8 +316,9 @@ export function createMarks({ scene, camera, renderer, container, tokenObjs, inV
       const ik = e.ik = sstep(0.35, 0.7, r), op = e.op = ik * e.dim;
       e.el.style.opacity = op < 0.02 ? 0 : op;
       // the icon you're on in icon mode is bigger; a traced one grows into that with the blend
-      e.big += ((iconMode ? +(hoverEnt === e) : pre?.tr === e ? pre.k : 0) - e.big) * 0.3;
-      const sc = e.sc = (0.6 + 0.4 * ik) * (1 + 0.3 * e.big);
+      const lone = !iconMode && !pre && (mkHover === e ? 1 : trace.e === e ? sstep(0.85, 1, trace.t) : 0);   // a lone icon grows the same way
+      e.big += ((iconMode ? +(hoverEnt === e) : pre?.tr === e ? pre.k : lone) - e.big) * 0.3;
+      const sc = e.sc = (0.6 + 0.4 * ik) * (1 + 0.5 * e.big);
       e.el.style.transform = `translate(${e.x}px, ${e.y}px) scale(${sc})`;
       const isHot = hoverEnt === e || hot === e;
       e.el.classList.toggle('hot', isHot); e.lb.classList.toggle('hot', isHot);

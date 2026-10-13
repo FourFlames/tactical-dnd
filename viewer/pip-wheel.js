@@ -42,6 +42,7 @@ const CSS = `
 .pw .b.hot .i { border-color: var(--gold, #d8b45a); background: #2e2a1e; }
 .pw .b.warn.hot .i { border-color: #ef7a66; background: #3a1f1a; }
 .pw .b.hot .c { color: var(--gold, #d8b45a); }
+.pw.tight .b:not(.hot) .c { display: none; }
 .pw .tip { position: absolute; left: 0; top: 0; z-index: 2; display: none; width: max-content; max-width: 190px; padding: 6px 9px; border-radius: 7px; background: #1c1b16f5;
   border: 1px solid #4a4538; color: var(--ink, #e9e3d3); box-shadow: 0 3px 10px #000b; font-size: 12px; line-height: 1.3; white-space: normal; }
 .pw .tip .r { color: var(--ink-faint, #6b6557); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; }
@@ -136,7 +137,10 @@ export function createPipWheel(parent, { onLeaf = () => {}, onClose = () => {}, 
     }
     const a = S.anchor();
     S.k = (S.k || a.s || 1) + ((a.s || 1) - (S.k || a.s || 1)) * .25;
-    S.r = Math.max(70, Math.min(120, (a.r || 0) + D / 2 + GAP));   // layout radius; 70: the least that keeps neighbouring captions apart
+    // layout radius: the buttons ring the target just clear of it, so the ring (the fold cutoff) follows the zoom; buttons keep their size.
+    // 44: the least that keeps neighbouring buttons apart; below 70 the captions would collide, so only the hot one shows.
+    S.r = Math.max(44, Math.min(140, (a.r || 0) + D / 2 + GAP));
+    el.classList.toggle('tight', S.r < 70);
     S.R = S.r * S.k;   // on screen
     // fold/unfold: u runs to 0 or 1. Each time it turns, the line they travel is re-aimed at the pointer (up if it's on the target)
     const goal = S.folded ? 0 : 1, dt = Math.min(50, now - (S.t ?? now)); S.t = now;
