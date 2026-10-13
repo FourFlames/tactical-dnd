@@ -72,7 +72,7 @@ try {
   expect('B: Hask gets a REPORTED track, not a sighting', rep && rep.direct === false && /reported by .*Bram/.test(rep.label), JSON.stringify(hk.tracks));
   expect('B: Hask has the message as evidence, with its source (through the walls: muffled, the voice only maybe Bram\'s)', hk.obs.some((o) => o.kind === 'message' && /Bram/.test(o.fromLabel) && /muffled/.test(o.text)), JSON.stringify(hk.obs.slice(-2)));
   expect('B: Hask has no visual observation of the intruder', !hk.obs.some((o) => o.kind === 'sight'), JSON.stringify(hk.obs));
-  expect('B: the party overhears the shout in the chronicle', C.readLog(50).some((e) => e.type === 'narration' && /hear/.test(e.text) && /Someone by the path/.test(e.text)), JSON.stringify(C.readLog(10)));
+  expect('B: the party overhears the shout in the chronicle', C.readLog(50).some((e) => e.type === 'narration' && e.data && e.data.sense === 'hear' && e.data.perceivers.length && /Someone by the path/.test(e.text)), JSON.stringify(C.readLog(10)));
 
   // ---------- Scenario C: conflicting sightings ----------
   setup((s) => { s.minds.tilly.alarm.intensity = 30; });
@@ -206,7 +206,7 @@ try {
   run('load', 'goblin-warren-caves');
   run('place', 'rook', 'M23');
   r = decide('gob4', { version: S().mseq, say: [{ to: 'all', channel: 'shout', kind: 'warning', text: 'Stranger down past K29! Hold L18!' }] });
-  const heardLine = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'narration' && /hear/.test(e.text)).pop();
+  const heardLine = fs.readFileSync(C.LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'narration' && e.data && e.data.sense === 'hear').pop();
   expect('speech: the party hears place names, not squares', heardLine && /the west gap/.test(heardLine.text) && /the crack mouth/.test(heardLine.text) && !/K29|L18/.test(heardLine.text), heardLine ? heardLine.text : r.out);
   const snik = M('snikka').obs.filter((o) => o.kind === 'message').pop();
   expect('speech: NPC listeners hear the same words', snik && /the west gap/.test(snik.text) && !/K29/.test(snik.text), JSON.stringify(snik));
