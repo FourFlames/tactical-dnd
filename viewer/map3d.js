@@ -145,7 +145,8 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
   const tokens = new THREE.Group();
   const fx = new THREE.Group();
   const cursorG = new THREE.Group();
-  scene.add(terrain, tokens, fx, cursorG);
+  const spectral = new THREE.Group(); // spell tokens (Spiritual Weapon): not creatures, never picked
+  scene.add(terrain, tokens, fx, cursorG, spectral);
 
   let built = null;          // signature of the terrain currently built
   let disposables = [];      // geometries made for the current terrain
@@ -792,6 +793,42 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
   }
 
+  // A ghostly blade hovering over its square, eased between squares when it moves.
+  function updateSpectral(v) {
+    const seen = new Set();
+    for (const e of v.effects || []) {
+      const p = cellOf(e.pos), y = cellElev(v, p.x, p.y) * FT + 0.75;
+      let g = spectral.getObjectByName(e.id);
+      if (!g) {
+        g = new THREE.Group(); g.name = e.id;
+        const m = new THREE.MeshBasicMaterial({ color: '#bfe3ff', transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.6, 0.02), m); blade.position.y = 0.15;
+        const guard = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.04, 0.04), m); guard.position.y = -0.15;
+        const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.04), m); hilt.position.y = -0.25;
+        const glow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ color: '#9fd3ff', transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending }));
+        glow.rotation.x = -Math.PI / 2; glow.position.y = -0.73;
+        g.add(blade, guard, hilt, glow);
+        g.position.set(p.x + 0.5, y, p.y + 0.5);
+        spectral.add(g);
+      }
+      g.userData.target = new THREE.Vector3(p.x + 0.5, y, p.y + 0.5);
+      seen.add(e.id);
+    }
+    for (const g of [...spectral.children]) if (!seen.has(g.name)) {
+      spectral.remove(g);
+      g.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    }
+  }
+  function stepSpectral(t, dt) {
+    for (const g of spectral.children) {
+      const tg = g.userData.target;
+      g.position.x += (tg.x - g.position.x) * Math.min(1, dt * 6 * speed);
+      g.position.z += (tg.z - g.position.z) * Math.min(1, dt * 6 * speed);
+      g.position.y = tg.y + Math.sin(t * 2.2) * 0.06;
+      g.rotation.y = t * 0.8;
+    }
+  }
+
   function clearTrail() {
     if (!trail) return;
     fx.remove(trail); trail.geometry.dispose(); trail.material.dispose(); trail = null;
@@ -1282,6 +1319,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
     }
     for (const l of lights) l.intensity = 5 * (1 + Math.sin(t * 11 + l.userData.phase) * 0.12 + Math.sin(t * 27 + l.userData.phase) * 0.08);
     for (const w of waters) { const m = w.material.map; if (m) { m.offset.x = (t * 0.02) % 1; m.offset.y = (t * 0.013) % 1; } }
+    stepSpectral(t, dt);
     for (const g of tokens.children) {
       const u = g.userData;
       // Effects (lunges, shakes) live in u.offset, on top of where the token is walking to.
@@ -1341,6 +1379,7 @@ export function createMap3D(container, { onSelect, onCell, onHover } = {}) {
       if (sig !== built) { buildTerrain(v); built = sig; }
       if (!framed) { frame(v); framed = true; }
       updateTokens(v);
+      updateSpectral(v);
       marks.sync(v.creatures, you, alts(v));
       followTurn(v);
       setCursor(v, cursor);

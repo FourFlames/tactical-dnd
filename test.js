@@ -445,22 +445,72 @@ try {
 
   // Costs: a bonus-action attack spends the bonus action, not the action; Spiritual Weapon is cast (a slot) on first use only.
   run('load', 'rope-bridge'); run('initiative');
-  run('place', 'ash', 'G3'); run('place', 'gob1', 'G4');
+  run('place', 'ash', 'G3'); run('place', 'gob1', 'J4'); edit((s) => { s.creatures.gob1.hp = s.creatures.gob1.maxHp = 999; });
   r = run('attack', 'ash', 'gob1', 'spiritual');
   let sa = C.loadState(), ta = C.turnInfo(sa, 'ash');
+  const swOf = (st) => (st.effects || []).find((e) => e.owner === 'ash' && e.spell === 'Spiritual Weapon');
   expect('Spiritual Weapon spends the bonus action, not the action', r.ok && ta.bonus && !ta.action && ta.attacks === 0, r.out + JSON.stringify(ta));
-  expect('its first use spends a 2nd-level slot', sa.creatures.ash.resources.slots2 === 1 && sa.creatures.ash.active['Spiritual Weapon'], JSON.stringify(sa.creatures.ash.resources));
-  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
-  expect('later uses are free of slots', C.loadState().creatures.ash.resources.slots2 === 1, '');
-  expect('...and record when it was cast', C.loadState().creatures.ash.active['Spiritual Weapon'].round === 1, JSON.stringify(C.loadState().creatures.ash.active));
-  edit((s) => { s.round = 11; });
-  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
-  expect('after 10 rounds the cast lapses, so it spends a slot again', C.loadState().creatures.ash.resources.slots2 === 0, JSON.stringify(C.loadState().creatures.ash.resources));
-  edit((s) => { s.creatures.ash.active = { 'Spiritual Weapon': true }; s.creatures.ash.resources.slots2 = 1; s.round = 99; });
-  run('regain', 'ash', 'bonus'); run('attack', 'ash', 'gob1', 'spiritual');
-  expect('an old-save `true` stays active until the next initiative', C.loadState().creatures.ash.resources.slots2 === 1, '');
-  run('initiative');
-  expect('a new initiative clears active spells', !C.loadState().creatures.ash.active, JSON.stringify(C.loadState().creatures.ash.active));
+  expect('its first use spends a 2nd-level slot and puts a spectral token beside the target', sa.creatures.ash.resources.slots2 === 1 && swOf(sa) && swOf(sa).kind === 'spectral' && C.distFeet(C.parseCell(swOf(sa).pos), C.parseCell('J4')) === 5, JSON.stringify(sa.effects));
+  expect('the token is in the view, and the cleric is concentrating on it', C.view(sa, 'player').effects.some((e) => e.owner === 'ash' && e.pos === swOf(sa).pos) && sa.creatures.ash.concentrating.spell === 'Spiritual Weapon', JSON.stringify(sa.creatures.ash.concentrating));
+  run('place', 'gob1', 'N4'); run('regain', 'ash', 'bonus'); r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('later uses are free of slots, and the token flies (up to 20 ft) to the target', r.ok && /moves to/.test(r.out) && C.loadState().creatures.ash.resources.slots2 === 1 && C.distFeet(C.parseCell(swOf(C.loadState()).pos), C.parseCell('N4')) === 5, r.out);
+  run('place', 'gob1', 'B9'); run('regain', 'ash', 'bonus'); r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('reach is measured from the token, not the caster', !r.ok && /moves only 20 ft/.test(r.out), r.out);
+  // The spell clock: exploration ticks and combat rounds both use up the minute; initiative keeps it.
+  const swReset = () => { run('load', 'rope-bridge'); run('place', 'ash', 'G3'); run('place', 'gob1', 'J4'); edit((s) => { s.creatures.gob1.hp = s.creatures.gob1.maxHp = 999; }); run('attack', 'ash', 'gob1', 'spiritual'); };
+  swReset(); run('initiative'); edit((s) => { s.turnOrder = ['ash', 'gob1']; s.turnIdx = 0; s.turn = {}; });
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('a cast before initiative survives into the fight without another slot', r.ok && C.loadState().creatures.ash.resources.slots2 === 1 && swOf(C.loadState()), r.out);
+  swReset(); run('tick', '9');
+  expect('nine exploration rounds leave it running', !!swOf(C.loadState()), JSON.stringify(C.loadState().effects));
+  r = run('tick');
+  expect('ten exploration rounds expire it', !swOf(C.loadState()) && /wore off/.test(r.out) && !C.loadState().creatures.ash.concentrating, r.out);
+  run('regain', 'ash', 'bonus'); r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('...and it then needs a new slot', r.ok && /casts it/.test(r.out) && C.loadState().creatures.ash.resources.slots2 === 0, r.out);
+  swReset(); run('tick', '4'); run('initiative'); edit((s) => { s.turnOrder = ['ash', 'gob1']; s.turnIdx = 0; s.turn = {}; });
+  for (let i = 0; i < 10; i++) run('next', '--force'); // to Ash's turn in round 6: 4 + 5 rounds gone
+  expect('exploration plus combat: running after nine rounds in all', C.loadState().round === 6 && !!swOf(C.loadState()), JSON.stringify([C.loadState().round, C.loadState().clock]));
+  run('next', '--force'); r = run('next', '--force');
+  expect('...and expired at the start of Ash\'s turn a minute after casting', C.loadState().round === 7 && !swOf(C.loadState()) && /Spiritual Weapon wore off/.test(r.out), r.out);
+  r = run('attack', 'ash', 'gob1', 'spiritual');
+  expect('...so the next use spends a new slot', r.ok && /casts it/.test(r.out) && C.loadState().creatures.ash.resources.slots2 === 0, r.out);
+  // Concentration (minimal): another concentration spell or 0 HP ends it.
+  r = run('concentrate', 'ash', 'Bless');
+  expect('concentrating on another spell ends Spiritual Weapon', r.ok && !swOf(C.loadState()) && C.loadState().creatures.ash.concentrating.spell === 'Bless', r.out);
+  swReset(); r = run('damage', 'ash', '99');
+  expect('dropping to 0 HP ends it', !swOf(C.loadState()) && !C.loadState().creatures.ash.concentrating && /Spiritual Weapon ends/.test(r.out), r.out);
+
+  // Rewind: the state goes back; the log keeps the lines, greyed.
+  run('load', 'rope-bridge'); run('place', 'ash', 'G3'); run('place', 'gob1', 'J4');
+  const before = C.loadState();
+  run('attack', 'ash', 'gob1', 'spiritual'); run('say', 'The blade sings.'); run('move', 'rook', 'H4');
+  r = run('rewind');
+  expect('rewind lists what can be undone, newest first', r.ok && /1\. move rook H4/.test(r.out) && /2\. attack ash gob1 spiritual/.test(r.out), r.out);
+  r = run('rewind', '2');
+  const rw = C.loadState(), rlog = C.readLog(50);
+  expect('rewind 2 restores the state from before both commands', r.ok && rw.creatures.ash.resources.slots2 === 2 && !swOf(rw) && rw.creatures.rook.pos === before.creatures.rook.pos && rw.creatures.gob1.hp === before.creatures.gob1.hp, r.out);
+  expect('...greys their log lines (narration included) without deleting them', rlog.filter((e) => e.rewound).length >= 3 && rlog.some((e) => e.rewound && /The blade sings/.test(e.text)) && !rlog[rlog.length - 1].rewound, JSON.stringify(rlog.slice(-5)));
+  expect('...and the player view carries the flag', C.view(rw, 'player').log.some((e) => e.rewound), '');
+  r = run('rewind', '9');
+  expect('rewind refuses to go past what is kept', !r.ok && /Only 2/.test(r.out), r.out);
+
+  // await: one blocking wait that wakes on a message, or on a seated player's turn ending.
+  run('seat', 'sam', 'wren'); run('initiative'); edit((s) => { s.turnOrder = ['wren', 'gob1']; s.turnIdx = 0; s.turn = {}; });
+  C.appendIntent({ id: 'aw0001', t: Date.now(), player: 'sam', creature: 'wren', text: 'I peer over the edge' });
+  r = run('await', '--timeout', '3');
+  expect('await wakes on a waiting message and says whose turn it is', r.ok && /#aw0001/.test(r.out) && /→ Wren/.test(r.out), r.out);
+  {
+    const out = require('path').join(process.env.TDND_DATA, 'await.out'), fd = fs.openSync(out, 'w');
+    const child = require('child_process').spawn('node', ['engine.js', 'await', '--timeout', '8'], { cwd: __dirname, stdio: ['ignore', fd, fd], env: process.env });
+    const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    nap(1200); run('next', '--by-player');
+    let got = '';
+    for (let i = 0; i < 40 && !/→/.test(got); i++) { nap(250); got = fs.readFileSync(out, 'utf8'); }
+    fs.closeSync(fd); child.kill();
+    expect('await wakes when the seated player\'s turn ends, and names who is up', /Wren's turn is over/.test(got) && /→ Goblin Cutter/.test(got) && /auto/.test(got), got);
+  }
+  C.saveSeats({});
+  run('load', 'rope-bridge'); run('initiative'); run('place', 'ash', 'G3'); run('place', 'gob1', 'G4'); run('spend', 'ash', 'slots2');
   r = run('attack', 'ash', 'gob1', 'mace');
   expect('a mace swing still spends the action', C.turnInfo(C.loadState(), 'ash').action, r.out);
   r = run('spend', 'ash', 'slots1');
