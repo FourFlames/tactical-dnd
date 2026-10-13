@@ -114,6 +114,10 @@
   .entry.attack, .entry.damage, .entry.roll { color: var(--ink-dim); font-family: var(--mono); font-size: 12px; }
   .entry.turn { color: var(--ink); font-weight: 600; font-size: 12px; letter-spacing: .03em; padding-top: 12px; }
   .entry.secret { color: var(--secret); font-style: italic; }
+  .entry.rewound { opacity: .35; filter: grayscale(1); }
+  .spfx { pointer-events: none; transition: transform calc(.45s / var(--sp)) cubic-bezier(.3,.7,.3,1); }
+  .spfx .inner { animation: bob 2.4s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translateY(-3px); } }
   .entry.turn.lurk { color: var(--secret); font-weight: 500; font-style: italic; }
   .entry.move, .entry.terrain, .entry.condition, .entry.action, .entry.spawn, .entry.heal { color: var(--ink-dim); font-size: 12px; }
   .loggroup.linked { border-left: 2px solid var(--gold); padding-left: 10px; margin: 10px 0; background: var(--panel-2); border-radius: 0 4px 4px 0; }
@@ -810,6 +814,23 @@ function drawTokens(v) {
   }
   tokLayer.querySelectorAll('.tok').forEach((g) => { if (!seen.has(g.dataset.id)) g.remove(); });
 }
+// Spectral spell tokens (Spiritual Weapon): a floating blade over its square, not a creature.
+function drawEffects(v) {
+  const seen = new Set();
+  for (const e of v.effects || []) {
+    const p = parseCell(e.pos), owner = v.creatures[e.owner], c = CELL / 2;
+    seen.add(e.id);
+    let g = tokLayer.querySelector(`.spfx[data-fx="${e.id}"]`);
+    if (!g) g = el('g', { class: 'spfx', 'data-fx': e.id }, tokLayer);
+    g.style.transform = `translate(${p.x * CELL}px, ${p.y * CELL}px)`;
+    g.innerHTML = '';
+    const inner = el('g', { class: 'inner' }, g);
+    el('circle', { cx: c, cy: c, r: CELL * .3, fill: '#9fd3ff', opacity: .14 }, inner);
+    el('path', { d: `M${c} ${c - 15} L${c + 3} ${c + 5} L${c} ${c + 8} L${c - 3} ${c + 5} Z M${c - 8} ${c + 5} H${c + 8} M${c} ${c + 8} V${c + 14}`, fill: '#cfe9ff', stroke: '#9fd3ff', 'stroke-width': 1.5, opacity: .85 }, inner);
+    el('title', {}, g).textContent = `${owner ? owner.name + "'s " : ''}${e.spell} · ${e.left} round${e.left === 1 ? '' : 's'} left`;
+  }
+  tokLayer.querySelectorAll('.spfx').forEach((g) => { if (!seen.has(g.dataset.fx)) g.remove(); });
+}
 
 function drawTrail(entry) {
   if (!entry || entry.type !== 'move' || !entry.data || !entry.data.path) return;
@@ -990,7 +1011,7 @@ function perceiverBadge(e) {
 }
 function logEntry(e) {
   const d = e.data || {}, cell = typeof d.at === 'string' && !d.id && /^[A-Z]+\d+$/.test(d.at) ? ` <span class="ref cellchip" data-ref="${esc(d.at)}">${esc(d.at)}</span>` : '';
-  return `<div class="entry ${esc(e.type)}${d.unseen ? ' lurk' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${perceiverBadge(e)}${linkRefs(e)}${cell}${mechanicsChips(e)}</div>`;
+  return `<div class="entry ${esc(e.type)}${d.unseen ? ' lurk' : ''}${e.rewound ? ' rewound' : ''}">${e.type === 'turn' ? '' : `<span class="r">R${esc(e.round)}</span>`}${perceiverBadge(e)}${linkRefs(e)}${cell}${mechanicsChips(e)}</div>`;
 }
 function drawLog(v) {
   const log = document.getElementById('log');
@@ -2523,7 +2544,7 @@ function render() {
   if (THREE_D) { render3d(); drawSide(disp); return; }
   const key = `${state.width}x${state.height}:${state.name}`;
   if (!svg || svg.dataset.key !== key) { buildSvg(state); svg.dataset.key = key; }
-  drawTerrain(disp); drawTokens(disp); drawCursor2D(); drawSide(disp);
+  drawTerrain(disp); drawTokens(disp); drawEffects(disp); drawCursor2D(); drawSide(disp);
 }
 
 // The 3D map loads three.js from a CDN on first use; the 2D map never needs it.

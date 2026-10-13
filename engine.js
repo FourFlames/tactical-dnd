@@ -10,6 +10,7 @@ const C = require('./lib/core');
 const Minds = require('./lib/minds');
 const Think = require('./lib/think');
 const Places = require('./lib/places');
+const Effects = require('./lib/effects');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -72,6 +73,11 @@ function applyDamage(s, id, amount, type) {
     if (c.side === 'party') { status = ` ${c.name} drops to 0 HP and is dying!`; addCond(c, 'unconscious'); c.deathSaves = c.deathSaves || { ok: 0, fail: 0 }; }
     else status = ` ${c.name} goes down.`;
   }
+  if (c.concentrating && amt > 0) {
+    const sv = c.hp > 0 ? saveRoll(c, 'con', Math.min(30, Math.max(10, Math.floor(amt / 2)))) : null;
+    if (!sv || !sv.ok) { const gone = Effects.drop(s, id); status += `${sv ? ' Concentration: ' + sv.text : ''} ${gone.join(', ')} ends.`; }
+    else status += ` Keeps concentrating (${sv.text})`;
+  }
   return { amt, text: `${c.name} takes ${amt}${t ? ' ' + t : ''} damage${note} (${c.hp}/${c.maxHp}).${status}` };
 }
 // Falling (PHB): 1d6 bludgeoning per full 10 ft, max 20d6, and the creature lands prone if it
@@ -120,6 +126,7 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
     for (const id of seat.creatures) if (enc.creatures[id]) Object.assign(enc.creatures[id], { controller: 'player', player });
   }
   if (fs.existsSync(C.LOG)) fs.unlinkSync(C.LOG);
+  fs.rmSync(SNAPS, { recursive: true, force: true }); // nothing to rewind into from a new encounter
   Minds.initAll(enc);
   if (Minds.active(enc)) Minds.perceive(enc, null, []); // everyone takes in their surroundings
   C.saveState(enc);
@@ -457,13 +464,6 @@ function spend(s, id, kind) {
   turnState(s, id)[kind === 'bonus' ? 'bonus' : 'action'] = true;
 }
 
-// Whether a cast spell is still running. Card 11b moves this into an `effects` entry.
-const CAST_ROUNDS = 10; // 1 minute
-function castActive(s, a, name) {
-  const v = (a.active || {})[name]; // a legacy `true` lasts until the next initiative
-  return !!v && (v === true || (s.round || 0) - (v.round || 0) < CAST_ROUNDS);
-}
-
 cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra 1d6] [--sneak] [--as bonus|reaction]   roll to hit + damage, checks reach/range/LOS/cover', (s, { pos, flags }) => {
   need(s);
   const a = who(s, pos[0]), t = who(s, pos[1]);
@@ -482,16 +482,21 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
   const ts = turnState(s, pos[0]);
   const cost = C.attackCost(w), as = flags.as === 'bonus' || flags.as === 'reaction' ? flags.as : cost.as;
   let cast = '';
-  if (cost.cast && !castActive(s, a, w.name)) {
+  const sp = plan.spectral, fx = sp ? sp.fx : null;
+  if (cost.cast && !(fx || (!sp && Effects.find(s, pos[0], w.name)))) {
     const key = Object.keys(a.resources || {}).filter((k) => /^slots\d$/.test(k) && Number(k.slice(5)) >= cost.cast && a.resources[k] > 0).sort()[0];
     if (!key) fail(`No ${cost.cast}${['', 'st', 'nd', 'rd'][cost.cast] || 'th'}-level slot left.`);
-    a.resources[key]--; (a.active = a.active || {})[w.name] = { round: s.round || 0 };
-    cast = ` (casts it, spending a level-${key.slice(5)} slot)`;
-  }
+    a.resources[key]--;
+    const sw = Effects.spectralOf(w) || {};
+    const dropped = sw.conc ? Effects.concentrate(s, pos[0], w.name) : [];
+    Effects.add(s, { spell: w.name, owner: pos[0], rounds: sw.rounds || 10, conc: !!sw.conc, kind: sp ? 'spectral' : 'spell', pos: sp ? sp.cell : undefined });
+    cast = ` (casts it, spending a level-${key.slice(5)} slot${sp ? `; it appears at ${sp.cell}` : ''}${dropped.length ? `; ${dropped.join(', ')} ends` : ''})`;
+  } else if (sp && sp.moved) { cast = ` (it moves to ${sp.cell})`; fx.pos = sp.cell; }
   if (as === 'bonus' || as === 'reaction') spend(s, pos[0], as);
   else { ts.attacks = (ts.attacks || 0) + 1; if (ts.attacks >= (a.attacksPerAction || 1)) ts.action = true; }
   let text = `${a.name} attacks ${t.name} with ${w.name}${cast}: ${r.detail}${sign(bonus)} = ${total} vs AC ${ac}${notes.length ? ' (' + notes.join(', ') + ')' : ''} → `;
-  const data = { attacker: pos[0], target: pos[1], hit, nat: r.nat, total, ac, weapon: w.name, ranged: !!w.range, dtype: w.type || '' };
+  const data = { attacker: pos[0], target: pos[1], hit, nat: r.nat, total, ac, weapon: w.name, ranged: plan.ranged, dtype: w.type || '' };
+  if (sp) data.from = sp.cell;
   if (!hit) text += r.nat === 1 ? 'natural 1, miss.' : 'miss.';
   else {
     const isCrit = crit || paralysedCrit;
@@ -660,6 +665,7 @@ cmd('spawn', `spawn '<json>'                     add a creature, e.g. spawn '{"i
 
 cmd('remove', 'remove <id>                        take a creature off the map (fled, dissolved, etc.)', (s, { pos }) => {
   const c = who(need(s), pos[0]);
+  Effects.end(s, (e) => e.owner === pos[0]);
   delete s.creatures[pos[0]];
   const idx = (s.turnOrder || []).indexOf(pos[0]);
   if (idx >= 0) { s.turnOrder.splice(idx, 1); if (s.turnIdx > idx) s.turnIdx--; if (s.turnIdx >= s.turnOrder.length) s.turnIdx = 0; }
@@ -715,7 +721,6 @@ cmd('initiative', 'initiative                         roll initiative for everyo
     if (!c.pos || (c.hp <= 0 && c.side !== 'party')) continue;
     const r = C.d(20), b = c.initBonus !== undefined ? c.initBonus : mod((c.stats || {}).dex);
     c.init = r + b; rolls.push(`${c.name} ${c.init}`);
-    delete c.active; // a new fight ends lingering spells
   }
   s.turnOrder = Object.keys(s.creatures).filter((id) => s.creatures[id].init !== undefined)
     .sort((a, b) => s.creatures[b].init - s.creatures[a].init || ((s.creatures[b].stats || {}).dex || 10) - ((s.creatures[a].stats || {}).dex || 10));
@@ -763,7 +768,7 @@ function advanceTurn(s) {
   }
   for (let guard = 0; guard < 100; guard++) {
     s.turnIdx++;
-    if (s.turnIdx >= s.turnOrder.length) { s.turnIdx = 0; s.round++; }
+    if (s.turnIdx >= s.turnOrder.length) { s.turnIdx = 0; s.round++; Effects.pass(s); }
     const c = s.creatures[s.turnOrder[s.turnIdx]];
     if (c && (c.hp > 0 || c.side === 'party')) break;
   }
@@ -779,6 +784,7 @@ function advanceTurn(s) {
   });
   const burning = C.tagsAt(s, C.parseCell(c.pos).x, C.parseCell(c.pos).y).includes('burning');
   let t = `Round ${s.round}: ${c.name}'s turn.`;
+  expired.push(...Effects.expire(s, id));
   if (expired.length) t += ` (${expired.join(', ')} wore off.)`;
   if (burning) t += ` ${c.name} starts the turn in fire!`;
   C.appendLog(s, 'turn', t, { id, unseen: !seenNow(s)(id) });
@@ -889,8 +895,10 @@ cmd('info', 'info <id>                          one readout: HP, AC, conditions,
   L.push(`Turn: action ${used(ti.action)}${ti.attacks ? ` (${ti.attacks}/${ti.attacksPerAction} attacks)` : ''}, bonus ${used(ti.bonus)}, reaction ${used(ti.reaction)}, movement ${ti.used}/${ti.budget} ft (${ti.left} left)${ti.dash ? ', dashing' : ''}${ti.disengage ? ', disengaging' : ''}`);
   const res = Object.entries(c.resources || {}).map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`);
   if (res.length) L.push('Resources: ' + res.join(', '));
-  const act = Object.entries(c.active || {}).filter(([, v]) => v).map(([k]) => k);
-  if (act.length) L.push('Active: ' + act.join(', '));
+  const act = (s.effects || []).filter((e) => e.owner === id && Effects.live(s, e)).map((e) => `${e.spell} [${e.id}]${e.pos ? ' at ' + e.pos : ''}, ${Effects.left(s, e)} rounds left`);
+  if (c.concentrating && !act.some((x) => x.startsWith(c.concentrating.spell + ' '))) act.push(`${c.concentrating.spell} (concentrating)`);
+  else if (c.concentrating) act[act.findIndex((x) => x.startsWith(c.concentrating.spell + ' '))] += ' (concentrating)';
+  if (act.length) L.push('Active: ' + act.join('; '));
   const oas = livePending(s).filter((p) => p.by === id || p.target === id);
   if (oas.length) L.push('Pending opportunity attacks: ' + oas.map((p) => `${p.id} (${s.creatures[p.by].name} → ${s.creatures[p.target].name})`).join(', '));
   const m = (s.minds || {})[id];
@@ -900,6 +908,37 @@ cmd('info', 'info <id>                          one readout: HP, AC, conditions,
   }
   console.log(L.join('\n'));
   return null;
+});
+
+cmd('concentrate', 'concentrate <id> "<spell>" | concentrate <id> --drop   mark a concentration spell the engine doesn\'t run (it ends the one before, e.g. Spiritual Weapon); --drop ends it. Damage rolls the CON save on its own; 0 HP ends it', (s, { pos, flags }) => {
+  const c = who(need(s), pos[0]);
+  const spell = pos.slice(1).join(' ').trim();
+  if (!flags.drop && !spell) fail('concentrate <id> "<spell>", or --drop');
+  const gone = flags.drop ? Effects.drop(s, pos[0]) : Effects.concentrate(s, pos[0], spell);
+  const t = `${flags.drop ? `${c.name} stops concentrating.` : `${c.name} concentrates on ${spell}.`}${gone.length ? ` ${gone.join(', ')} ends.` : ''}`;
+  C.appendLog(s, 'action', t, { id: pos[0] }); console.log(t); return s;
+});
+cmd('effect', 'effect [<fx-id> move <cell> [--free] | <fx-id> end]   spell effects with their rounds left; move a spectral weapon (up to its 20 ft, as a bonus action unless --free); end one. An attack with it moves it on its own', (s, { pos, flags }) => {
+  need(s);
+  const all = (s.effects || []).filter((e) => Effects.live(s, e));
+  if (!pos[0]) {
+    console.log(all.length ? all.map((e) => `  ${e.id}: ${Effects.nameOf(s, e)}${e.pos ? ' at ' + e.pos : ''}, ${Effects.left(s, e)} rounds left${e.conc ? ' (concentration)' : ''}`).join('\n') : 'No spell effects running.');
+    return null;
+  }
+  const fx = all.find((e) => e.id === pos[0]);
+  if (!fx) fail(`No running effect "${pos[0]}". ${all.length ? 'Running: ' + all.map((e) => e.id).join(', ') : 'None running.'}`);
+  let t;
+  if (pos[1] === 'end') t = `${Effects.end(s, (e) => e === fx)[0]} ends.`;
+  else if (pos[1] === 'move') {
+    const sw = Effects.spectralOf({ name: fx.spell }) || {}, to = C.parseCell(pos[2] || ''), from = C.parseCell(fx.pos || pos[2]);
+    if (!C.inBounds(s, to.x, to.y) || C.blocksMove(C.tagsAt(s, to.x, to.y))) fail(`${pos[2]} can't hold it.`);
+    const d = C.distFeet(from, to);
+    if (!flags.free && sw.move && d > sw.move) fail(`${pos[2]} is ${d} ft away; it moves ${sw.move} ft.`);
+    if (!flags.free) { if (C.turnInfo(s, fx.owner).bonus) fail(`${s.creatures[fx.owner].name}'s bonus action is spent.`); spend(s, fx.owner, 'bonus'); }
+    fx.pos = C.cellId(to.x, to.y);
+    t = `${Effects.nameOf(s, fx)} moves to ${fx.pos}.`;
+  } else fail('effect <fx-id> move <cell> | end');
+  C.appendLog(s, 'action', t, { id: fx.owner }); console.log(t); return s;
 });
 
 cmd('morale', 'morale <id,id,...|all> --dc N [--ability wis] [--adv|--dis]   roll the save for each listed NPC with a mind (all: every hostile one still fighting); the failures rout (as "mind <id> rout")', (s, { pos, flags }) => {
@@ -1047,15 +1086,21 @@ cmd('intents', 'intents                            show and mark seen everything
 
 // Blocks while polling, touching listening.json so players see "DM is listening". Wakes on the
 // first loud entry that matches, then takes everything unseen (quiet ones included) as a package.
-function blockFor(s, label, filter, timeout) {
+// `moved(state)`, when given, also ends the wait (the turn moved on) and comes back as { moved }.
+function blockUntil(s, label, filter, timeout, moved) {
   const until = Date.now() + Number(timeout || 540) * 1000;
   for (let i = 0; ; i++) {
     if (i % 2 === 0) C.markListening(label);
-    if (C.readIntents().some((e) => !e.handled && loud(e) && filter(e))) return takeIntents(C.loadState() || s, () => true);
+    if (C.readIntents().some((e) => !e.handled && loud(e) && filter(e))) return { got: takeIntents(C.loadState() || s, () => true) };
+    if (moved) {
+      let now = null; try { now = C.loadState(); } catch { /* mid-save: next poll */ }
+      if (now && moved(now)) { nap(400); return { moved: now, got: takeIntents(now, () => true) }; } // the End-turn note lands just after
+    }
     if (Date.now() > until) return null;
     nap(500);
   }
 }
+const blockFor = (s, label, filter, timeout) => { const r = blockUntil(s, label, filter, timeout); return r && r.got; };
 
 cmd('wait', 'wait <id> [--timeout <sec>]         block until the remote player controlling <id> sends an action (default 540s)', (s, { pos, flags }) => {
   const c = who(need(s), pos[0]);
@@ -1070,6 +1115,22 @@ cmd('listen', 'listen [--timeout <sec>]            block until ANY remote player
   const got = blockFor(s, 'listening', () => true, flags.timeout);
   if (got) console.log(showPackage(got));
   else console.log('TIMEOUT: nothing new. Run "listen" again to keep listening.');
+  return null;
+});
+
+const turnKey = (st) => (st && (st.turnOrder || []).length ? `${st.game}:${st.round}:${st.turnIdx}` : null);
+cmd('await', 'await [--timeout <sec>]             block until whatever needs you next: a player message or loud button action (as listen), an offer answered, or a seated player\'s turn ending; then says whose turn it is. Run it in the background whenever you are not acting; it covers listen and wait', (s, { flags }) => {
+  const k0 = turnKey(s), cur = k0 && s.creatures[s.turnOrder[s.turnIdx]];
+  const seated = cur && controllerOf(cur) === 'player' && cur.player && cur.hp > 0 ? cur : null;
+  const r = blockUntil(s, seated ? `waiting on ${seated.player}` : 'listening', () => true, flags.timeout, seated ? (st) => turnKey(st) !== k0 : null);
+  if (!r) { console.log(`TIMEOUT: nothing new${seated ? ` (still ${seated.name}'s turn, ${seated.player})` : ''}. Run "await" again.`); return null; }
+  if (r.moved) console.log(`${seated.name}'s turn is over.`);
+  if (r.got.length) console.log(showPackage(r.got));
+  const now = C.loadState();
+  if (turnKey(now)) {
+    const c = now.creatures[now.turnOrder[now.turnIdx]];
+    console.log(turnHint(now).trim() + (c && controllerOf(c) === 'dm' ? ' Run "auto" to play the monsters.' : ''));
+  }
   return null;
 });
 
@@ -1725,9 +1786,14 @@ cmd('think', 'think [<id>...] [--all]             minds on OpenRouter models thi
 
 cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes; every NPC mind follows its plan (6 seconds each), alarm cools', (s, { pos, flags }) => {
   need(s);
-  if (!Minds.active(s)) fail('No NPC minds in this encounter.');
   if ((s.turnOrder || []).length && !flags.force) fail('Combat is on: minds act on their own turns with "mind <id> act".');
   const n = Math.max(1, Math.min(10, Number(pos[0]) || 1));
+  if (!Minds.active(s)) { // no minds: only the clock moves (spells run down)
+    Effects.pass(s, n);
+    const gone = Effects.expire(s);
+    const t = `${n} round${n > 1 ? 's' : ''} pass${n > 1 ? '' : 'es'}.${gone.length ? ` ${gone.join(', ')} wore off.` : ''}`;
+    C.appendLog(s, 'action', t); console.log(t); return s;
+  }
   const at = (s.mindConfig || {}).deliberateAt || 2;
   let fight = [];
   for (let r = 0; r < n && !fight.length; r++) {
@@ -1749,8 +1815,11 @@ cmd('tick', 'tick [rounds] [--force]              out of combat: a round passes;
       if (m.pending.length && Math.max(...m.pending.map((p) => p.urgency)) < at) m.pending = []; // routine news: handled without a model
     }
     Minds.passTime(s, 1);
+    Effects.pass(s);
     s.turn = {};
   }
+  const gone = Effects.expire(s);
+  if (gone.length) { const t = `${gone.join(', ')} wore off.`; C.appendLog(s, 'action', t); console.log(t); }
   C.appendLog(s, 'secret', `[mind] Time passes (now ${s.mtime}).`);
   console.log(`Time ${s.mtime}.${fight.length ? ` Stopped: ${[...new Set(fight)].join(', ')} want${fight.length > 1 ? '' : 's'} to fight. Roll "initiative".` : ''}`);
   return s;
@@ -1831,6 +1900,49 @@ cmd('help', 'help', () => {
   return null;
 });
 
+// ---------- rewind ----------
+// Every command that changes the game keeps the state from before it (the last SNAP_KEEP) and how
+// long the log was then. Rewinding restores that state and greys the later log lines (never deleted).
+const SNAPS = path.join(C.DATA, 'snapshots'), SNAP_KEEP = 50;
+function snapSeqs() {
+  try { return fs.readdirSync(SNAPS).filter((f) => /^\d+\.json$/.test(f)).map((f) => Number(f.slice(0, -5))).sort((a, b) => a - b); } catch { return []; }
+}
+function logRaw() { try { const t = fs.readFileSync(C.LOG, 'utf8').trim(); return t ? t.split('\n') : []; } catch { return []; } }
+const logLines = () => logRaw().length;
+function snapshot(before, cmdLine) {
+  fs.mkdirSync(SNAPS, { recursive: true });
+  const seqs = snapSeqs(), seq = (seqs[seqs.length - 1] || 0) + 1;
+  fs.writeFileSync(path.join(SNAPS, `${seq}.json`), `{"seq":${seq},"t":${Date.now()},"cmd":${JSON.stringify(cmdLine)},"logN":${before.logN},"state":${before.raw}}`);
+  for (const q of seqs.slice(0, Math.max(0, seqs.length + 1 - SNAP_KEEP))) fs.unlinkSync(path.join(SNAPS, `${q}.json`));
+}
+cmd('rewind', 'rewind [n]                         undo the last n game-changing commands (players\' buttons too): the state goes back, their log lines stay, greyed. No n: list what can be rewound', (s, { pos }) => {
+  need(s);
+  const seqs = snapSeqs().reverse();
+  const read = (q) => JSON.parse(fs.readFileSync(path.join(SNAPS, `${q}.json`), 'utf8'));
+  if (pos[0] === undefined) {
+    console.log(seqs.length ? `Rewindable (newest first; "rewind n" undoes the first n):\n${seqs.slice(0, 15).map((q, i) => `  ${i + 1}. ${read(q).cmd}`).join('\n')}` : 'Nothing to rewind.');
+    return null;
+  }
+  const n = Number(pos[0]);
+  if (!Number.isInteger(n) || n < 1) fail('rewind <n>: how many commands to undo, e.g. rewind 1');
+  if (n > seqs.length) fail(`Only ${seqs.length} command${seqs.length === 1 ? '' : 's'} can be rewound (the last ${SNAP_KEEP} are kept; load starts afresh).`);
+  const snaps = seqs.slice(0, n).map(read), target = snaps[n - 1];
+  if (target.state.game !== s.game) fail('That snapshot belongs to another game.');
+  const lines = logRaw();
+  let greyed = 0;
+  for (let i = target.logN; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const e = JSON.parse(lines[i]);
+    if (!e.rewound) { e.rewound = true; lines[i] = JSON.stringify(e); greyed++; }
+  }
+  if (greyed) fs.writeFileSync(C.LOG, lines.join('\n') + '\n');
+  C.saveState(target.state);
+  for (const q of seqs.slice(0, n)) fs.unlinkSync(path.join(SNAPS, `${q}.json`));
+  C.appendLog(target.state, 'narration', `The DM turns back time: the last ${n === 1 ? 'step never happened' : n + ' steps never happened'}.`, { rewind: { from: target.logN + 1, to: lines.length } });
+  console.log(`Rewound ${n}: ${snaps.map((x) => x.cmd).join(' | ')}. ${greyed} log line${greyed === 1 ? '' : 's'} greyed.${turnKey(target.state) ? turnHint(target.state) : ''}`);
+  return null;
+});
+
 // ---------- dispatch ----------
 // Before minds act (a tick, or one NPC's turn), the ones on OpenRouter models with news think first.
 async function thinkMinds(state, scope, think) {
@@ -1865,6 +1977,7 @@ async function main() {
     const ext = require(extFile);
     fn = (s, a) => ext.run(need(s), a, { C, who: (id) => who(s, id), fail, applyDamage: (id, n, t) => applyDamage(s, id, n, t), fallOn: (id, feet, cell) => fallOn(s, id, feet, cell), addCond, saveRoll, abilityBonus, expandCells, turnState, hasCond, mod, sign, advMode });
   }
+  const before = state ? { raw: fs.readFileSync(C.STATE, 'utf8'), logN: logLines() } : null;
   CAP.base = state ? Minds.snapshot(state) : null;
   if (args.flags.brief) HUSH++;
   try {
@@ -1872,6 +1985,7 @@ async function main() {
     const out = await fn(state, args);
     if (out) {
       perceiveNow(out);
+      if (before) snapshot(before, [name, ...rest].join(' '));
       C.saveState(out);
       const sum = Minds.summary(out);
       if (sum.length) console.log(sum.join('\n'));
@@ -1880,7 +1994,7 @@ async function main() {
     fail(e.message);
   }
   // Players shouldn't sit unanswered while the DM is busy: every command mentions unread messages.
-  if (!['listen', 'wait', 'intents'].includes(name)) {
+  if (!['listen', 'wait', 'intents', 'await'].includes(name)) {
     const unread = C.readIntents().filter((e) => !e.handled && loud(e));
     if (unread.length) console.log(`\n📨 ${unread.length} unread from ${[...new Set(unread.map((e) => e.player))].join(', ')}: run "intents" and reply.`);
   }
