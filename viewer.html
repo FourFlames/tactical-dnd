@@ -2879,12 +2879,14 @@ document.getElementById('bCam').addEventListener('click', () => map3d && map3d.r
 
 async function refresh() {
   try {
-    const r = await fetch(`/api/state?view=${DM ? 'dm' : 'player'}`);
-    state = await r.json();
-    if (TOKEN) {
-      const r = await fetch(`/api/seat?token=${encodeURIComponent(TOKEN)}`);
-      me = await r.json();
-      if (!r.ok && !SEAT) me = null; // not on the DM's machine: just a spectator
+    const [rs, rm] = await Promise.all([   // one round trip, not two: it matters for remote players
+      fetch(`/api/state?view=${DM ? 'dm' : 'player'}`),
+      TOKEN ? fetch(`/api/seat?token=${encodeURIComponent(TOKEN)}`) : null,
+    ]);
+    state = await rs.json();
+    if (rm) {
+      me = await rm.json();
+      if (!rm.ok && !SEAT) me = null; // not on the DM's machine: just a spectator
     }
     for (const k of Object.keys(hoverCache)) delete hoverCache[k];
     hoverEpoch++; clearTimeout(hover.timer);

@@ -11,6 +11,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const C = require('./lib/core');
 const Minds = require('./lib/minds');
 
@@ -199,12 +200,22 @@ function econ(ti, f, as, args, quiet) {
   return { args: args && [...args, ...(as === 'bonus' ? ['--as', 'bonus'] : [])], quiet };
 }
 
+// Remote players can be far away, so text goes out gzipped (state views shrink ~8x).
 function send(res, code, type, body) {
-  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+  if (body && body.length > 1024 && res.req && /\bgzip\b/.test(res.req.headers['accept-encoding'] || '')) {
+    body = zlib.gzipSync(body, { level: 5 });
+    Object.assign(headers, { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+  }
+  res.writeHead(code, headers);
   res.end(body);
 }
 const json = (res, code, obj) => send(res, code, 'application/json', JSON.stringify(obj));
-const isLocal = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+// A tunnel (cloudflared, ngrok, tailscale serve/funnel) connects from 127.0.0.1 too, but adds a
+// forwarding header: anything that came through one is remote, so the DM view stays on this machine.
+const PROXY_HEADERS = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'tailscale-user-login', 'x-forwarded-host'];
+const isLocal = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+  && !PROXY_HEADERS.some((h) => h in req.headers);
 // Version stamp (Card 13c). The viewer sends the last log line it has seen (`n`, the state's `seq`) and the game id with
 // every action; if anything since then moved a creature, passed the turn or changed a creature or the board, what its
 // wheel offered may be wrong, so the action is refused with 409 { stale } and the viewer rebuilds instead. Talk, dice for
@@ -572,7 +583,9 @@ const server = http.createServer((req, res) => {
     });
   }
   if (url.pathname === '/events') {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    // no-transform and X-Accel-Buffering keep tunnels and proxies from holding events back.
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    req.socket.setNoDelay(true);
     res.write('retry: 1000\n\n');
     clients.add(res);
     req.on('close', () => clients.delete(res));
@@ -584,10 +597,18 @@ const server = http.createServer((req, res) => {
 let pending = null;
 function notify() {
   clearTimeout(pending);
-  pending = setTimeout(() => { for (const c of clients) c.write('data: change\n\n'); }, 60);
+  pending = setTimeout(() => { for (const c of clients) c.write('data: change\n\n'); }, 30);
 }
-// watchFile polls, which survives the engine's write-then-rename saves.
-for (const f of [C.STATE, C.LOG, C.INTENTS, Chars.STAMP]) fs.watchFile(f, { interval: 200 }, f === C.STATE ? () => { notify(); maybePump(); } : notify);
+// Watching the folders sees the engine's write-then-rename saves at once; watchFile polling stays
+// as a slower backstop where fs.watch is unreliable.
+const WATCHED = [C.STATE, C.LOG, C.INTENTS, Chars.STAMP].map((f) => path.resolve(f));
+const onChange = (f) => (f === C.STATE ? () => { notify(); maybePump(); } : notify);
+for (const dir of new Set(WATCHED.map((f) => path.dirname(f)))) {
+  try {
+    fs.watch(dir, (ev, name) => { const f = name && path.join(dir, String(name)); if (WATCHED.includes(f)) onChange(f)(); }).on('error', () => {});
+  } catch { /* polling below still works */ }
+}
+for (const f of WATCHED) fs.watchFile(f, { interval: 1000 }, onChange(f));
 // listening.json is touched every second while the DM listens, so push only when presence flips.
 let wasListening = false;
 setInterval(() => { const now = C.dmPresence().listening; if (now !== wasListening) { wasListening = now; notify(); } }, 1000);
