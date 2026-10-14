@@ -163,6 +163,7 @@ const EXPLORE_ACTS = {
   dodge: () => ({ error: 'Only in a fight.' }),
   disengage: () => ({ error: 'Only in a fight.' }),
   attack: ({ id, msg, s }) => {
+    if (C.Props.byId(s, String(msg.target || ''))) return { args: ['attack', id, String(msg.target), String(msg.weapon || '')] };   // smashing a crate starts no fight
     const t = s.creatures[String(msg.target || '')];
     if (!t || !C.partyKnows(s).creature(t)) return { error: 'Pick a target.' };
     return { file: `${s.creatures[id].name} attacks ${t.name} (starts a fight).`, text: 'The DM will roll initiative.' };
@@ -481,10 +482,10 @@ const server = http.createServer((req, res) => {
     const current = s.turnOrder ? s.turnOrder[s.turnIdx] : null;
     const want = url.searchParams.get('from');
     const from = mine.includes(want) ? want : mine.includes(current) ? current : mine.find((id) => s.creatures[id] && s.creatures[id].pos);
-    const id = url.searchParams.get('id'), cell = url.searchParams.get('cell'), z = url.searchParams.get('z');
+    const id = url.searchParams.get('id'), cell = url.searchParams.get('cell'), z = url.searchParams.get('z'), side = url.searchParams.get('side');
     if (!from) return json(res, 404, { error: 'You have no character on the map.' });
     if (!id && !/^[A-Za-z]\d{1,2}$/.test(cell || '')) return json(res, 400, { error: 'Look at what?' });
-    const l = C.look(s, from, id ? { id } : { cell: cell.toUpperCase(), z: z === null || z === '' ? undefined : Number(z) });
+    const l = C.look(s, from, id ? { id } : /^[nesw]$/.test(side || '') ? { cell: cell.toUpperCase(), side } : { cell: cell.toUpperCase(), z: z === null || z === '' ? undefined : Number(z) });
     if (!l) return json(res, 404, { error: 'Your character knows nothing about that.' });
     return json(res, 200, l);
   }

@@ -7,6 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as TX from './textures.js';
 import { buildBarracksProp } from './barracks-props.js';
 import { createMarks, STEM_W } from './marks3d.js';
+import { createProps3D } from './props3d.js';
 
 const FT = 1 / 5;
 const VARIANTS = 4;
@@ -110,7 +111,7 @@ function box(w, h, d, v0 = 0) {
 
 const SIDE_FOR = { grass: 'dirt', dirt: 'dirt', flagstone: 'rock', oil: 'rock', water: 'rock', rock: 'rock', planks: 'planks', chasm: 'rock' };
 
-export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}) {
+export function createMap3D(container, { onSelect, onCell, onSurface, onHover, onFps } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
@@ -147,6 +148,8 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
   const cursorG = new THREE.Group();
   const spectral = new THREE.Group(); // spell tokens (Spiritual Weapon): not creatures, never picked
   scene.add(terrain, tokens, fx, cursorG, spectral);
+  const props = createProps3D(scene);   // pick boxes for props and wall faces (Cards 14c/14d)
+  let propHover = null;
 
   let built = null;          // signature of the terrain currently built
   const flames = [], lights = [], waters = new Set();   // flame sprites and their lights (all chunks); water materials
@@ -1435,11 +1438,21 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
     if (cur && cur.parent === tokens && cur !== best && cur.userData.hv.s < 1 && (!best || best.userData.hv.s > cur.userData.hv.s * STICKY) && inView(cur)) return cur;
     return best;
   }
-  // The square under the cursor (terrain only; walls' own segments don't count).
-  function cellAt(x, y) {
+  // The terrain under the cursor (walls' own segments don't count), with its square as `.cell`; leaves `ray` cast through
+  // (x, y) for props.pick.
+  function rayHit(x, y) {
     ray.setFromCamera(new THREE.Vector2((x - rect.left) / rect.width * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), camera); ray.far = Infinity;
-    for (const h of ray.intersectObjects(occluders(), false)) { const c = terrainHit(h); if (c) return { x: c.x, y: c.y }; }
+    for (const h of ray.intersectObjects(occluders(), false)) { const c = terrainHit(h); if (c) return Object.assign(h, { cell: { x: c.x, y: c.y } }); }
     return null;
+  }
+  function cellAt(x, y) { const hit = rayHit(x, y); return hit ? hit.cell : null; }
+  // A side worth selecting: a wall square's face over known open ground, or a drop of 5 ft or more (a ledge, a chasm edge).
+  const STEP = { n: [0, -1], e: [1, 0], s: [0, 1], w: [-1, 0] };
+  function faceSpan(x, y, side) {
+    const v = lastState, c = v && v.cells[y] && v.cells[y][x], d = STEP[side], n = c && v.cells[y + d[1]] && v.cells[y + d[1]][x + d[0]];
+    if (!c || !n || c.fog === 'unknown' || n.fog === 'unknown' || n.tags.includes('wall')) return null;
+    if (c.tags.includes('wall') && !c.obj) return [(n.h || 0) * FT, (c.h || 0) * FT + (wallsLow ? 1.5 : (v.legend[c.ch] || {}).height || 6) * FT];
+    return (c.h || 0) - (n.h || 0) >= 5 ? [(n.h || 0) * FT, (c.h || 0) * FT] : null;
   }
   const cellOfBody = (g) => { const q = cellOf(lastState.creatures[g.userData.id].pos); return [q.x, q.y]; };
   // Hover from the pointer. `emit` (a real pointer move) always tells onHover; a frame only does when a body's square changed.
@@ -1447,10 +1460,16 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
     const free = mouse.x > -1e3 && !mouse.btn && lastState;
     ptrHover = marks.hover(!!free);   // icons and traced stems first, then the body ellipses
     const hg = ptrHover && tokenObjs.get(ptrHover);
-    renderer.domElement.style.cursor = ptrHover ? 'pointer' : '';
+    renderer.domElement.style.cursor = ptrHover || propHover ? 'pointer' : '';
     if (!free || !onHover) return;
     let c = null;
-    if (hg) c = cellOfBody(hg); else if (emit) { const q = cellAt(mouse.x, mouse.y); c = q ? [q.x, q.y] : [-1, -1]; } else return;
+    if (hg) { c = cellOfBody(hg); if (propHover) { propHover = null; props.highlight(props.has(lastSelected) ? lastSelected : null, null); } }
+    else if (emit) {
+      const th = rayHit(mouse.x, mouse.y), q = th && th.cell, ph = props.pick(ray, th ? th.distance : Infinity);
+      if ((ph && ph.id) !== propHover) { propHover = ph && ph.id; props.highlight(props.has(lastSelected) ? lastSelected : null, propHover); }
+      if (propHover) renderer.domElement.style.cursor = 'pointer';
+      c = q ? [q.x, q.y] : [-1, -1];
+    } else return;
     const key = c.join(',');
     if (emit || key !== hoverKey) { hoverKey = key; onHover(c[0], c[1]); }
   }
@@ -1537,10 +1556,14 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
     rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
     const id = pressed || marks.pickAt(e.clientX, e.clientY);
     if (id) { showSquare(null); if (onSelect) onSelect(id); return; }
-    const c = cellAt(e.clientX, e.clientY);
+    const th = rayHit(e.clientX, e.clientY), pr = props.pick(ray, th ? th.distance : Infinity);
+    if (pr) { showSquare(null); if (onSelect) onSelect(pr.id); return; }
+    const f = onSurface && props.faceOf(th, (x, y, side) => !!faceSpan(x, y, side));
+    if (f) { showSquare(null); onSurface(f.x, f.y, f.side); return; }
+    const c = th && th.cell;
     if (c) { showSquare(c); if (onCell) onCell(c.x, c.y); }
   });
-  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = null; hoverKey = null; if (onHover) onHover(-1, -1); });
+  dom.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; ptrHover = null; propHover = null; hoverKey = null; if (onHover) onHover(-1, -1); });
 
   // Walls between the camera and the creatures that matter fade. Merged wall pieces are tested as boxes (a ray-box test per
   // piece, no triangle raycasts) and fade by rewriting their aFade range; door leaves and secret walls fade by material.
@@ -1695,7 +1718,7 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
   }
 
   return {
-    update(v, { selected, cursor, hovered, you } = {}) {
+    update(v, { selected, cursor, hovered, you, surface } = {}) {
       const encounterChanged = lastState && (lastState.name !== v.name || v.round < lastState.round);
       if (encounterChanged) { turnKey = null; resetMoves(); hoveredId = ptrHover = null; ease = null; framed = false; showSquare(null); }
       lastState = v; lastSelected = selected;
@@ -1707,6 +1730,10 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
       if (fsig !== fogBuilt) { timed('fogUpdate', () => updateFog(v)); fogBuilt = fsig; }
       if (!framed) { frame(v); framed = true; }
       timed('tokens', () => updateTokens(v));
+      props.sync(v, (x, y) => (v.cells[y][x].h || 0));
+      props.highlight(props.has(selected) ? selected : null, propHover);
+      const sp = surface && /^[A-Z]\d+$/.test(surface.cell) && cellOf(surface.cell), span = sp && faceSpan(sp.x, sp.y, surface.side);
+      props.showFace(span ? { x: sp.x, y: sp.y, side: surface.side } : null, ...(span || []));
       updateSpectral(v);
       timed('marksSync', () => marks.sync(v.creatures, you, alts(v)));
       followTurn(v);
@@ -1729,7 +1756,7 @@ export function createMap3D(container, { onSelect, onCell, onHover, onFps } = {}
       else if (!followYielded && lastState) focusOn(lastState.current);
     },
     dispose() {
-      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose();
+      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose(); props.dispose();
       clearTrail();
       for (const ch of [...chunks.values()]) disposeChunk(ch);
       clearGlobals();

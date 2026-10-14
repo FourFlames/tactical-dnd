@@ -690,6 +690,40 @@ try {
     expect('...as does another game\'s stamp', o.otherGame && o.otherGame.code === 409, JSON.stringify(o.otherGame));
     expect('a fresh stamp is judged on its merits (action spent, not stale)', o.fresh && o.fresh.code === 400 && !o.fresh.body.stale, JSON.stringify(o.fresh));
   }
+  {
+    // Props as objects (Card 14c): ids at load, a stat block, resistances, breaking into debris; wall faces (14d).
+    run('load', 'goblin-warren-v2');
+    let s3 = C.loadState();
+    const crate = s3.objects.find((o) => o.id === 'crate13'), keg = s3.objects.find((o) => o.kind === 'keg');
+    expect('legend props are promoted to objects with ids at load', crate && crate.at === 'O47' && keg && /^keg\d+$/.test(keg.id) && s3.objects.some((o) => o.kind === 'barrel'), JSON.stringify(s3.objects.slice(0, 3)));
+    expect('...with a 5e object stat block', crate.ac === 15 && crate.hp === 10 && crate.resist.includes('piercing') && crate.vulnerable.includes('bludgeoning') && crate.immune.includes('poison') && crate.immune.includes('psychic'), JSON.stringify(crate));
+    const O = C.parseCell('O47');
+    expect('...keeping the square\'s cover and the object on it', C.tagsAt(s3, O.x, O.y).includes('cover-half') && C.objectAt(s3, O.x, O.y).id === 'crate13', JSON.stringify(C.objectAt(s3, O.x, O.y)));
+    const pv3 = C.view(s3, 'player');
+    r = run('look', 'rook', 'crate13');
+    expect('look at a prop shows its condition and traits, not HP', /Intact/.test(r.out) && /would burn/.test(r.out) && !/10\/10/.test(r.out), r.out);
+    r = run('damage', 'crate13', '6', 'piercing');
+    expect('piercing is halved on a crate', r.ok && /takes 3 piercing damage \(resisted\) \(7\/10\)/.test(r.out), r.out);
+    edit((g) => { g.creatures.rook.pos = 'N47'; g.creatures.rook.attacks.push({ name: 'Test Maul', bonus: 100, damage: '2', type: 'bludgeoning' }); });
+    for (let i = 0; i < 10; i++) { r = run('attack', 'rook', 'crate13', 'test maul'); if (/hit!/.test(r.out)) break; }
+    expect('an attack on a prop doubles bludgeoning', /takes 4 bludgeoning damage \(vulnerable\) \(3\/10\)/.test(r.out), r.out);
+    r = run('look', 'rook', 'crate13');
+    expect('...and its look says it is battered', /about to give|Battered/i.test(r.out), r.out);
+    r = run('damage', 'crate13', '2', 'bludgeoning');
+    s3 = C.loadState();
+    expect('at 0 HP the prop breaks into difficult debris', /breaks apart/.test(r.out) && !s3.objects.some((o) => o.id === 'crate13') && C.tagsAt(s3, O.x, O.y).includes('difficult') && !C.objectAt(s3, O.x, O.y), r.out);
+    expect('...and gives no more cover', !C.tagsAt(s3, O.x, O.y).includes('cover-half') && C.coverBetween(s3, { x: O.x - 1, y: O.y }, { x: O.x + 1, y: O.y }) === 0, JSON.stringify(C.tagsAt(s3, O.x, O.y)));
+    const kp = C.parseCell(keg.at);
+    r = run('damage', keg.id, '1', 'fire');
+    expect('a burning keg breaks and prints the DM\'s onBreak note', /breaks apart/.test(r.out) && /DM: the keg explodes, rule it/.test(r.out), r.out);
+    const logT = fs.readFileSync(C.LOG, 'utf8');
+    expect('...the note is DM-only in the log', /"type":"secret","text":"DM: the keg explodes/.test(logT), '');
+    expect('the player view lists props with a condition word and no HP', pv3.objects.length && pv3.objects.every((o) => o.cond && o.hp === undefined), JSON.stringify(pv3.objects[0]));
+    r = run('look', 'rook', 'A47', '--side', 'e');
+    expect('a wall face looks like a climbable surface with its DC', r.ok && /rock wall/i.test(r.out) && /east face/.test(r.out) && /Athletics DC \d+/.test(r.out) && /Full cover/.test(r.out), r.out);
+    s3 = C.loadState();
+    expect('a flat side is no surface', C.surfaceOf(s3, 5, 47, 'e') === null && kp.x >= 0, '');
+  }
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }
