@@ -637,6 +637,7 @@ const FOCUS_CELLS = { large: 18, huge: 24, gargantuan: 30 };
 let panAnim = 0;
 function focusRef(ref) {
   const c = state && state.creatures[ref];
+  if (!c) ref = refCell(ref);   // a prop or wall face frames its square
   if (THREE_D) { if (map3d && map3d.focus && (c || /^[A-Z]\d+$/.test(ref))) map3d.focus(ref); return; }
   const cell = c ? c.pos : /^[A-Z]\d+$/.test(ref) ? ref : null;
   if (!cell || !svg || !view2d) return;
@@ -675,7 +676,8 @@ function tap(ref) {
 function clickRef(ref, src, cellXY) {
   const dbl = tap(ref), isCreature = !!(state && state.creatures[ref]);
   if (dbl) { closeWheel(); focusRef(ref); return; } // the wheel folds back into the token while the camera glides there
-  if (cellXY) pointCell(cellXY[0], cellXY[1]); else if (isCreature) pointCreature(ref, src !== 'map'); else pointSquare(ref);
+  const sf = SURF.exec(ref);
+  if (cellXY) pointCell(cellXY[0], cellXY[1]); else if (isCreature) pointCreature(ref, src !== 'map'); else if (propOf(ref)) pointProp(ref); else if (sf) pointSurface(sf[1], sf[2]); else pointSquare(ref);
   if (src === 'map') wheelTap(ref);
 }
 // preventDefault: a chip inside a <summary> would otherwise toggle its details and shift the log under a double-click
@@ -715,7 +717,8 @@ function hoverCell(x, y) {
   const cell = x >= 0 && y >= 0 ? String.fromCharCode(65 + x) + (y + 1) : null;
   hoveredCreature = Object.values(state && state.creatures || {}).find((c) => c.pos === cell)?.id || null;
   const hc = state && x >= 0 && y >= 0 && x < state.width && y < state.height && creatureAtCell(cellName(x, y));
-  setHover(hc ? hc.id : null);
+  const hp = !hc && cell && propsAt(cell)[0];
+  setHover(hc ? hc.id : hp ? hp.id : null);
   const h = document.getElementById('hover');
   if (!state || x < 0 || y < 0 || x >= state.width || y >= state.height) { h.textContent = ''; return; }
   const c = state.cells[y][x];
@@ -1253,7 +1256,12 @@ document.getElementById('actText').addEventListener('keydown', (e) => {
 // ---------- cursor ----------
 // Square mode points at a square (and a height above it); entity mode at a creature. Either way
 // the panel shows what your character can tell about it, and you can ask the DM for more.
-const cursor = { mode: 'entity', cell: null, z: null, id: null };
+const cursor = { mode: 'entity', cell: null, z: null, id: null, surface: null };   // id: a creature or a prop (crate3); surface: a wall face { cell, side }
+const propOf = (id) => (id && state && (state.objects || []).find((o) => o.id === id)) || null;
+const propsAt = (cell) => ((state && state.objects) || []).filter((o) => o.at === cell);
+const SURF = /^surf:([A-Z]\d+):([nesw])$/;   // a surface as a wheel/tap ref
+const refCell = (ref) => { const o = propOf(ref), m = SURF.exec(ref || ''); return o ? o.at : m ? m[1] : ref; };
+const hasPoint = () => !!(cursor.id || cursor.cell || cursor.surface);
 let look = null, lookKey = null, lookTimer = null;
 const cellName = (x, y) => String.fromCharCode(65 + x) + (y + 1);
 function floorAt(id) {
@@ -1264,17 +1272,21 @@ function floorAt(id) {
 function creatureAtCell(id) { return state ? Object.values(state.creatures).find((c) => c.pos === id) : null; }
 function pointLabel() {
   if (cursor.id && state && state.creatures[cursor.id]) return state.creatures[cursor.id].name;
+  if (propOf(cursor.id)) return propOf(cursor.id).name;
+  if (cursor.surface) return `the ${cursor.surface.side.toUpperCase()} face of ${cursor.surface.cell}`;
   if (cursor.cell) return cursor.cell + (cursor.z !== null ? ` @ ${cursor.z} ft` : '');
   return null;
 }
 function pointPayload() {
+  if (propOf(cursor.id)) return { cell: propOf(cursor.id).at };   // intents only keep creature targets
   if (cursor.id) return { target: cursor.id };
+  if (cursor.surface) return { cell: cursor.surface.cell };
   if (cursor.cell) return { cell: cursor.cell, z: cursor.z !== null ? cursor.z : undefined };
   return {};
 }
 function setMode(m) {
   cursor.mode = m;
-  if (m === 'square' && cursor.id && state.creatures[cursor.id]) { cursor.cell = state.creatures[cursor.id].pos; cursor.id = null; }
+  if (m === 'square' && cursor.id && (state.creatures[cursor.id] || propOf(cursor.id))) { cursor.cell = state.creatures[cursor.id] ? state.creatures[cursor.id].pos : propOf(cursor.id).at; cursor.id = null; }
   if (m === 'entity' && cursor.cell) { const c = creatureAtCell(cursor.cell); if (c) { cursor.id = c.id; cursor.cell = null; } }
   cursorChanged();
 }
@@ -1283,12 +1295,24 @@ function pointCreature(id, fromList) {
   if (!c) return;
   if (cursor.mode === 'square' && !fromList) { pointSquare(c.pos); return; }
   if (cursor.id === id) return clearCursor();
-  cursor.mode = 'entity'; cursor.id = id; cursor.cell = null; cursor.z = null;
+  cursor.mode = 'entity'; cursor.id = id; cursor.cell = null; cursor.z = null; cursor.surface = null;
   pickActor(id);
   cursorChanged();
 }
+function pointProp(id) {
+  if (!propOf(id)) return;
+  if (cursor.id === id) return clearCursor();
+  cursor.mode = 'entity'; cursor.id = id; cursor.cell = null; cursor.z = null; cursor.surface = null;
+  cursorChanged();
+}
+function pointSurface(cell, side) {
+  const same = cursor.surface && cursor.surface.cell === cell && cursor.surface.side === side;
+  if (same) return clearCursor();
+  cursor.id = null; cursor.cell = null; cursor.z = null; cursor.surface = { cell, side };
+  cursorChanged();
+}
 function pointSquare(id, keepZ) {
-  cursor.id = null; cursor.cell = id;
+  cursor.id = null; cursor.cell = id; cursor.surface = null;
   if (!keepZ) cursor.z = null;
   cursorChanged();
 }
@@ -1299,22 +1323,22 @@ function pointCell(x, y) {
   if (cursor.cell === id && cursor.z === null) return clearCursor();
   pointSquare(id);
 }
-function clearCursor() { cursor.id = null; cursor.cell = null; cursor.z = null; cursorChanged(); }
+function clearCursor() { cursor.id = null; cursor.cell = null; cursor.z = null; cursor.surface = null; cursorChanged(); }
 function setZ(z) { if (!cursor.cell) return; cursor.z = z === null || Number.isNaN(z) ? null : Math.round(z / 5) * 5; cursorChanged(); }
 function cursorChanged() { actionConfirm = null; selected = cursor.id; render(); fetchLook(); }
 
 function fetchLook() {
-  const key = JSON.stringify([cursor.id, cursor.cell, cursor.z]);
-  if (!cursor.id && !cursor.cell) { look = null; lookKey = key; drawLook(); return; }
+  const key = JSON.stringify([cursor.id, cursor.cell, cursor.z, cursor.surface]);
+  if (!hasPoint()) { look = null; lookKey = key; drawLook(); return; }
   clearTimeout(lookTimer);
-  const q = new URLSearchParams(cursor.id ? { id: cursor.id } : { cell: cursor.cell });
+  const q = new URLSearchParams(cursor.id ? { id: cursor.id } : cursor.surface ? { cell: cursor.surface.cell, side: cursor.surface.side } : { cell: cursor.cell });
   if (!cursor.id && cursor.z !== null) q.set('z', cursor.z);
   if (SEAT) q.set('token', SEAT);
   lookTimer = setTimeout(async () => {
     try {
       const r = await fetch('/api/look?' + q);
       const out = await r.json();
-      if (JSON.stringify([cursor.id, cursor.cell, cursor.z]) !== key) return; // moved on meanwhile
+      if (JSON.stringify([cursor.id, cursor.cell, cursor.z, cursor.surface]) !== key) return; // moved on meanwhile
       look = r.ok ? out : { error: out.error }; lookKey = key;
     } catch { look = { error: 'Could not reach the table.' }; }
     drawLook();
@@ -1331,7 +1355,9 @@ const coverWord = (L) => COVER[L.cover] || `cover ${L.cover}`;
 function cardHtml(L, pv) {
   const c = L.kind === 'creature' && state.creatures[L.id], mine = c && isMine(L.id);
   const sub = esc(L.cell + (L.z ? ` · ${L.z} ft` : '')) + (pv ? ' · <em>hovering</em>' : '');
-  const health = c && c.hp === undefined && c.health ? `<span class="hchip ${c.health.replace(' ', '-')}">${esc(c.health)}</span>` : '';
+  const OBJ_HEALTH = { intact: 'healthy', scuffed: 'healthy', battered: 'bloodied', 'about to give': 'near-death' };
+  const health = L.kind === 'object' ? `<span class="hchip ${OBJ_HEALTH[L.cond] || 'healthy'}">${esc(L.cond)}</span>`
+    : c && c.hp === undefined && c.health ? `<span class="hchip ${c.health.replace(' ', '-')}">${esc(c.health)}</span>` : '';
   const f = c && c.hp !== undefined ? hpFrac(c) : null;
   const hp = f !== null ? `<div class="ehp"><b><i style="width:${f * 100}%;background:${hpColor(f)}"></i></b>${c.hp}/${c.maxHp}</div>` : '';
   const odds = !mine && L.dist !== undefined ? '<div class="odds">' + [
@@ -1340,11 +1366,14 @@ function cardHtml(L, pv) {
   ].join('') + '</div>' : '';
   const atk = (L.attacks || []).length ? '<div class="achips">' + L.attacks.map((a) =>
     `<span class="${!a.ok ? 'n' : a.mode === 'dis' ? 'm' : 'y'}">${esc(a.name)} · ${esc(shortVerdict(a.verdict))}</span>`).join('') + '</div>' : '';
-  const lines = L.lines.filter((l) => !(odds && /^\d+ ft from /.test(l)) && !/^Looks (healthy|bloodied|near death|down)\.?$/.test(l));
+  const lines = L.lines.filter((l) => !(odds && /^\d+ ft from /.test(l)) && !/^Looks (healthy|bloodied|near death|down)\.?$/.test(l) && !(L.kind === 'object' && l === L.lines[0]));
+  const sub2 = L.kind === 'surface' ? esc(`${L.cell}, ${({ n: 'north', e: 'east', s: 'south', w: 'west' })[L.side]} face`) : sub;
+  const here = L.kind === 'square' ? propsAt(L.cell) : [];
+  const props = here.length ? `<div class="facts">Here: ${here.map((o) => `<a href="#" data-ref="${esc(o.id)}" style="color:var(--gold)">${esc(o.name)} (${esc(o.id)})</a>`).join(', ')}</div>` : '';
   return `<div class="ecard${pv ? ' pv' : ''}" style="--c:${L.kind === 'creature' ? SIDE_COLOR[L.side] || SIDE_COLOR.neutral : 'var(--line)'}">`
-    + `<div class="eh"><h3 title="As ${esc(L.from.name)} sees it">${esc(L.name)}</h3>${health}</div><div class="es">${sub}</div>${hp}${odds}${atk}`
+    + `<div class="eh"><h3 title="As ${esc(L.from.name)} sees it">${esc(L.name)}</h3>${health}</div><div class="es">${sub2}</div>${hp}${odds}${atk}`
     + (lines.length ? `<div class="lns">${lines.map((l) => `<div class="ln">${esc(l)}</div>`).join('')}</div>` : '')
-    + (L.facts.length ? `<div class="facts">${L.facts.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : '') + '</div>';
+    + (L.facts.length ? `<div class="facts">${L.facts.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : '') + props + '</div>';
 }
 
 // ---------- hover: preview in the card + a chip at the pointer ----------
@@ -1352,7 +1381,7 @@ function cardHtml(L, pv) {
 const hover = { id: null, timer: null, pos: null }, hoverCache = {};
 let hoverEpoch = 0;
 function setHover(id) {
-  if (id && !(state && state.creatures[id])) id = null;
+  if (id && !(state && (state.creatures[id] || propOf(id)))) id = null;
   if (id === hover.id) return;
   hover.id = id; clearTimeout(hover.timer);
   if (id && !hoverCache[id] && !TOUCH) hover.timer = setTimeout(() => fetchHover(id), 120);
@@ -1411,9 +1440,9 @@ function drawLook() {
   const pv = hl && !hl.error && hover.id !== cursor.id && !TOUCH && !(cursor.mode === 'square' && cursor.cell)
     && !(ask && (document.activeElement === ask || ask.value)) ? hl : null;
   const L = pv || look;
-  if (!pv && (!cursor.id && !cursor.cell || !look || look.error)) box.dataset.html = '';
-  if (!pv && !cursor.id && !cursor.cell) {
-    box.innerHTML = `<div class="hint">${TOUCH ? 'Tap' : 'Click'} the map to point at ${cursor.mode === 'entity' ? 'a creature' : 'a square'}.`
+  if (!pv && (!hasPoint() || !look || look.error)) box.dataset.html = '';
+  if (!pv && !hasPoint()) {
+    box.innerHTML = `<div class="hint">${TOUCH ? 'Tap' : 'Click'} the map to point at ${cursor.mode === 'entity' ? 'a creature, crate or wall' : 'a square'}.`
       + (TOUCH ? '' : ' <span title="M switch mode · arrows move · [ ] height · P ping · Esc clear"><kbd>M</kbd> <kbd>P</kbd> <kbd>Esc</kbd> …</span>') + '</div>';
     return;
   }
@@ -1452,7 +1481,7 @@ document.addEventListener('keydown', (e) => {
   const k = e.key;
   const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[k];
   if (step) {
-    const from = cursor.cell || (cursor.id && state.creatures[cursor.id] && state.creatures[cursor.id].pos) || (state.current && state.creatures[state.current] && state.creatures[state.current].pos) || 'A1';
+    const from = cursor.cell || (cursor.surface && cursor.surface.cell) || (cursor.id && (state.creatures[cursor.id] ? state.creatures[cursor.id].pos : refCell(cursor.id))) || (state.current && state.creatures[state.current] && state.creatures[state.current].pos) || 'A1';
     const p = parseCell(from), x = Math.max(0, Math.min(state.width - 1, p.x + step[0])), y = Math.max(0, Math.min(state.height - 1, p.y + step[1]));
     const c = creatureAtCell(cellName(x, y));
     if (cursor.mode === 'entity' && c) pointCreature(c.id); else pointSquare(cellName(x, y), true);
@@ -1659,13 +1688,13 @@ function lookActions() {
         + '</div></div>';
     }
   }
-  if (look.kind === 'creature' && look.side !== 'party' && (look.attacks || []).some((a) => a.ok)) {
+  if ((look.kind === 'object' || look.kind === 'creature' && look.side !== 'party') && (look.attacks || []).some((a) => a.ok)) {
     const sneak = look.attacks.find((a) => a.ok && a.sneak);
     html += '<div class="movebox"><div class="btns">'
       + look.attacks.filter((a) => a.ok).map((a) => `<button class="btn gold" data-atk="${esc(a.name)}"${t.action ? ' disabled' : ''}>${esc(a.name)}<small>${a.mode === 'adv' ? 'adv · ' : a.mode === 'dis' ? 'dis · ' : ''}${esc(a.damage || '')}</small></button>`).join('')
       + '</div>'
       + (sneak ? `<label style="display:block;margin-top:6px"><input type="checkbox" id="atkSneak" checked> Sneak Attack (+${esc(sneak.sneak)})</label>` : '')
-      + (t.action ? '<div class="warn">Your action is spent.</div>' : t.explore ? '<div class="warn">Attacking starts a fight; the DM will roll initiative.</div>' : '')
+      + (t.action ? '<div class="warn">Your action is spent.</div>' : t.explore && look.kind !== 'object' ? '<div class="warn">Attacking starts a fight; the DM will roll initiative.</div>' : '')
       + '</div>';
   }
   html += `<div class="movebox"><select id="chkSkill">${SKILL_LIST.map((k) => `<option value="${k}">${k.replace(/-/g, ' ')}</option>`).join('')}</select> <button class="btn" id="chkGo">Roll check</button></div>`;
@@ -1706,7 +1735,7 @@ const wheelView = () => disp || state;
 // so a routine refresh or a new chat message does not dismiss an unchanged menu.
 const wheelContext = () => JSON.stringify([state && state.round, state && state.current,
   state && state.currentUnseen, wheelActor(), myTurn(), state && state.creatures,
-  state && state.cells, state && state.walls]);
+  state && state.cells, state && state.walls, state && state.objects]);
 const gap = () => new Promise((r) => setTimeout(r, 180)); // /api/act is rate limited per player
 function loadWheel() {
   return pwLoading || (pwLoading = import('/viewer/pip-wheel.js').then((m) => {
@@ -1760,6 +1789,7 @@ function wheelAnchor(ref) {
   let last = { x: innerWidth / 2, y: innerHeight / 2, r: 24 };
   return () => {
     const v = wheelView(), c = v && v.creatures[ref];
+    if (!c) ref = refCell(ref);   // a prop or wall face rings its square
     if (!c && !/^[A-Z]\d+$/.test(ref)) return last;
     if (THREE_D && map3d) {
       const ic = c && map3d.marks().iconOf(ref), a = ic ? { x: ic.x, y: ic.y, r: 0, s: WHEEL_S } : c ? map3d.screenOf(ref) : map3d.squareAnchor(ref);   // out of its icon (a square's: around the square)
@@ -1792,6 +1822,8 @@ document.addEventListener('focusin', (e) => { if (pw && pw.isOpen && /^(INPUT|TE
 function selectOnly(ref) { // the click may have toggled the selection off; the card should show what the wheel is on
   const c = state.creatures[ref];
   if (c) { if (cursor.id !== ref) { if (cursor.mode === 'square') pointSquare(c.pos); else pointCreature(ref, true); } }
+  else if (propOf(ref)) { if (cursor.id !== ref) pointProp(ref); }
+  else if (SURF.test(ref)) { const m = SURF.exec(ref); if (!cursor.surface || cursor.surface.cell !== m[1] || cursor.surface.side !== m[2]) pointSurface(m[1], m[2]); }
   else if (cursor.cell !== ref) pointSquare(ref);
 }
 
@@ -1801,6 +1833,7 @@ function selectOnly(ref) { // the click may have toggled the selection off; the 
 // worked out. `inPlace` (a refresh or a stale action) swaps the open ring's contents instead of unfolding a new one.
 async function openWheelAt(ref, { inPlace = false } = {}) {
   if (!wheelOk()) return;
+  if (propOf(ref) || SURF.test(ref)) return openThing(ref, { inPlace });
   if (!me.turn) pickActor(ref);
   const v = wheelView(), c = v.creatures[ref], cell = c ? c.pos : ref;
   if (!c && !/^[A-Z]\d+$/.test(ref)) return;
@@ -1844,6 +1877,26 @@ async function openEntity(id, seq = ++wheelSeq, { inPlace = false } = {}) {
   later(seq, () => { D.ready = true; });
   getLook(id, actor).then((L) => { D.L = L; repaint(seq); });
 }
+// A prop (crate3) or a wall face (surf:H7:n): a ring around its square, like a square's, with its own menu.
+async function openThing(ref, { inPlace = false } = {}) {
+  const po = propOf(ref), m = SURF.exec(ref), actor = wheelActor();
+  if (!actor || !state.creatures[actor] || !(po || m)) return;
+  const seq = ++wheelSeq, context = wheelContext(), cell = po ? po.at : m[1];
+  const cx = { actor, a: state.creatures[actor], aName: state.creatures[actor].name };
+  if (!pw) await loadWheel();
+  if (seq !== wheelSeq || context !== wheelContext()) return;
+  const D = {}, make = () => (po ? propMenu(cx, propOf(ref) || po, D) : surfaceMenu(cx, { cell, side: m[2] }, D));
+  showRing(make, ref, inPlace);
+  W = { seq, context, ref, make };
+  selectOnly(ref);
+  if (THREE_D && map3d) {
+    const p = parseCell(cell);
+    if (po) { W.sq = cell; map3d.showSquare({ x: p.x, y: p.y }, true); } else map3d.showSquare(null);
+    wheel3d(null);
+  }
+  later(seq, () => { D.ready = true; });
+  getLook(ref, actor).then((L) => { D.L = L; repaint(seq); });
+}
 function showRing(make, ref, inPlace) {
   if (inPlace && pw.isOpen) pw.replace(make()); else pw.open(make(), wheelAnchor(ref));
   ringStats.opened = performance.now();
@@ -1864,7 +1917,7 @@ function ringAgain() {
 }
 function rebuildRing() {
   if (!(pw && pw.isOpen && W && W.ref)) return;
-  if (!wheelOk() || !wheelActor() || !(state.creatures[W.ref] || /^[A-Z]\d+$/.test(W.ref))) return closeWheel();
+  if (!wheelOk() || !wheelActor() || !(state.creatures[W.ref] || /^[A-Z]\d+$/.test(W.ref) || propOf(W.ref) || SURF.test(W.ref))) return closeWheel();
   openWheelAt(W.ref, { inPlace: true });
 }
 
@@ -1913,7 +1966,7 @@ const slotCache = { looks: new Map(), grid: null };
 function getLook(id, from) {
   const k = id + '|' + from;
   if (!slotCache.looks.has(k)) {
-    const q = new URLSearchParams({ id, from });
+    const sf = SURF.exec(id), q = new URLSearchParams(sf ? { cell: sf[1], side: sf[2], from } : { id, from });
     if (SEAT) q.set('token', SEAT);
     slotCache.looks.set(k, fetch('/api/look?' + q).then(async (r) => { const o = await r.json(); return r.ok ? o : null; }).catch(() => null));
   }
@@ -2017,7 +2070,7 @@ function strikeLeaf(cx, T, L) {
   const ok = atk.filter((a) => a.ok), main = ok.filter((a) => attackKind(a) === 'action'), pool = main.length ? main : ok; // the face of Strike is a plain attack; bonus ones live under the full list
   const pick = atk.find((a) => a.name === slotPref.get(cx.actor, 'strike'));   // chosen with right-click
   const best = pick ? (pick.ok ? pick : null) : pool.find((a) => a.mode !== 'dis') || pool[0], why = best ? whyA(best) : whyNot('action');
-  const fight = (myTurn() || {}).explore ? 'starts a fight · ' : '';
+  const fight = (myTurn() || {}).explore && !T.prop ? 'starts a fight · ' : '';   // smashing a crate starts none
   const desc = (a) => fight + shortVerdict(a.verdict) + (a.damage ? ' · ' + a.damage : '') + (a.sneak ? ` · sneak +${a.sneak}` : '');
   const hit = (a) => ({ what: a.name, go: () => { act('attack', { target: T.id, weapon: a.name, sneak: !!a.sneak }); } });
   const entry = (a) => Object.assign(hit(a), a.ok && !whyA(a) ? { odds: desc(a) } : { off: true, odds: a.ok ? whyA(a) : a.verdict, go: undefined });
@@ -2244,6 +2297,51 @@ function doorMenu(cx, w, D) {
   return subOf('Door', `${w.open ? 'Close' : 'Open'} door`, label, items);
 }
 
+// "Try something": the free-text request is pre-filled for the player to finish and send.
+function prefillAct(text) {
+  const box = document.getElementById('actText');
+  document.getElementById('actSec').classList.remove('closed');
+  box.value = text; fitBox(); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+}
+const SIDE_WORD = { n: 'north', e: 'east', s: 'south', w: 'west' };
+// A prop with an id (crate3, keg2): break it, climb it, hide behind it, tip it over. Cover is unchanged; the engine owns the numbers.
+function propMenu(cx, o, D) {
+  const t = myTurn(), cell = o.at, p0 = parseCell(cell), pa = parseCell(cx.a.pos), L = D.L;
+  const tags = ((wheelView().cells[p0.y] || [])[p0.x] || {}).tags || [], adj = Math.max(Math.abs(pa.x - p0.x), Math.abs(pa.y - p0.y)) <= 1;
+  const brk = Object.assign(strikeLeaf(cx, { id: o.id, name: o.name, prop: true }, L), { role: 'Break' });
+  if (brk.what === 'Strike') brk.what = 'Break';
+  const bonusHide = t && (t.features.cunningAction || t.features.nimbleEscape);
+  const hs = { role: 'Hide', what: 'Hide behind', short: 'Hide', icon: '◌' };
+  const hide = adj ? hideLeaf(bonusHide ? 'bonus' : 'action', bonusHide ? { as: 'bonus' } : {}, Object.assign(hs, { odds: t && t.explore ? 'sneak' : bonusHide ? 'bonus action' : undefined }))
+    : Object.assign(hs, { off: true, odds: 'not adjacent' });
+  const standable = !L || L.lines.some((l) => /stand on top/.test(l));
+  const pending = t && !D.ready, { p, jump, fast } = t && D.ready ? routeTo(cell) : {};
+  const mv = !standable ? { off: true, odds: 'nothing to stand on' } : pending ? WAIT : moveFields(cell, p, { jump, fast });
+  const climb = Object.assign({ role: 'Climb', what: 'Climb onto', short: 'Climb' }, mv);
+  const topple = tags.includes('can-topple') ? intentLeaf(cx, { cell }, { role: 'Topple', what: 'Topple', odds: 'asks the DM' }, `${cx.aName} tries to topple the ${o.name} (${o.id}) at ${cell}`) : null;
+  const trick = { role: 'Try', what: 'Try something', odds: 'ask the DM', go: () => { prefillAct(`${cx.aName} tries something with the ${o.name} (${o.id}) at ${cell}`); } };
+  const inspect = { role: 'Inspect', what: 'Inspect', go: () => { selectOnly(o.id); sendIntent(cx, `${cx.aName} takes a closer look at the ${o.name} (${o.id}) at ${cell}. What can they tell?`, { kind: 'inspect', cell }); } };
+  return { title: o.name, slots: Object.assign({ 1: brk, 2: climb, 3: hide, 5: inspect, 6: trick }, topple ? { 4: topple } : {}) };
+}
+// A wall face or ledge side (Card 14d): climb it when it has a top, ping it, look closer, or try something.
+function surfaceMenu(cx, S, D) {
+  const { cell, side } = S, sf = D.L && D.L.surface, t = myTurn(), name = sf ? sf.name : 'wall', face = `the ${SIDE_WORD[side]} face of ${cell}`;
+  const cs = { role: 'Climb', what: 'Climb', short: 'Climb' };
+  let climb;
+  if (D.L === undefined) climb = Object.assign(cs, WAIT);
+  else if (!sf) climb = Object.assign(cs, { off: true, odds: 'no read on that' });
+  else if (sf.wall) climb = sf.climbable && !sf.sheer ? intentLeaf(cx, { cell }, Object.assign(cs, { odds: `Athletics DC ${sf.dc}` }), `${cx.aName} tries to climb the ${name} (${face})`)
+    : Object.assign(cs, { off: true, odds: sf.sheer ? 'sheer' : 'no top' });
+  else {
+    const { p, jump, fast } = t && D.ready ? routeTo(cell) : {};
+    climb = Object.assign(cs, t && !D.ready ? WAIT : moveFields(cell, p, { jump, fast }));
+  }
+  const ping = { role: 'Ping', what: 'Ping', go: () => { if (!cursor.surface) cursor.surface = { cell, side }; sendPing(); } };
+  const inspect = { role: 'Inspect', what: 'Inspect', go: () => { selectOnly(`surf:${cell}:${side}`); sendIntent(cx, `${cx.aName} takes a closer look at ${face}. What can they tell?`, { kind: 'inspect', cell }); } };
+  const trick = { role: 'Try', what: 'Try something', odds: 'ask the DM', go: () => { prefillAct(`${cx.aName} tries something with the ${name} (${face})`); } };
+  return { title: sf ? name : 'Wall', slots: { 1: climb, 3: ping, 5: inspect, 6: trick } };
+}
+
 function squareMenu(cx, cell, D) {
   const T = { cell }, t = myTurn(), { p, jump, fast } = t && D.ready ? routeTo(cell) : {};
   const doors = doorsBeside(cell).map((w) => doorMenu(cx, w, D));
@@ -2251,9 +2349,8 @@ function squareMenu(cx, cell, D) {
   const tags = cellInfo.tags || [], thing = cellInfo.obj ? cellInfo.obj.name : cellInfo.terrain || 'the spot';
   // Squares with something to play with: the free-text request is pre-filled for the player to finish.
   const fun = cellInfo.obj || tags.some((g) => /^(can-topple|flammable|fire-source|climbable)$/.test(g)) ? { what: 'Try something', odds: tags.includes('can-topple') ? 'tip it, burn it…' : 'ask the DM', go: () => {
-    const box = document.getElementById('actText'), verb = tags.includes('can-topple') ? 'tips over' : tags.includes('flammable') ? 'sets fire to' : 'tries something with';
-    document.getElementById('actSec').classList.remove('closed');
-    box.value = `${cx.aName} ${verb} the ${thing.replace(/^the /i, '')} at ${cell}`; fitBox(); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+    const verb = tags.includes('can-topple') ? 'tips over' : tags.includes('flammable') ? 'sets fire to' : 'tries something with';
+    prefillAct(`${cx.aName} ${verb} the ${thing.replace(/^the /i, '')} at ${cell}`);
   } } : null;
   const pending = t && !D.ready;
   const mv = pending ? WAIT : moveFields(cell, p, { jump, fast }), dash = pending ? WAIT : moveFields(cell, p, { dash: true, jump, fast });
@@ -2264,8 +2361,9 @@ function squareMenu(cx, cell, D) {
   for (const x of (d.kit && d.kit.what === 'Spells' ? d.kit.items : [])) aim.push(x);
   if (!aim.length) aim.push({ what: 'Throw something' });
   const aimLeaf = (x) => intentLeaf(cx, T, { what: x.what, odds: x.odds }, x.cast ? `${cx.aName} casts ${x.what} at ${cell}` : `${cx.aName} aims ${x.what} at ${cell}`);
-  const ping = { role: 'Ping', what: 'Ping', go: () => { if (cursor.cell !== cell) { cursor.id = null; cursor.cell = cell; cursor.z = null; } sendPing(); } };
+  const ping = { role: 'Ping', what: 'Ping', go: () => { if (cursor.cell !== cell) { cursor.id = null; cursor.cell = cell; cursor.z = null; cursor.surface = null; } sendPing(); } };
   const tricks = [
+    ...propsAt(cell).map((o) => ({ what: o.name, short: o.name, odds: o.id, go: () => { openThing(o.id); } })),
     ...(fun ? [fun] : []),
     t ? actLeaf('move', { cell, jump: true }, { what: 'Jump' }) : { what: 'Jump', off: true, odds: noTurnWhy() },
     t ? actLeaf('move', { cell, fastClimb: true }, { what: 'Climb fast' }) : { what: 'Climb fast', off: true, odds: noTurnWhy() },
@@ -2560,8 +2658,8 @@ function drawResolving() {
 
 // ---------- pings ----------
 async function sendPing() {
-  const cell = cursor.cell || (cursor.id && state.creatures[cursor.id] && state.creatures[cursor.id].pos);
-  if (!cell) return;
+  const cell = cursor.cell || (cursor.surface && cursor.surface.cell) || (cursor.id && (state.creatures[cursor.id] ? state.creatures[cursor.id].pos : refCell(cursor.id)));
+  if (!cell || !/^[A-Z]\d+$/.test(cell)) return;
   try {
     await fetch('/api/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: TOKEN || undefined, cell, z: cursor.cell ? cursor.z : null, target: cursor.id }) });
@@ -2621,7 +2719,7 @@ function render() {
   if (!state) return;
   disp = display();
   // A creature that walked out of sight (or was removed) can't stay pointed at.
-  if (cursor.id && !(state.creatures && state.creatures[cursor.id])) { cursor.id = null; selected = null; look = null; }
+  if (cursor.id && !(state.creatures && state.creatures[cursor.id]) && !propOf(cursor.id)) { cursor.id = null; selected = null; look = null; }   // a prop that broke is gone too
   drawAct();
   drawTurn();
   drawSheet();
@@ -2652,7 +2750,7 @@ function render3d() {
       const wrap = document.getElementById('mapwrap');
       wrap.innerHTML = '<div class="map3d" id="map3d"></div>';
       map3dLoading = import('/viewer/map3d.js').then((m) => {
-        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => clickRef(id, 'map'), onCell: (x, y) => clickRef(cellName(x, y), 'map', [x, y]), onHover: hoverCell, onFps: drawFps });
+        map3d = m.createMap3D(document.getElementById('map3d'), { onSelect: (id) => clickRef(id, 'map'), onCell: (x, y) => clickRef(cellName(x, y), 'map', [x, y]), onSurface: (x, y, side) => clickRef(`surf:${cellName(x, y)}:${side}`, 'map'), onHover: hoverCell, onFps: drawFps });
         map3d.setFollow(followTurn); map3d.setSpeed(pb.speed);
         render(); initialCamera();
       }).catch((e) => {
@@ -2662,7 +2760,7 @@ function render3d() {
     }
     return;
   }
-  map3d.update(disp, { you: me && me.creatures ? me.creatures[0] : null, selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z } });
+  map3d.update(disp, { you: me && me.creatures ? me.creatures[0] : null, selected, hovered: hoveredCreature, cursor: { cell: cursor.cell, z: cursor.z }, surface: cursor.surface });
 }
 
 const followButton = document.getElementById('bFollow');
@@ -2699,7 +2797,7 @@ async function refresh() {
     render();
     drawResolving();
     initialCamera();
-    if (cursor.id || cursor.cell) fetchLook(); // things moved: what you can tell may have changed
+    if (hasPoint()) fetchLook(); // things moved: what you can tell may have changed
   } catch (e) { /* server restarting */ }
 }
 // ---------- connection health: round trip of a bare /api/ping every 5 s (other requests include server work, so they only count failures); a loss glyph on failures or a down stream ----------
