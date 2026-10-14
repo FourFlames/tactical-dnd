@@ -836,6 +836,12 @@ try {
     g1 = C.loadState();
     const wo = g1.orbs.find((o) => o.id === waitOrb.id);
     expect('the DM sets it: the waiting collapse completes with a log line', r.ok && g1.loot[plainCrate.id].status === 'ready' && g1.loot[plainCrate.id].source === 'dm' && (wo.collapsed || !g1.orbs.some((o) => o.id === waitOrb.id)) && /makes out|only splinters/.test(r.out), r.out);
+    const empty = g1.orbs.find((o) => o.from === plainCrate.id && !o.collapsed);
+    if (empty) {
+      edit((g) => { const o = g.orbs.find((x) => x.id === empty.id); o.item = null; g.creatures.rook.pos = o.at; });
+      r = run('look', 'rook', empty.id);
+      expect('looking at an empty orb is no rejection: it goes, and that is saved', r.ok && /only splinters/.test(r.out) && !C.loadState().orbs.some((o) => o.id === empty.id), r.out);
+    }
 
     // no timing leak: pending and decided read the same until someone looks
     run('load', 'goblin-warren-v2');

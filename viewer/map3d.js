@@ -8,6 +8,7 @@ import * as TX from './textures.js';
 import { buildBarracksProp } from './barracks-props.js';
 import { createMarks, STEM_W } from './marks3d.js';
 import { createProps3D } from './props3d.js';
+import { createOrbs3D } from './orbs3d.js';
 
 const FT = 1 / 5;
 const VARIANTS = 4;
@@ -148,6 +149,7 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
   const cursorG = new THREE.Group();
   const spectral = new THREE.Group(); // spell tokens (Spiritual Weapon): not creatures, never picked
   scene.add(terrain, tokens, fx, cursorG, spectral);
+  const orbs = createOrbs3D(scene);   // scattered contents (Card 14e)
   const props = createProps3D(scene);   // pick boxes for props and wall faces (Cards 14c/14d)
   let propHover = null;
 
@@ -1465,8 +1467,8 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
     let c = null;
     if (hg) { c = cellOfBody(hg); if (propHover) { propHover = null; props.highlight(props.has(lastSelected) ? lastSelected : null, null); } }
     else if (emit) {
-      const th = rayHit(mouse.x, mouse.y), q = th && th.cell, ph = props.pick(ray, th ? th.distance : Infinity);
-      if ((ph && ph.id) !== propHover) { propHover = ph && ph.id; props.highlight(props.has(lastSelected) ? lastSelected : null, propHover); }
+      const th = rayHit(mouse.x, mouse.y), q = th && th.cell, ph = props.pick(ray, th ? th.distance : Infinity) || orbs.pick(ray, th ? th.distance : Infinity);
+      if ((ph && ph.id) !== propHover) { propHover = ph && ph.id; props.highlight(props.has(lastSelected) ? lastSelected : null, propHover); orbs.highlight(lastSelected, propHover); }
       if (propHover) renderer.domElement.style.cursor = 'pointer';
       c = q ? [q.x, q.y] : [-1, -1];
     } else return;
@@ -1556,7 +1558,7 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
     rect = dom.getBoundingClientRect(); camera.updateMatrixWorld(); bodyInfo(); viewCache.clear();
     const id = pressed || marks.pickAt(e.clientX, e.clientY);
     if (id) { showSquare(null); if (onSelect) onSelect(id); return; }
-    const th = rayHit(e.clientX, e.clientY), pr = props.pick(ray, th ? th.distance : Infinity);
+    const th = rayHit(e.clientX, e.clientY), pr = props.pick(ray, th ? th.distance : Infinity) || orbs.pick(ray, th ? th.distance : Infinity);
     if (pr) { showSquare(null); if (onSelect) onSelect(pr.id); return; }
     const f = onSurface && props.faceOf(th, (x, y, side) => !!faceSpan(x, y, side));
     if (f) { showSquare(null); onSurface(f.x, f.y, f.side); return; }
@@ -1707,6 +1709,7 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
       timed('marksStep', () => marks.step({ now, hoverId: ptrHover || hoveredId, selected: lastSelected, rect }));
       stepHighlights(dt * 1000); drawHits();
     }
+    timed('orbsStep', () => orbs.step());
     timed('wallFade', () => fadeOccludingWalls(dt));
     timed('render', () => renderer.render(scene, camera));
   }
@@ -1731,6 +1734,7 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
       if (!framed) { frame(v); framed = true; }
       timed('tokens', () => updateTokens(v));
       props.sync(v, (x, y) => (v.cells[y][x].h || 0));
+      timed('orbs', () => { orbs.sync(v, (x, y) => (v.cells[y][x].h || 0)); orbs.highlight(selected, propHover); });
       props.highlight(props.has(selected) ? selected : null, propHover);
       const sp = surface && /^[A-Z]\d+$/.test(surface.cell) && cellOf(surface.cell), span = sp && faceSpan(sp.x, sp.y, surface.side);
       props.showFace(span ? { x: sp.x, y: sp.y, side: surface.side } : null, ...(span || []));
@@ -1743,6 +1747,8 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
     abyss: () => abyss,   // chasm regions: { regionOf (id per square, -1 none), regions: [{ id, cells, rim, bottom }], width }
     debug: { camera, controls, scene, renderer },   // for the console and perf checks
     setPath, shoot, bump, hit, glide, snap, showSquare,
+    scatterOrbs: (from, ids) => orbs.scatter(from, ids),
+    collapseOrb: (id) => orbs.collapse(id),   // ms until the item shows
     setSpeed(k) { speed = k > 0 ? k : 1; },
     setWallsLow(on) { wallsLow = on; if (lastState) this.update(lastState, { selected: lastSelected }); },
     resetCamera() { ease = null; if (lastState) frame(lastState); },
@@ -1756,7 +1762,7 @@ export function createMap3D(container, { onSelect, onCell, onSurface, onHover, o
       else if (!followYielded && lastState) focusOn(lastState.current);
     },
     dispose() {
-      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose(); props.dispose();
+      cancelAnimationFrame(raf); ro.disconnect(); controls.dispose(); marks.dispose(); props.dispose(); orbs.dispose();
       clearTrail();
       for (const ch of [...chunks.values()]) disposeChunk(ch);
       clearGlobals();

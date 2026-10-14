@@ -1246,6 +1246,7 @@ cmd('look', 'look <from-id> <id|object|cell> [--z <ft>] [--side n|e|s|w]   what 
   if (lootLines.length) console.log(lootLines.join('\n'));
   const target = s.creatures[pos[1]] || Props.byId(s, pos[1]) || orb ? { id: pos[1] } : typeof flags.side === 'string' ? { cell: pos[1].toUpperCase(), side: flags.side.toLowerCase()[0] }
     : { cell: pos[1], z: flags.z !== undefined ? Number(flags.z) : undefined };
+  if (orb && changed && !s.orbs.includes(orb)) return s;   // nothing there: it's gone, and the log says so
   const l = C.look(s, pos[0], target);
   if (!l) fail(`${pos[0]} doesn't know about ${pos[1]} (not a visible party member, or the target is hidden or unexplored).`);
   console.log(`${l.name} (${l.cell}${l.z ? ' @' + l.z + 'ft' : ''}), as ${l.from.name} sees it:\n  ` + l.lines.join('\n  ')

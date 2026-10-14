@@ -507,9 +507,10 @@ const server = http.createServer((req, res) => {
     if (!from) return json(res, 404, { error: 'You have no character on the map.' });
     if (!id && !/^[A-Za-z]\d{1,2}$/.test(cell || '')) return json(res, 400, { error: 'Look at what?' });
     if (id && /^orb\d+$/.test(id)) {   // looking is what collapses an orb, so it goes through the engine
-      return runEngine(['look', from, id]).then(() => {
+      return runEngine(['look', from, id]).then((r) => {
         const l = C.look(C.loadState(), from, { id });
         maybePump();
+        if (!l && /only splinters and dust/.test(r.out)) return json(res, 200, { kind: 'orb', id, gone: true, name: 'Nothing', lines: ['Only splinters and dust.'], facts: [] });
         return l ? json(res, 200, l) : json(res, 404, { error: 'Your character knows nothing about that.' });
       });
     }
