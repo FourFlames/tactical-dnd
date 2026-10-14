@@ -12,6 +12,7 @@ const Think = require('./lib/think');
 const Places = require('./lib/places');
 const Effects = require('./lib/effects');
 const Props = require('./lib/props');
+const Loot = require('./lib/loot');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -87,6 +88,8 @@ function propBroke(s, o, res) {
   C.appendLog(s, 'terrain', `${o.name} at ${cell} ${res.broke ? 'breaks apart' : 'gives way'}: now ${res.debris}.`, { cells: [cell], object: o.id, broke: true });
   for (const c of Object.values(s.creatures)) if (c.pos === cell && c.hp > 0) console.log(`${c.name} was standing on it and drops to the floor.`);
   if (res.note) { C.appendLog(s, 'secret', res.note, { object: o.id, cell }); console.log(res.note); }
+  const lines = Loot.scatter(s, o, res.by);
+  if (lines.length) console.log(lines.join('\n'));
 }
 // Falling (PHB): 1d6 bludgeoning per full 10 ft, max 20d6, and the creature lands prone if it
 // takes damage. Water breaks the fall: damage is halved, and an Athletics or Acrobatics check
@@ -292,6 +295,7 @@ cmd('move', 'move <id> <cell> [--jump] [--running] [--vault] [--fast-climb] [--f
   else if (provoked.length) text += ` PROVOKES opportunity attack from: ${provokers.join(', ')}.`;
   C.appendLog(s, 'move', text, { id, from, to: c.pos, path: walked });
   console.log(text);
+  if (c.hp > 0) { const seen = Loot.afterMove(s, id); if (seen.length) console.log(seen.join('\n')); }
   if (provoked.length && c.side !== 'party') queueOAs(s, id, provoked);
   return s;
 });
@@ -1235,14 +1239,93 @@ cmd('evidence', 'evidence <id|cell> "<what anyone looking closely would find>" [
 cmd('look', 'look <from-id> <id|object|cell> [--z <ft>] [--side n|e|s|w]   what <from-id> can tell about a creature, prop (crate1), square or a wall face (--side) (what players see when they inspect)', (s, { pos, flags }) => {
   need(s);
   who(s, pos[0]);
-  const target = s.creatures[pos[1]] || Props.byId(s, pos[1]) ? { id: pos[1] } : typeof flags.side === 'string' ? { cell: pos[1].toUpperCase(), side: flags.side.toLowerCase()[0] }
+  // Looking at an orb is what collapses it (or, if its contents aren't decided yet, queues the wait).
+  const orb = !s.creatures[pos[1]] && Loot.orbById(s, pos[1]);
+  const lootLines = [];
+  const changed = !!orb && Loot.inspect(s, pos[0], orb, lootLines);
+  if (lootLines.length) console.log(lootLines.join('\n'));
+  const target = s.creatures[pos[1]] || Props.byId(s, pos[1]) || orb ? { id: pos[1] } : typeof flags.side === 'string' ? { cell: pos[1].toUpperCase(), side: flags.side.toLowerCase()[0] }
     : { cell: pos[1], z: flags.z !== undefined ? Number(flags.z) : undefined };
   const l = C.look(s, pos[0], target);
   if (!l) fail(`${pos[0]} doesn't know about ${pos[1]} (not a visible party member, or the target is hidden or unexplored).`);
   console.log(`${l.name} (${l.cell}${l.z ? ' @' + l.z + 'ft' : ''}), as ${l.from.name} sees it:\n  ` + l.lines.join('\n  ')
     + (l.attacks ? `\n  ${l.from.name}'s attacks: ` + l.attacks.map((a) => `${a.name} ${a.verdict}`).join('; ') : '')
-    + (l.facts.length ? '\n  Known: ' + l.facts.join(' / ') : ''));
-  return null;
+    + (l.facts.length ? '\n  Known: ' + l.facts.join(' / ') : '') + (l.pending ? '\n  (pending: its contents are not decided yet)' : ''));
+  return changed ? s : null;
+});
+
+cmd('pickup', 'pickup <id> <orbN>                 pick up the item an orb stands for (adjacent; a free object interaction). Anyone can, NPCs too: an NPC grab is public only if the party can see it', (s, { pos }) => {
+  const c = who(need(s), pos[0]);
+  if (c.hp <= 0 && c.side !== 'party') fail(`${c.name} is down.`);
+  const orb = Loot.orbById(s, pos[1] || '');
+  if (!orb) fail(`No orb "${pos[1] || ''}". On the floor now: ${(s.orbs || []).filter((o) => !o.fell).map((o) => `${o.id} at ${o.at}`).join(', ') || 'nothing'}.`);
+  const r = Loot.pickup(s, c, orb);
+  if (!r.ok) fail(r.why);
+  console.log(r.lines.length ? r.lines.join('\n') : `${c.name} finds nothing there.`);
+  return s;
+});
+
+cmd('loot', 'loot [pump [--all] | set <crate> \'<json items>\' | set <crate> --file <path|->]   scattered contents. No verb: where every broken container stands. pump: ask the model about pending ones (2 at a time, most urgent first; --all keeps going). set: the DM decides one (items {name, qty, tags: fragile|loose|sealed|flammable|valuable, gp, desc})', async (s, { pos, flags }) => {
+  need(s);
+  const verb = pos[0];
+  if (!verb) {
+    const ids = Object.keys(s.loot || {});
+    console.log(ids.length ? ids.map((id) => { const L = s.loot[id]; return `  ${id} (${L.name} at ${L.cell}, broke by ${L.brokeBy || '?'}): ${L.status}${L.source ? ' / ' + L.source : ''}${L.items ? ': ' + L.items.map(Loot.itemName).join(', ') || 'empty' : ''}  orbs ${L.orbs.map((o) => { const x = (s.orbs || []).find((q) => q.id === o); return x ? `${o}${x.fell ? ' (fell)' : x.collapsed ? ' (seen)' : x.wanting ? ' (waited on)' : ''}` : o + ' (gone)'; }).join(', ')}`; }).join('\n') : 'Nothing has spilled yet.');
+    console.log(Loot.statLine(s));
+    return null;
+  }
+  if (verb === 'set') {
+    const id = pos[1];
+    if (!id) fail('loot set <crate> \'<json items>\'');
+    let raw;
+    try { raw = JSON.parse(flags.file ? fs.readFileSync(flags.file === true || flags.file === '-' ? 0 : flags.file, 'utf8') : pos.slice(2).join(' ')); } catch (e) { fail('loot set needs a JSON list of items: ' + e.message); }
+    let lines;
+    try { lines = Loot.setItems(s, id, raw); } catch (e) { fail(e.message); }
+    console.log(`${id} decided: ${s.loot[id].items.map(Loot.itemName).join(', ') || 'empty'}.${lines.length ? '\n' + lines.join('\n') : ''}`);
+    return s;
+  }
+  if (verb !== 'pump') fail('loot [pump | set <crate> <json>]');
+  // The server's pump in three steps, so the model's thinking never holds its command queue: --claim (queued) saves a wave
+  // and prints it, --ask <ids> --out <file> (not queued, never saves) asks the model, --apply <file> (queued) applies.
+  if (flags.claim) {
+    const lines = [], wave = Loot.claim(s, lines);
+    if (lines.length) console.log(lines.join('\n'));
+    console.log('WAVE: ' + JSON.stringify({ game: s.game, ids: wave }));
+    return s;
+  }
+  if (typeof flags.ask === 'string') {
+    const ids = flags.ask.split(',').filter((id) => (s.loot || {})[id]);
+    fs.writeFileSync(flags.out, JSON.stringify({ game: s.game, results: await Promise.all(ids.map((id) => Loot.ask(s, id))) }));
+    return null;
+  }
+  if (typeof flags.apply === 'string') {
+    const r = JSON.parse(fs.readFileSync(flags.apply, 'utf8'));
+    if (r.game !== s.game) return null;
+    const out = Loot.apply(s, r.results, []);
+    if (out.length) console.log(out.join('\n'));
+    console.log(`${Loot.pendingCount(s)} pending. ${Loot.statLine(s)}`);
+    return s;
+  }
+  // The model thinks without the state lock: claim a wave and save, ask, then apply the answers to whatever the state is by then.
+  let total = 0;
+  for (;;) {
+    const lines = [], wave = Loot.claim(s, lines);
+    if (lines.length) console.log(lines.join('\n'));
+    if (!wave.length) break;
+    C.saveState(s);
+    const results = await Promise.all(wave.map((id) => Loot.ask(s, id)));
+    const fresh = C.loadState();
+    if (!fresh || fresh.game !== s.game) return null;
+    s = fresh;
+    const out = Loot.apply(s, results, []);
+    if (out.length) console.log(out.join('\n'));
+    C.saveState(s);
+    total += wave.length;
+    if (!flags.all) break;
+  }
+  if (!total && !Loot.pendingCount(s)) console.log('Nothing waiting on a model.');
+  console.log(`${Loot.pendingCount(s)} pending. ${Loot.statLine(s)}`);
+  return s;
 });
 
 // ---------- character builder (players build in the browser; the DM only steps in when needed) ----------
@@ -1721,6 +1804,7 @@ function briefLine(s, id, act) {
 
 cmd('minds', 'minds                              NPC minds: alarm, what each is doing, who needs a model to think (and which model)', (s) => {
   console.log(Minds.queue(need(s)));
+  if ((s.loot && Object.keys(s.loot).length) || (s.lootStats && s.lootStats.calls)) console.log(Loot.statLine(s));
   return null;
 });
 
@@ -2009,7 +2093,7 @@ async function main() {
     const out = await fn(state, args);
     if (out) {
       perceiveNow(out);
-      if (before) snapshot(before, [name, ...rest].join(' '));
+      if (before && name !== 'loot') snapshot(before, [name, ...rest].join(' ')); // the pump runs on its own clock: rewinding it would undo someone else's turn
       C.saveState(out);
       const sum = Minds.summary(out);
       if (sum.length) console.log(sum.join('\n'));

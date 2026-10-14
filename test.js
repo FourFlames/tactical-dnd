@@ -724,6 +724,159 @@ try {
     s3 = C.loadState();
     expect('a flat side is no surface', C.surfaceOf(s3, 5, 47, 'e') === null && kp.x >= 0, '');
   }
+
+  // ---------- Card 14e: scattered contents ----------
+  {
+    const Loot = C.Loot, G = require('./lib/grid');
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;   // these tests never reach for a network
+    const fakeFetch = require('path').join(require('os').tmpdir(), `tdnd-fetch-${process.pid}.js`);
+    fs.writeFileSync(fakeFetch, `global.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: process.env.FAKE_REPLY }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 40, cost: 0.001 } }) });`);
+    const objAt = (cell) => C.loadState().objects.find((o) => o.at === cell);
+    // walk `who` up to a square next to `cell` from two squares out, trying each side until one has a clear route
+    const approach = (who, cell) => {
+      const p = G.parseCell(cell);
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]) {
+        edit((g) => { g.creatures[who].pos = G.cellId(Math.max(0, p.x + 3 * dx), Math.min(49, Math.max(0, p.y + 3 * dy))); g.turn = {}; });
+        const m = run('move', who, G.cellId(p.x + dx, p.y + dy));
+        if (m.ok) return m;
+      }
+      return { ok: false, out: 'no approach' };
+    };
+    const orbsOf = (id) => (C.loadState().orbs || []).filter((o) => o.from === id);
+
+    // validation and caps of a model reply (no network)
+    const caps = { maxItems: 3, maxGp: 20, level: 3, tier: 1 };
+    const raw = { items: [{ name: 'rope', qty: 500, tags: ['loose', 'bogus'], gp: 10, desc: 'x'.repeat(400) }, { qty: 1 }, 'a candle', { name: 'ruby', gp: 9000, tags: ['valuable'] }, { name: 'extra' }, 42] };
+    const v = Loot.validate(raw, caps);
+    expect('a model reply drops malformed entries and clamps quantity, tags and description', v.items[0].qty === 20 && v.items[0].tags.length === 1 && v.items[0].desc.length === 200 && !v.items.some((i) => !i.name), JSON.stringify(v));
+    expect('...caps the stacks and scales total gp', v.items.length === 3 && v.items.reduce((n, i) => n + i.gp, 0) <= 20, JSON.stringify(v.items));
+    expect('caps default from party level and an encounter can override', Loot.capsFor({ creatures: { a: { side: 'party', notes: 'Fighter 3' } } }).maxGp === 25 && Loot.capsFor({ partyLevel: 7, creatures: {} }).maxItems === 5 && Loot.capsFor({ partyLevel: 3, treasure: { maxItems: 1, maxGp: 2 }, creatures: {} }).maxGp === 2, '');
+    expect('a reply wrapped in prose still parses', Loot.parseReply('Sure! {"items":[{"name":"x"}]} done').items[0].name === 'x' && Array.isArray(Loot.parseReply('[{"name":"x"}]')), '');
+    const rolls = (by) => Loot.consequences([{ name: 'a', qty: 1, tags: ['fragile'], gp: 5, desc: '' }, { name: 'b', qty: 1, tags: ['flammable'], gp: 5, desc: '' }, { name: 'c', qty: 1, tags: ['sealed', 'fragile', 'flammable'], gp: 5, desc: '' }, { name: 'd', qty: 1, tags: ['loose'], gp: 5, desc: '' }], by, () => 0.1);
+    expect('consequences: fire burns flammables, blunt shatters fragile, sealed survives, loose gets dirty', rolls('fire')[1].name === 'burnt b' && rolls('fire')[2].name === 'c' && rolls('bludgeoning')[0].name === 'broken a' && /bruised/.test(rolls('bludgeoning')[3].desc) && rolls('slashing')[0].name === 'broken a', JSON.stringify(rolls('fire')));
+
+    // scatter geometry on a small synthetic room: walls stop it, chasm swallows it
+    const room = { width: 9, height: 5, game: 'g1', legend: { '.': { name: 'floor', tags: [] }, '#': { name: 'rock', tags: ['wall'] }, C: { name: 'chasm', tags: ['chasm'] } },
+      rows: ['.........', '.........', '....C#...', '.........', '.........'], walls: ['E1-E6'], creatures: {}, objects: [], explored: [] };
+    const land = Loot.landings(room, 'D3');
+    expect('scatter lands 5-10 ft from the crate, never on a wall square', land.length > 0 && land.every((l) => { const p = G.parseCell(l.cell); return Math.max(Math.abs(p.x - 3), Math.abs(p.y - 2)) >= 1 && Math.max(Math.abs(p.x - 3), Math.abs(p.y - 2)) <= 2 && l.cell !== 'F3'; }), JSON.stringify(land));
+    expect('a wall segment between stops it', !land.some((l) => G.parseCell(l.cell).x >= 4 && G.parseCell(l.cell).y <= 2) && !land.some((l) => ['F2', 'F3', 'F4'].includes(l.cell)), JSON.stringify(land.map((l) => l.cell)));
+    expect('a chasm square is a landing that falls in', land.some((l) => l.cell === 'E3' && l.fall) === false && land.filter((l) => l.fall).every((l) => l.cell === 'E3'), JSON.stringify(land.filter((l) => l.fall)));
+    const crateObj = () => ({ id: 'crate9', kind: 'crate', name: 'crates', at: 'D3', contents: [{ name: 'a' }, { name: 'b' }, { name: 'c' }] });
+    const cloneRoom = () => JSON.parse(JSON.stringify(Object.assign({}, room, { legend: Object.assign({}, room.legend, { E: { name: 'chasm', tags: ['chasm'] } }) })));
+    const r1 = cloneRoom(), r2 = cloneRoom();
+    Loot.scatter(r1, crateObj(), 'bludgeoning'); Loot.scatter(r2, crateObj(), 'bludgeoning');
+    expect('scatter is deterministic for a game and object id', JSON.stringify(r1.orbs) === JSON.stringify(r2.orbs) && r1.orbs.length === 3, JSON.stringify(r1.orbs));
+    // over a chasm: put one in the only reachable cell
+    const pit = { width: 5, height: 3, game: 'g3', legend: { '.': { name: 'floor', tags: [] }, C: { name: 'chasm', tags: ['chasm'] } }, rows: ['CCCCC', 'CC.CC', 'CCCCC'], creatures: {}, objects: [], explored: [] };
+    Loot.scatter(pit, { id: 'crate1', kind: 'crate', name: 'crate', at: 'C2', contents: [{ name: 'a' }, { name: 'b' }] }, 'bludgeoning');
+    expect('orbs over a chasm fall in and are gone from view, and the fall is logged', pit.orbs.every((o) => o.fell) && C.view(Object.assign(pit, { height: 3 }), 'player').orbs.length === 0 && /tumbles over the edge/.test(fs.readFileSync(C.LOG, 'utf8')), JSON.stringify(pit.orbs));
+
+    // authored contents: immediate, on the real warren map; thrown through Props.damage's damage type
+    run('load', 'goblin-warren-v2');
+    edit((g) => { const o = g.objects.find((x) => x.at === 'O47'); o.contents = [{ name: 'iron key', tags: ['loose'], gp: 2, desc: 'Cold and heavy.' }, { name: 'glass vial', tags: ['fragile'], gp: 5 }]; });
+    const o47 = objAt('O47');
+    edit((g) => { g.creatures.rook.pos = 'M47'; });
+    r = run('damage', o47.id, '99', 'bludgeoning');
+    let g1 = C.loadState();
+    const L1 = g1.loot[o47.id];
+    expect('breaking a container with authored contents scatters one orb per entry and decides at once', r.ok && L1 && L1.status === 'ready' && L1.source === 'authored' && L1.brokeBy === 'bludgeoning' && orbsOf(o47.id).length === 2 && orbsOf(o47.id).every((o) => !o.collapsed), r.out + JSON.stringify(g1.loot));
+    expect('...orbs sit 5-10 ft from the crate', orbsOf(o47.id).every((o) => { const p = G.parseCell(o.at); return Math.max(Math.abs(p.x - 14), Math.abs(p.y - 46)) <= 2; }), JSON.stringify(g1.orbs));
+    const pv1 = C.view(g1, 'player'), dv1 = C.view(g1, 'dm');
+    expect('player view: orbs are just id and square, the DM sees the item', pv1.orbs.length === 2 && pv1.orbs.every((o) => Object.keys(o).sort().join() === 'at,id') && dv1.orbs.some((o) => o.item), JSON.stringify(pv1.orbs));
+    expect('scatter is in the log for the viewer', /"type":"loot"[^\n]*"loot":"scatter"/.test(fs.readFileSync(C.LOG, 'utf8')), '');
+
+    // collapse: look
+    const orbA = orbsOf(o47.id)[0], orbB = orbsOf(o47.id)[1];
+    edit((g) => { g.creatures.wren.pos = 'L48'; g.creatures.ash.pos = 'N48'; });
+    r = run('look', 'rook', orbA.id);
+    g1 = C.loadState();
+    expect('looking at an orb reveals its item and logs it', r.ok && g1.orbs.find((o) => o.id === orbA.id).collapsed && /makes out/.test(r.out) && new RegExp(`"loot":"collapse","orb":"${orbA.id}"`).test(fs.readFileSync(C.LOG, 'utf8')), r.out);
+    expect('...and the player view now carries the item', C.view(g1, 'player').orbs.find((o) => o.id === orbA.id).item.name.length > 0, '');
+    // pickup
+    edit((g) => { g.creatures.rook.pos = g.orbs.find((o) => o.id === orbA.id).at; });
+    r = run('pickup', 'rook', orbA.id);
+    g1 = C.loadState();
+    expect('pickup puts the item in the inventory and removes the orb', r.ok && (g1.creatures.rook.inventory || []).length === 1 && !g1.orbs.some((o) => o.id === orbA.id), r.out);
+    edit((g) => { g.creatures.wren.pos = 'B49'; });
+    r = run('pickup', 'wren', orbB.id);
+    expect('pickup needs an adjacent square', !r.ok && /adjacent/.test(r.out), r.out);
+    // collapse: end a move next to it, with light
+    edit((g) => { g.creatures.rook.pos = 'M47'; });
+    const bAt = orbsOf(o47.id).find((o) => o.id === orbB.id).at;
+    r = approach('rook', bAt);
+    g1 = C.loadState();
+    expect('ending a move next to an orb in light collapses it', r.ok && g1.orbs.find((o) => o.id === orbB.id).collapsed, r.out);
+    // darkness: no light, no collapse
+    run('load', 'goblin-warren-v2');
+    edit((g) => { const o = g.objects.find((x) => x.at === 'O47'); o.contents = [{ name: 'iron key' }]; g.lighting = { ambient: 'dark', areas: {} }; g.creatures.rook.pos = 'K47'; });
+    r = run('damage', objAt('O47').id, '99', 'bludgeoning');
+    const dk = C.loadState();
+    approach('rook', dk.orbs[0].at);
+    expect('in the dark, walking up does not collapse it', !C.loadState().orbs[0].collapsed, '');
+    edit((g) => { g.creatures.rook.senses = { darkvision: 60 }; });
+    approach('rook', dk.orbs[0].at);
+    expect('...unless the mover has darkvision', C.loadState().orbs[0].collapsed, '');
+
+    // the DM path: no key, and plot-flagged areas
+    run('load', 'goblin-warren-v2');
+    const plotCrate = objAt('Z11'), plainCrate = objAt('O47');
+    edit((g) => { g.creatures.rook.pos = 'Y12'; });
+    r = run('damage', plotCrate.id, '99', 'fire');
+    expect('a plot-flagged area goes to the DM with the loot set line', r.ok && new RegExp(`DM: .*loot ${plotCrate.id} set '`).test(r.out) && C.loadState().loot[plotCrate.id].status === 'dm', r.out);
+    r = run('damage', plainCrate.id, '99', 'bludgeoning');
+    expect('no API key: the DM decides', new RegExp(`loot ${plainCrate.id} set '`).test(r.out) && C.loadState().loot[plainCrate.id].status === 'dm' && C.loadState().loot[plainCrate.id].brokeBy === 'bludgeoning', r.out);
+    edit((g) => { g.creatures.rook.pos = g.orbs.find((o) => o.from === plainCrate.id).at; });
+    const waitOrb = C.loadState().orbs.find((o) => o.from === plainCrate.id);
+    r = run('look', 'rook', waitOrb.id);
+    g1 = C.loadState();
+    expect('looking before it is decided waits, with a pending marker only on that orb', /Something's there/.test(r.out) && g1.orbs.find((o) => o.id === waitOrb.id).wanting && C.view(g1, 'player').orbs.find((o) => o.id === waitOrb.id).pending === true && C.view(g1, 'player').orbs.filter((o) => o.pending).length === 1 && !g1.orbs.find((o) => o.id === waitOrb.id).collapsed, r.out);
+    r = run('loot', 'set', plainCrate.id, '[{"name":"tin whistle","qty":1,"tags":["loose"],"gp":1},{"name":"mouldy bread"},{"name":"chalk"}]');
+    g1 = C.loadState();
+    const wo = g1.orbs.find((o) => o.id === waitOrb.id);
+    expect('the DM sets it: the waiting collapse completes with a log line', r.ok && g1.loot[plainCrate.id].status === 'ready' && g1.loot[plainCrate.id].source === 'dm' && (wo.collapsed || !g1.orbs.some((o) => o.id === waitOrb.id)) && /makes out|only splinters/.test(r.out), r.out);
+
+    // no timing leak: pending and decided read the same until someone looks
+    run('load', 'goblin-warren-v2');
+    edit((g) => { g.creatures.rook.pos = 'M47'; const o = g.objects.find((x) => x.at === 'O47'); o.contents = [{ name: 'iron key' }, { name: 'chalk' }]; });
+    run('damage', objAt('O47').id, '99', 'bludgeoning');
+    const virt = C.loadState(), act = JSON.parse(JSON.stringify(virt));
+    const cid = Object.keys(virt.loot)[0];
+    Object.assign(virt.loot[cid], { status: 'pending', items: null, source: null }); virt.orbs.forEach((o) => { o.item = null; });
+    expect('the player view of an undecided orb and a decided one is identical', JSON.stringify(C.view(virt, 'player').orbs) === JSON.stringify(C.view(act, 'player').orbs) && JSON.stringify(C.look(virt, 'rook', { id: act.orbs[0].id })) === JSON.stringify(C.look(act, 'rook', { id: act.orbs[0].id })), '');
+
+    // the pump: pending crates go to the model (faked), in order; the cap hands the rest to the DM
+    edit((g) => { Object.assign(g.loot[cid], { status: 'pending', items: null, source: null, count: 2, tries: 0 }); g.orbs.forEach((o) => { o.item = null; }); });
+    const pumpEnv = Object.assign({}, process.env, { NODE_OPTIONS: `--require ${fakeFetch}`, OPENROUTER_API_KEY: 'test', FAKE_REPLY: '{"items":[{"name":"lamp oil","qty":3,"tags":["fragile","flammable"],"gp":4},{"name":"a bad one"},{"qty":2}]}' });
+    let pr = spawnSync('node', ['engine.js', 'loot', 'pump'], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    g1 = C.loadState();
+    expect('loot pump asks the model once and stores the validated items', /decided/.test(pr.stdout) && g1.loot[cid].status === 'ready' && g1.loot[cid].source === 'model' && g1.loot[cid].items.length === 2 && g1.lootStats.calls === 1 && g1.lootStats.cost > 0, pr.stdout + pr.stderr);
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump'], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    expect('...and never regenerates a decided crate', /Nothing waiting/.test(pr.stdout) && C.loadState().lootStats.calls === 1, pr.stdout);
+    edit((g) => { Object.assign(g.loot[cid], { status: 'pending', items: null, source: null }); g.lootStats.calls = 99; });
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump'], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    expect('past the per-encounter cap the DM takes over', /budget is spent/.test(pr.stdout) && C.loadState().loot[cid].status === 'dm', pr.stdout);
+    edit((g) => { Object.assign(g.loot[cid], { status: 'pending', items: null, source: null, tries: 0 }); g.lootStats.calls = 0; });
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump'], { cwd: __dirname, encoding: 'utf8', env: Object.assign({}, pumpEnv, { FAKE_REPLY: 'sorry, no' }) });
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump'], { cwd: __dirname, encoding: 'utf8', env: Object.assign({}, pumpEnv, { FAKE_REPLY: 'sorry, no' }) });
+    expect('a model that fails twice hands the crate to the DM', C.loadState().loot[cid].status === 'dm', pr.stdout);
+    // the server's split pump: claim (queued), ask (outside the queue, never saves), apply (queued)
+    edit((g) => { Object.assign(g.loot[cid], { status: 'pending', items: null, source: null, tries: 0 }); g.orbs.forEach((o) => { o.item = null; }); });
+    const resFile = require('path').join(require('os').tmpdir(), `tdnd-loot-${process.pid}.json`);
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump', '--claim'], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    const wave = JSON.parse(/WAVE: (.*)/.exec(pr.stdout)[1]);
+    const before = fs.readFileSync(require('path').join(process.env.TDND_DATA, 'state.json'), 'utf8');
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump', '--ask', wave.ids.join(','), '--out', resFile], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    const unsaved = fs.readFileSync(require('path').join(process.env.TDND_DATA, 'state.json'), 'utf8') === before;
+    pr = spawnSync('node', ['engine.js', 'loot', 'pump', '--apply', resFile], { cwd: __dirname, encoding: 'utf8', env: pumpEnv });
+    expect('the split pump claims, asks without saving, then applies', wave.ids.includes(cid) && unsaved && C.loadState().loot[cid].status === 'ready', pr.stdout + pr.stderr);
+    fs.rmSync(resFile, { force: true });
+    r = run('minds');
+    expect('minds shows loot calls and cost', /Loot: \d+\/\d+ calls/.test(r.out), r.out);
+    fs.unlinkSync(fakeFetch);
+    if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+  }
 } finally {
   for (const id of madeChars) { const f = require('path').join(Chars.DIR, id + '.json'); if (fs.existsSync(f)) fs.unlinkSync(f); }
   for (const f of FILES) { if (backup[f]) fs.writeFileSync(f, backup[f]); else if (fs.existsSync(f)) fs.unlinkSync(f); }

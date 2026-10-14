@@ -23,3 +23,4 @@ characters/
 # local backups of live games
 saves/
 .session/
+loot-results.json

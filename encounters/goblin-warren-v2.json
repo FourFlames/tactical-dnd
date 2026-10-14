@@ -10,6 +10,12 @@
       "A36:Z50": "dim"
     }
   },
+  "partyLevel": 3,
+  "lootZones": [
+    { "area": "B47:Y50", "name": "the near bank camp", "desc": "A trampled ledge on the near side of the chasm: abandoned travellers' supplies under rotting tarps, a camp brazier, wind and grit.", "owner": "whoever camped here before the goblins took the far side", "hooks": ["travellers' trade goods and camp supplies, nothing goblin-made"] },
+    { "area": "I36:Q40", "name": "the entry cavern", "desc": "A damp cave mouth just past the landing, where the goblins stack what they scavenge before hauling it deeper.", "owner": "Snikka's goblins", "hooks": ["scavenged oddments: cheap tools, rope, stolen food", "crude goblin repairs and snares"] },
+    { "area": "Y10:Z14", "name": "the storeroom", "desc": "The warchief's dry store behind the flank door, kept by the shaman: powder, silver and whatever Grall hid.", "owner": "Grall's hoard, now Snikka's", "hooks": ["Grall's chest: the DM decides what is in it"], "plot": true }
+  ],
   "mindConfig": {
     "deliberateAt": 2,
     "calm": true
@@ -252,7 +258,7 @@
       ]
     },
     "b": {
-      "name": "oil barrels",
+      "name": "oil barrels", "object": {"kind": "barrel", "empty": true},
       "tags": [
         "impassable",
         "cover-half",

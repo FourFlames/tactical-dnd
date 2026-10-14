@@ -4,6 +4,11 @@
     "elite": "deepseek/deepseek-v4.1-flash",
     "commander": "deepseek/deepseek-v4.1-flash"
   },
+  "loot": {
+    "concurrency": 2,
+    "maxCalls": 20,
+    "maxCost": 0.25
+  },
   "standingTake": "split",
   "openrouter": {
     "reasoning": {

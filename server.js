@@ -112,9 +112,9 @@ function seatOf(req, token) {
 // dash, dodge, undo) wait for the next loud one (rolls, end of turn) to wake the DM.
 const { execFile } = require('child_process');
 let engineQueue = Promise.resolve();
-function runEngine(args) {
+function runEngine(args, timeout = 20000) {
   const job = engineQueue.then(() => new Promise((resolve) => {
-    execFile(process.execPath, [path.join(__dirname, 'engine.js'), ...args], { cwd: __dirname, timeout: 20000 }, (err, stdout) => {
+    execFile(process.execPath, [path.join(__dirname, 'engine.js'), ...args], { cwd: __dirname, timeout }, (err, stdout) => {
       const out = String(stdout || '').split('\n\n📨')[0].trim();
       resolve({ ok: !/^REJECTED:/.test(out) && !(err && !out), out: out.replace(/^REJECTED:\s*/, '') });
     });
@@ -122,7 +122,28 @@ function runEngine(args) {
   engineQueue = job.catch(() => {});
   return job;
 }
+// Scattered contents (Card 14e): whenever the state leaves containers waiting for their contents to be decided, the
+// pump runs as an ordinary engine command through the same queue, one at a time. Each run takes one wave; a finished
+// run changes the state, which brings us back here until nothing is pending (failures turn into the DM's job after two tries).
+let pumping = false;
+function maybePump() {
+  if (pumping) return;
+  let s; try { s = C.loadState(); } catch { return; }
+  if (!s || !C.Loot.pendingOrder(s).length) return;
+  pumping = true;
+  const out = path.join(process.env.TDND_DATA ? path.resolve(process.env.TDND_DATA) : __dirname, 'loot-results.json');
+  runEngine(['loot', 'pump', '--claim'])
+    .then((r) => {
+      const w = /WAVE: (.*)/.exec(r.out), wave = w && JSON.parse(w[1]);
+      if (!wave || !wave.ids.length) return;
+      return new Promise((resolve) => execFile(process.execPath, [path.join(__dirname, 'engine.js'), 'loot', 'pump', '--ask', wave.ids.join(','), '--out', out],
+        { cwd: __dirname, timeout: 45000 }, () => resolve()))
+        .then(() => fs.existsSync(out) && runEngine(['loot', 'pump', '--apply', out]).then(() => fs.rmSync(out, { force: true })));
+    })
+    .catch(() => {}).then(() => { pumping = false; setTimeout(maybePump, 200); });
+}
 const ACTS = {
+  pickup: ({ id, msg }) => ({ args: ['pickup', id, String(msg.orb || msg.target || '')], quiet: true }),
   // name: (ctx) => { args, quiet?, check?() } ; check returns an error string to refuse
   move: ({ id, msg }) => ({ args: ['move', id, String(msg.cell || ''), ...(msg.jump ? ['--jump'] : []), ...(msg.fastClimb ? ['--fast-climb'] : [])], quietIf: (out) => !/Athletics|PROVOKES|opportunity attack|falls|prone|over the edge/i.test(out) }),
   dash: ({ id, msg, ti, f }) => econ(ti, f, msg.as, ['dash', id], true),
@@ -485,6 +506,13 @@ const server = http.createServer((req, res) => {
     const id = url.searchParams.get('id'), cell = url.searchParams.get('cell'), z = url.searchParams.get('z'), side = url.searchParams.get('side');
     if (!from) return json(res, 404, { error: 'You have no character on the map.' });
     if (!id && !/^[A-Za-z]\d{1,2}$/.test(cell || '')) return json(res, 400, { error: 'Look at what?' });
+    if (id && /^orb\d+$/.test(id)) {   // looking is what collapses an orb, so it goes through the engine
+      return runEngine(['look', from, id]).then(() => {
+        const l = C.look(C.loadState(), from, { id });
+        maybePump();
+        return l ? json(res, 200, l) : json(res, 404, { error: 'Your character knows nothing about that.' });
+      });
+    }
     const l = C.look(s, from, id ? { id } : /^[nesw]$/.test(side || '') ? { cell: cell.toUpperCase(), side } : { cell: cell.toUpperCase(), z: z === null || z === '' ? undefined : Number(z) });
     if (!l) return json(res, 404, { error: 'Your character knows nothing about that.' });
     return json(res, 200, l);
@@ -558,7 +586,7 @@ function notify() {
   pending = setTimeout(() => { for (const c of clients) c.write('data: change\n\n'); }, 60);
 }
 // watchFile polls, which survives the engine's write-then-rename saves.
-for (const f of [C.STATE, C.LOG, C.INTENTS, Chars.STAMP]) fs.watchFile(f, { interval: 200 }, notify);
+for (const f of [C.STATE, C.LOG, C.INTENTS, Chars.STAMP]) fs.watchFile(f, { interval: 200 }, f === C.STATE ? () => { notify(); maybePump(); } : notify);
 // listening.json is touched every second while the DM listens, so push only when presence flips.
 let wasListening = false;
 setInterval(() => { const now = C.dmPresence().listening; if (now !== wasListening) { wasListening = now; notify(); } }, 1000);
