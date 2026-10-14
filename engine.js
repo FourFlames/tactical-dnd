@@ -11,6 +11,7 @@ const Minds = require('./lib/minds');
 const Think = require('./lib/think');
 const Places = require('./lib/places');
 const Effects = require('./lib/effects');
+const Props = require('./lib/props');
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const SKILLS = {
@@ -80,6 +81,13 @@ function applyDamage(s, id, amount, type) {
   }
   return { amt, text: `${c.name} takes ${amt}${t ? ' ' + t : ''} damage${note} (${c.hp}/${c.maxHp}).${status}` };
 }
+// A prop at 0 HP: the square's change goes in the log for everyone; the DM's note (an explosion, spilled oil) only to the DM.
+function propBroke(s, o, res) {
+  const cell = Props.cellOf(o);
+  C.appendLog(s, 'terrain', `${o.name} at ${cell} ${res.broke ? 'breaks apart' : 'gives way'}: now ${res.debris}.`, { cells: [cell], object: o.id, broke: true });
+  for (const c of Object.values(s.creatures)) if (c.pos === cell && c.hp > 0) console.log(`${c.name} was standing on it and drops to the floor.`);
+  if (res.note) { C.appendLog(s, 'secret', res.note, { object: o.id, cell }); console.log(res.note); }
+}
 // Falling (PHB): 1d6 bludgeoning per full 10 ft, max 20d6, and the creature lands prone if it
 // takes damage. Water breaks the fall: damage is halved, and an Athletics or Acrobatics check
 // (DC 10 + 1 per 10 ft fallen) to hit the water cleanly cuts it to a quarter.
@@ -122,6 +130,7 @@ cmd('load', 'load <encounter>                   start an encounter from encounte
   enc.round = 0; enc.turnOrder = []; enc.turnIdx = 0; enc.turn = {}; enc.explored = []; enc.tagOverrides = {}; enc.game = Date.now().toString(36);
   for (const [id, c] of Object.entries(enc.creatures)) { c.maxHp = c.maxHp || c.hp; c.conditions = c.conditions || []; c.id = id; }
   C.wallSegments(enc); // throws on a malformed wall
+  Props.promote(enc);
   for (const [player, seat] of Object.entries(C.loadSeats())) {
     for (const id of seat.creatures) if (enc.creatures[id]) Object.assign(enc.creatures[id], { controller: 'player', player });
   }
@@ -466,11 +475,13 @@ function spend(s, id, kind) {
 
 cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra 1d6] [--sneak] [--as bonus|reaction]   roll to hit + damage, checks reach/range/LOS/cover', (s, { pos, flags }) => {
   need(s);
-  const a = who(s, pos[0]), t = who(s, pos[1]);
+  const prop = !s.creatures[pos[1]] && Props.byId(s, pos[1]);
+  const a = who(s, pos[0]), t = prop ? Props.asTarget(s, prop) : who(s, pos[1]);
   const plan = C.attackPlan(s, pos[0], pos[1], pos[2], flags);
   if (plan.error) fail(plan.error);
   if (flags.sneak && !plan.sneak) fail(`Sneak Attack doesn't apply here (needs a finesse or ranged weapon, advantage or an ally next to ${t.name}, no disadvantage, once per turn).`);
   const { w, mode, notes, ac, dist } = plan;
+  let broke = null;
   a.hidden = false;
   delete a.hideState;
   const r = C.d20(mode);
@@ -504,17 +515,29 @@ cmd('attack', 'attack <att> <target> [weapon] [--adv|--dis] [--bonus N] [--extra
     if (flags.sneak) ts.sneak = true;
     const dmgExpr = [w.damage, ...extras].join('+');
     const dr = C.roll(dmgExpr, { crit: isCrit });
-    const res = applyDamage(s, pos[1], Math.max(0, dr.total), w.type);
+    const res = prop ? Props.damage(s, prop, dr.total, w.type) : applyDamage(s, pos[1], Math.max(0, dr.total), w.type);
     text += `${isCrit ? 'CRITICAL HIT! ' : 'hit! '}${dmgExpr}${flags.sneak ? ' (Sneak Attack)' : ''} ${dr.detail} = ${dr.total}. ${res.text}`;
-    Object.assign(data, { crit: isCrit, dmg: res.amt, down: t.hp <= 0 });
+    Object.assign(data, { crit: isCrit, dmg: res.amt, down: prop ? res.broke : t.hp <= 0 });
+    if (prop) broke = res;
   }
+  if (prop) data.object = true;
   C.appendLog(s, 'attack', text, data);
   console.log(text);
+  if (broke) propBroke(s, prop, broke);
   return s;
 });
 
 cmd('damage', 'damage <id> <amount|dice> [type] [--save dex --dc 13 --half]   apply damage (optionally with a save)', (s, { pos, flags }) => {
   need(s);
+  const prop = !s.creatures[pos[0]] && Props.byId(s, pos[0]);
+  if (prop) {   // objects fail their saves (DMG), so a save flag changes nothing
+    const dr = /d/i.test(pos[1]) ? C.roll(pos[1]) : { total: Number(pos[1]), detail: pos[1] };
+    const res = Props.damage(s, prop, dr.total, pos[2]);
+    const text = `${flags.save ? "Objects don't save. " : ''}${pos[1]} ${dr.detail !== pos[1] ? dr.detail + ' ' : ''}→ ${res.text}`;
+    C.appendLog(s, 'damage', text, { id: pos[0], object: true, dmg: res.amt, dtype: pos[2] || '', down: res.broke }); console.log(text);
+    if (res.broke) propBroke(s, prop, res);
+    return s;
+  }
   const c = who(s, pos[0]);
   const dr = /d/i.test(pos[1]) ? C.roll(pos[1]) : { total: Number(pos[1]), detail: pos[1] };
   let amt = dr.total, pre = '';
@@ -1209,10 +1232,11 @@ cmd('evidence', 'evidence <id|cell> "<what anyone looking closely would find>" [
   return s;
 });
 
-cmd('look', 'look <from-id> <id|cell> [--z <ft>]   what <from-id> can tell about a creature or square (what players see when they inspect)', (s, { pos, flags }) => {
+cmd('look', 'look <from-id> <id|object|cell> [--z <ft>] [--side n|e|s|w]   what <from-id> can tell about a creature, prop (crate1), square or a wall face (--side) (what players see when they inspect)', (s, { pos, flags }) => {
   need(s);
   who(s, pos[0]);
-  const target = s.creatures[pos[1]] ? { id: pos[1] } : { cell: pos[1], z: flags.z !== undefined ? Number(flags.z) : undefined };
+  const target = s.creatures[pos[1]] || Props.byId(s, pos[1]) ? { id: pos[1] } : typeof flags.side === 'string' ? { cell: pos[1].toUpperCase(), side: flags.side.toLowerCase()[0] }
+    : { cell: pos[1], z: flags.z !== undefined ? Number(flags.z) : undefined };
   const l = C.look(s, pos[0], target);
   if (!l) fail(`${pos[0]} doesn't know about ${pos[1]} (not a visible party member, or the target is hidden or unexplored).`);
   console.log(`${l.name} (${l.cell}${l.z ? ' @' + l.z + 'ft' : ''}), as ${l.from.name} sees it:\n  ` + l.lines.join('\n  ')
