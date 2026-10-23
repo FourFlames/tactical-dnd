@@ -74,7 +74,9 @@ layer (tree, memberships, links, optional extents) from P2 on. Start with P1: on
 
 **Keep in mind while building and playtesting** (from "The server"):
 - The DM role must stay harness-agnostic: one tool contract, served over HTTP, the `dm` command line and
-  (later) MCP. Nothing in the loop may depend on Claude Code features.
+  (later) MCP. Rely only on what nearly every agentic harness can do: tool/shell calls, files, HTTP,
+  and self-contained prompts to a fresh context (subagents). Anything else is an optional speed-up
+  with a plain fallback.
 - Watch for: the DM misreading what a player means; how easily the DM can see the world as a player
   does (`dm see`); how manageable the state → view mapping is, including pending optimistic state.
 

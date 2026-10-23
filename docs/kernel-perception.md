@@ -438,8 +438,17 @@ renderings), and served three ways:
 - **MCP:** for harnesses that speak it (Claude Code and others): the same tools returning structured
   results without starting a process per call.
 
-The loop relies on nothing harness-specific: `wait` is a long-poll any client can make, every answer is
-self-contained, and `kernel/DM.md` doubles as the system prompt for any model. Latency and the journal
+**The rule: rely only on what nearly every agentic harness can do.** That common core is calling tools
+or shell commands, reading and writing files, making HTTP requests, and **sending a prompt to a fresh
+context** (a subagent) and getting its answer back. The DM uses that last one for JD, party members and
+NPCs that think with a model. Anything beyond the core (background tasks, hooks, MCP, a particular
+harness's agent types) is an optional speed-up with a plain fallback: `wait` is a long-poll any client
+can make; every answer is self-contained; and `kernel/DM.md` doubles as the system prompt for any model.
+
+Fresh-context prompts follow from the same rule: each one is **self-contained** (the brief is the whole
+of what the agent knows, as with NPC minds), so it works the same whether a subagent, another model's
+API call or the kernel itself sends it. The kernel can make those calls server-side too (agent replies
+arrive as inputs, see above), for harnesses without subagents and for minds that never need the DM. Latency and the journal
 are measured the same way whichever harness drives it, so harnesses and models can be compared.
 
 ## Build order
