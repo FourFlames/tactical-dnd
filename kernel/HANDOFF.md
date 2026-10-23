@@ -61,6 +61,14 @@ Follow-ups: `a4` agent-call lines when agents arrive; one session across restart
 (today each start opens a new `-n` directory so refs stay unique); "answered without a step" can't yet
 tell whether the kernel already knew the answer (needs `knows`, step 4).
 
+### Next: the playable slice (agreed 2026-10-23)
+
+Before perception step 3, so there's a game to test it in. Cards P1–P6 in the build order of
+`docs/kernel-perception.md`; what each ports from the Node engine, with file:line pointers, is in
+`docs/kernel-port-inventory.md`. Space follows "Space and places" in the design doc: frames joined by
+portals behind a narrow `Space` interface (first implementation: one static frame), plus a place
+layer (tree, memberships, links, optional extents) from P2 on. Start with P1 (save rooms to disk).
+
 ### Then, from the build order
 
 - Save the timeline and inbox to disk (rooms survive a restart).

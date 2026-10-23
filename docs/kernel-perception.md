@@ -286,6 +286,101 @@ DM's queue only shows what needs a decision.
 - **Sidebar** (ported from the old viewer): narrative, combat log, DM/table chat; every name and icon is a link
   that moves the camera on double-click, rendered in each viewer's own names.
 
+## Space and places
+
+Agreed in the 2026-10-23 session. Space should be **seamless**: no hard edges between maps, rooms, floors
+or scales, and moving between them never means loading a new encounter. The old engine's limits (one
+fixed grid per encounter, one height per square, map edits in side tables, whole-map visibility,
+straight-line sound; see `docs/kernel-port-inventory.md` Appendix B) are what this design removes.
+**Design rule:** every choice in the graph structure is judged by how easy it makes seamless traversal
+and navigation for the DM and for agents.
+
+### Frames, grids and portals
+
+- **A frame** is a local 5 ft grid with its own position and orientation in the world. Most frames never
+  move; a ship, a hanging bridge, a wagon or a collapsing floor is a frame whose transform changes.
+- **Portals** stitch neighbouring frames together (a doorway, a gangplank, the end of a bridge). Pathing,
+  line of sight and sound cross them.
+- **Positions** are (frame, square, level), not a bare (x, y). A square may hold several standing
+  surfaces (floor, balcony, bridge over a chasm); walls and doors sit on the edges between squares.
+- **Terrain changes are events** (a square's floor, an edge's wall or door), so a collapse, a fire or a
+  cut rope is in history and survives surgery like everything else.
+- The rules never touch the storage. They ask a narrow `Space` interface: neighbours and step cost,
+  sight line and cover between two points, the surface at a point, the place a point is in. The first
+  implementation is one static frame (today's maps); moving frames and stacked surfaces arrive behind
+  the same interface.
+
+### Places
+
+A **place** is an entity like a creature: an id that never leaves the kernel, and a handle per observer.
+
+- **A parent:** the altar is in the nave, the nave in the shrine, the shrine in Greyhold. One parent per
+  place keeps the tree clean and answers "where am I?" at every zoom.
+- **Memberships** for areas that overlap or are political or administrative: the market district across
+  three streets, Red Watch territory, the baron's lands. They exist mostly to give NPCs beliefs about
+  who belongs where and who may go where, so a new NPC can be added quickly with the right territorial
+  beliefs, and so NPCs who reappear can be updated: the DM reads the history of territory-changing
+  events to decide what is now common knowledge and how people act.
+- **Links** between places, each saying what it is and what it costs: a portal on a grid (`door1`, open
+  or locked) or an abstract route ("the north road, 2 days, bandit country"). Links make a coarse
+  navigation graph: "how do I get from the tavern to the docks" is answered in places.
+- **An optional extent:** the squares a place owns in a frame. A place may have no geometry at all yet.
+  The capital can be talked about and travelled to before anyone has drawn it.
+- **Properties** (light, ambience, owner, prices, claims) are added when something needs them.
+
+**Actualizing.** The tactical grid only exists where play is close up. When the party arrives at an
+abstract place, it is turned into a grid: the DM decides (or approves a cheap model's draft) what's
+there, the same way as deferred properties, and that becomes a step in history. Journeys move along
+abstract links with game time. Mobile places (ship, wagon, caravan, camp) are places on a moving frame,
+and their sub-places move with them; building a home or a camp is adding sub-places and links.
+Out-of-combat displays come later.
+
+### Two-level navigation and sound
+
+- **Pathing** routes through the place graph first, then fine-paths squares only inside the places on
+  that route (hierarchical pathfinding, as games do it).
+- **Sound** spreads along links: through the open door and down the corridor, not straight through
+  walls. Closed doors, walls and distance soak it (the old engine's 30/20/10 ft muffling is the
+  starting table).
+- **Visibility** can be precomputed coarsely between places (which places can see into which, like a
+  game's potentially-visible sets) and refined to squares only where it matters, with results cached
+  per observer and per version.
+
+### Mental maps
+
+Each mind has its own map: the places it knows, the links it believes in, its own names for them, and
+what it believes about them (open, blocked, dangerous, whose territory). The cook knows the back door
+and the new guard doesn't. Beliefs can be stale (a path collapsed since) or planted (an illusion of a
+wall, being told the bridge is out, a deliberately wrong map). Briefs describe space the way a person
+would: "You're in the kitchen. The hall is through the north door; the yard is out the back." This is
+what the old engine's "reachable region" fix was reaching for: "by now it could be in the yard or the
+stables" is a query on the mind's own map.
+
+### Talking about space, and combat
+
+Agents, players and the DM speak in places ("go to the stables", "Tobin was last seen in the yard"),
+and the kernel resolves them to squares; `dm look` and the wake bundle say "in the nave, 10 ft from the
+altar". In combat that isn't enough on its own: a ranged character wants to know whether they can reach
+a good perch this turn and what they could hit from it. So the kernel answers **vantage queries** in the
+asker's terms, from what the asker knows:
+
+- `vantage(who, toward)`: squares reachable this turn (or with a dash) that see the target or place,
+  ranked by cover and range, each named by where it is: "the gallery rail, 25 ft, sees the yard, half
+  cover".
+- Agents may reason loosely ("get up high and cover the yard") and leave the details to a default:
+  move to the best vantage and **ready** an attack on the first hostile that appears there.
+
+### Simulation detail follows places
+
+- The place the party is in and its neighbours run in full detail. Further away, NPCs move along links
+  and act in coarse steps ("the patrol reaches the gate in about ten minutes"). Decisions are batched by
+  place and level of detail, to keep model calls (DeepSeek and others) down.
+- **Interesting near the party, but never omniscient.** Things may be a little more eventful where the
+  players are: more of the world is simulated finely there, and the DM can choose which distant threads
+  to advance or bring closer. But no NPC acts on what it doesn't know: if the players act naturally or
+  stay hidden, the guards behave as they would anyway. Drama comes from what the world chooses to
+  bring the party's way, never from NPCs sensing them.
+
 ## Build order
 
 1. [x] Marks with trees, the codex, identities and dispositions; stance-based blocking replaces `Side`; seat
@@ -303,6 +398,14 @@ DM's queue only shows what needs a decision.
          message, wake, reply, step, refusal, parse error, surgery and rewind; `--re` tags; `dm log`,
          `dm wish`, `dm review`. (`crates/server/src/journal.rs`. Next: agent-call lines `a4`, a session
          that continues across restarts once rooms are saved.)
+   - [ ] **The playable slice** (agreed 2026-10-23; before step 3, so there's a game to test perception in):
+         P1 save rooms to disk · P2 space v1 behind the `Space` interface (one static frame, per-square
+         height, typed terrain, edge walls and doors as events, pathing with climb cost, 3D distance, sight
+         and cover) with a small place layer (the tree, links tied to doors, "which place is this square
+         in", place names in the journal, bundle and narration) · P3 stat blocks, seeded rolls, check, save,
+         ruling · P4 initiative, turns, attacks, damage, conditions · P5 opportunity attacks and offers ·
+         P6 the table UI (seat codes, turn HUD, route preview, offers dialog, inspect card, chronicle).
+         Details and the source of each piece: `docs/kernel-port-inventory.md`.
 3. [ ] Passive readings producing traces during replay, stamped with game time; individuals binding marks.
 4. [ ] `umwelt(who, focus)` rendering for the DM view and players; `knows` and `why` queries.
 5. [ ] Memory decay, recall with recognition (familiarity and recollection), relative dating in briefs.
@@ -311,6 +414,9 @@ DM's queue only shows what needs a decision.
 8. [ ] Sidebar with links and the share button.
 
 ## Open questions
+
+- Places: polygons or square sets for extents; how memberships carry rules ("may enter") vs beliefs; how
+  far coarse simulation goes before an off-screen NPC needs a model call.
 
 - Stance combination beyond "most negative wins" (weights by salience? several dimensions such as fear,
   respect, contempt, with the scale derived from them?).
