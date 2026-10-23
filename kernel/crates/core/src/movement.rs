@@ -1,0 +1,77 @@
+//! Routing on the grid.
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
+use crate::creature::Creature;
+use crate::geom::{Cell, SQUARE_FT};
+use crate::room::RoomState;
+
+/// A route from a creature's square: every square after the start, and what it costs in feet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Route {
+    pub path: Vec<Cell>,
+    pub cost_ft: u32,
+}
+
+/// What it costs `who` to step from `from` into the neighbouring square `to`, or `None` if it can't.
+/// Walls block, as do squares held by hostile creatures, and a diagonal can't slip between two
+/// blocked corners. A step *out of* difficult terrain costs double (house rule: entering is free,
+/// so a creature shoved or conjured into rubble pays to get out, while crossing a strip costs
+/// the same as by the book).
+fn step_cost(state: &RoomState, who: &Creature, from: Cell, to: Cell) -> Option<u32> {
+    state.map.terrain(to).filter(|t| !t.blocks_move)?;
+    if state.creature_at(to).is_some_and(|c| c.side.hostile_to(who.side)) {
+        return None;
+    }
+    if from.x != to.x && from.y != to.y {
+        let a = Cell::new(to.x, from.y);
+        let b = Cell::new(from.x, to.y);
+        if !state.map.passable(a) && !state.map.passable(b) {
+            return None;
+        }
+    }
+    let leaving_difficult = state.map.terrain(from).is_some_and(|t| t.difficult);
+    Some(if leaving_difficult { 2 * SQUARE_FT } else { SQUARE_FT })
+}
+
+/// The cheapest route for `who` to `goal` (Dijkstra; costs are small integers). It may pass
+/// through allies but must end on an empty square. Speed is not checked here. Among routes of
+/// equal cost it takes the one with fewest diagonal steps, so routes run straight, not zig-zag.
+pub fn route(state: &RoomState, who: &Creature, goal: Cell) -> Option<Route> {
+    if goal == who.pos || !state.map.passable(goal) || state.creature_at(goal).is_some() {
+        return None;
+    }
+    // Ranked by (feet, diagonal steps).
+    let mut best: HashMap<Cell, (u32, u32)> = HashMap::from([(who.pos, (0, 0))]);
+    let mut came_from: HashMap<Cell, Cell> = HashMap::new();
+    let mut open = BinaryHeap::from([Reverse(((0u32, 0u32), who.pos))]);
+
+    while let Some(Reverse(((cost, diagonals), at))) = open.pop() {
+        if at == goal {
+            let mut path = vec![goal];
+            while let Some(&prev) = came_from.get(path.last().unwrap()) {
+                if prev == who.pos {
+                    break;
+                }
+                path.push(prev);
+            }
+            path.reverse();
+            return Some(Route { path, cost_ft: cost });
+        }
+        if best.get(&at).is_some_and(|&b| b < (cost, diagonals)) {
+            continue;
+        }
+        for next in at.neighbors() {
+            let Some(step) = step_cost(state, who, at, next) else { continue };
+            let diagonal = u32::from(next.x != at.x && next.y != at.y);
+            let total = (cost + step, diagonals + diagonal);
+            if best.get(&next).is_none_or(|&b| total < b) {
+                best.insert(next, total);
+                came_from.insert(next, at);
+                open.push(Reverse((total, next)));
+            }
+        }
+    }
+    None
+}

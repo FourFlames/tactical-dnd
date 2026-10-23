@@ -1,0 +1,15 @@
+[package]
+name = "kernel-server"
+description = "HTTP + SSE host for kernel rooms, and the static battlemap."
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+kernel-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "net"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+tower-http = { version = "0.6", features = ["fs"] }

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battlemap</title>
+<style>
+  :root {
+    --bg: #14120f; --panel: #1d1a16; --line: #2e2923; --ink: #e8e0d0; --dim: #8f8574;
+    --floor: #3a342b; --wall: #0e0c0a; --difficult: #4a3d2c; --water: #24404d;
+    --party: #d9a441; --hostile: #c4473a; --neutral: #8c8a80; --sel: #f5e6b8; --bad: #e07060;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; display: grid; grid-template-columns: 1fr 300px; height: 100vh; }
+  main { overflow: auto; display: grid; place-items: center; padding: 16px; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  h1 { font-size: 16px; margin: 0; padding: 14px 16px 4px; }
+  #status { padding: 0 16px 12px; color: var(--dim); min-height: 2.8em; }
+  #status.bad { color: var(--bad); }
+  #log { flex: 1; overflow: auto; margin: 0; padding: 8px 16px; list-style: none; border-top: 1px solid var(--line); font: 12px/1.5 ui-monospace, monospace; color: var(--dim); }
+  #log li b { color: var(--ink); font-weight: normal; }
+  .hint { padding: 10px 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12px; }
+  svg { display: block; max-width: 100%; height: auto; }
+  .cell { stroke: var(--line); stroke-width: 0.02; }
+  .cell.open:hover { fill-opacity: 0.75; cursor: pointer; }
+  .token { cursor: pointer; transition: transform 90ms linear; }
+  .token circle { stroke: #000; stroke-width: 0.04; }
+  .token.sel circle { stroke: var(--sel); stroke-width: 0.08; }
+  .token text { font: bold 0.36px system-ui; fill: #14120f; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .route { fill: none; stroke: var(--sel); stroke-width: 0.06; stroke-dasharray: 0.12 0.1; pointer-events: none; }
+  @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: auto 220px; } aside { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<main><svg id="map"></svg></main>
+<aside>
+  <h1 id="title">…</h1>
+  <div id="status">Connecting…</div>
+  <ul id="log"></ul>
+  <div class="hint">Click a token, hover to preview the route, click a square to move. Shift-click places it (no route, no speed).</div>
+</aside>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('map'), statusEl = document.getElementById('status'), logEl = document.getElementById('log');
+const roomId = new URLSearchParams(location.search).get('room');
+let room = null, selected = null, previewKey = null, busy = Promise.resolve();
+
+const el = (tag, attrs = {}, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const status = (text, bad = false) => { statusEl.textContent = text; statusEl.className = bad ? 'bad' : ''; };
+const terrainFill = (t) => t.blocks_move ? 'var(--wall)' : /water/i.test(t.name) ? 'var(--water)' : t.difficult ? 'var(--difficult)' : 'var(--floor)';
+const creature = (id) => room.creatures.find((c) => c.id === id);
+const at = (x, y) => room.creatures.find((c) => c.pos.x === x && c.pos.y === y);
+
+async function api(path, body) {
+  const r = await fetch(`/api/rooms/${room.id}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+
+function drawMap() {
+  const { width, height, palette, tiles } = room.map;
+  svg.replaceChildren();
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width * 40);
+  const cells = el('g', {}, svg);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const t = palette[tiles[y * width + x]];
+    const r = el('rect', { x, y, width: 1, height: 1, fill: terrainFill(t), class: 'cell' + (t.blocks_move ? '' : ' open') }, cells);
+    el('title', {}, r).textContent = `${t.name} (${x}, ${y})`;
+    r.addEventListener('click', (e) => onCell(x, y, e.shiftKey));
+    r.addEventListener('mouseenter', () => preview(x, y));
+  }
+  el('path', { id: 'route', class: 'route' }, svg);
+  const tokens = el('g', { id: 'tokens' }, svg);
+  for (const c of room.creatures) {
+    const g = el('g', { class: 'token', 'data-id': c.id }, tokens);
+    el('circle', { cx: 0.5, cy: 0.5, r: 0.4, fill: `var(--${c.side})` }, g);
+    el('text', { x: 0.5, y: 0.52 }, g).textContent = c.name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2);
+    el('title', {}, g).textContent = `${c.name} · ${c.hp}/${c.max_hp} HP · ${c.speed_ft} ft`;
+    g.addEventListener('click', () => select(c.id));
+  }
+  placeTokens();
+}
+function placeTokens() {
+  for (const c of room.creatures) {
+    const g = svg.querySelector(`.token[data-id="${c.id}"]`);
+    if (g) { g.setAttribute('transform', `translate(${c.pos.x} ${c.pos.y})`); g.classList.toggle('sel', c.id === selected); }
+  }
+}
+function select(id) {
+  selected = selected === id ? null : id;
+  placeTokens(); showRoute(null);
+  status(selected ? `${creature(selected).name} selected.` : 'Nothing selected.');
+}
+function showRoute(path) {
+  const r = document.getElementById('route');
+  if (!path || !path.length) return r.setAttribute('d', '');
+  const c = creature(selected);
+  r.setAttribute('d', [c.pos, ...path].map((p, i) => `${i ? 'L' : 'M'}${p.x + 0.5} ${p.y + 0.5}`).join(' '));
+}
+
+// The route preview is the real command run as a dry run: the kernel is the only thing that knows the rules.
+async function preview(x, y) {
+  if (!selected) return;
+  const key = `${selected}@${x},${y}`;
+  previewKey = key;
+  const out = await api('/commands', { dry_run: true, commands: [{ type: 'move', id: selected, to: { x, y } }] });
+  if (previewKey !== key) return;
+  if (out.ok) { showRoute(out.events[0].path); status(`${out.events[0].cost_ft} ft to (${x}, ${y}).`); }
+  else { showRoute(null); status(out.reason, true); }
+}
+async function onCell(x, y, place) {
+  if (!selected) return status('Pick a token first.');
+  const out = await api('/commands', { commands: [{ type: place ? 'place' : 'move', id: selected, to: { x, y } }] });
+  status(out.ok ? `${creature(selected).name} selected.` : out.reason, !out.ok);
+  showRoute(null);
+}
+
+// ---------- events: the stream is the only thing that moves tokens ----------
+function logLine(html) {
+  const li = document.createElement('li'); li.innerHTML = html;
+  logEl.prepend(li);
+}
+const name = (id) => (creature(id) || { name: id }).name;
+function ingest(e) {
+  if (e.seq <= room.seq) return;
+  room.seq = e.seq;
+  const c = e.id && creature(e.id);
+  if (e.type === 'creature_moved' && c) {
+    logLine(`#${e.seq} <b>${name(e.id)}</b> moves ${e.cost_ft} ft`);
+    busy = busy.then(async () => { for (const p of e.path) { c.pos = p; placeTokens(); await new Promise((r) => setTimeout(r, 90)); } });
+  } else if (e.type === 'creature_placed' && c) {
+    logLine(`#${e.seq} <b>${name(e.id)}</b> placed at (${e.to.x}, ${e.to.y})`);
+    c.pos = e.to; placeTokens();
+  }
+}
+async function load() {
+  let id = roomId;
+  if (!id) id = (await (await fetch('/api/rooms')).json())[0]?.id;
+  if (!id) return status('No rooms on the server.', true);
+  room = await (await fetch(`/api/rooms/${id}`)).json();
+  if (room.error) return status(room.error, true);
+  document.getElementById('title').textContent = room.name;
+  document.title = room.name;
+  drawMap();
+  return room;
+}
+function connect() {
+  const es = new EventSource(`/api/rooms/${room.id}/stream?since=${room.seq}`);
+  es.addEventListener('event', (m) => ingest(JSON.parse(m.data)));
+  const reload = async () => { es.close(); await load(); connect(); };
+  es.addEventListener('rewind', (m) => { logLine(`rewound to #${JSON.parse(m.data).seq}`); reload(); });
+  es.addEventListener('resync', reload);
+  es.onopen = () => status(selected ? statusEl.textContent : 'Live. Pick a token.');
+  es.onerror = () => { status('Connection lost, retrying…', true); es.close(); setTimeout(() => load().then((r) => r && connect()), 1000); };
+}
+load().then((r) => r && connect());
+</script>
+</body>
+</html>

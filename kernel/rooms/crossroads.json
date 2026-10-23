@@ -1,0 +1,31 @@
+{
+  "name": "The Crossroads Shrine",
+  "legend": {
+    ".": { "name": "flagstones" },
+    "#": { "name": "wall", "blocks_move": true, "blocks_sight": true },
+    ",": { "name": "rubble", "difficult": true },
+    "~": { "name": "shallow water", "difficult": true },
+    "o": { "name": "pillar", "blocks_move": true, "blocks_sight": true }
+  },
+  "rows": [
+    "####################",
+    "#........#.........#",
+    "#..o..o..#..,,,....#",
+    "#........#..,,,....#",
+    "#..o..o............#",
+    "#..................#",
+    "####.#######..######",
+    "#...............~~~#",
+    "#..,,...........~~~#",
+    "#..,,......o....~~~#",
+    "#...............~~~#",
+    "####################"
+  ],
+  "creatures": [
+    { "id": "rook", "name": "Rook", "side": "party", "at": { "x": 2, "y": 8 }, "hp": 28 },
+    { "id": "wren", "name": "Wren", "side": "party", "at": { "x": 5, "y": 9 }, "speed_ft": 25, "hp": 20 },
+    { "id": "gob1", "name": "Goblin", "side": "hostile", "at": { "x": 13, "y": 2 }, "hp": 7 },
+    { "id": "gob2", "name": "Goblin Archer", "side": "hostile", "at": { "x": 16, "y": 4 }, "hp": 7 },
+    { "id": "keeper", "name": "Shrine Keeper", "side": "neutral", "at": { "x": 5, "y": 3 }, "speed_ft": 25, "hp": 9 }
+  ]
+}

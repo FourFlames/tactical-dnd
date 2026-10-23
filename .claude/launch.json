@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "kernel",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "--manifest-path", "kernel/Cargo.toml", "-p", "kernel-server"],
+      "port": 5180
+    },
+    {
       "name": "viewer",
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],

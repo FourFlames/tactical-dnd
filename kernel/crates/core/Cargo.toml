@@ -1,0 +1,9 @@
+[package]
+name = "kernel-core"
+description = "The rules kernel: rooms, creatures, commands and the events they produce. No I/O."
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
