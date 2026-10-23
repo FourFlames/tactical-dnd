@@ -135,23 +135,28 @@ async function onCell(x, y, place) {
   showRoute(null);
 }
 
-// ---------- events: the stream is the only thing that moves tokens ----------
-function logLine(html) {
-  const li = document.createElement('li'); li.innerHTML = html;
-  logEl.prepend(li);
+// ---------- steps: the stream is the only thing that moves tokens ----------
+// The log is the server's own history lines (the same ones the DM and agents read), newest first.
+async function loadLog() {
+  const h = await (await fetch(`/api/rooms/${room.id}/history?as=${encodeURIComponent(viewer)}&limit=40`)).json();
+  logEl.replaceChildren(...(h.lines || []).slice().reverse().map((line) => {
+    const li = document.createElement('li');
+    li.innerHTML = esc(line).replace(/^(#\d+)/, '<b>$1</b>');
+    return li;
+  }));
 }
-function ingest(e) {
-  if (e.seq <= room.seq) return;
-  room.seq = e.seq;
-  const c = creature(e.who);
-  if (!c) return;
-  if (e.type === 'creature_moved') {
-    logLine(`#${e.seq} <b>${esc(cap(c.label))}</b> moves ${e.cost_ft} ft`);
-    busy = busy.then(async () => { for (const p of e.path) { c.pos = p; placeTokens(); await new Promise((r) => setTimeout(r, 90)); } });
-  } else if (e.type === 'creature_placed') {
-    logLine(`#${e.seq} <b>${esc(cap(c.label))}</b> placed at (${e.to.x}, ${e.to.y})`);
-    c.pos = e.to; placeTokens();
+function ingest(st) {
+  if (st.step <= room.seq) return;
+  room.seq = st.step;
+  for (const e of st.events) {
+    const c = e.who && creature(e.who);
+    if (e.type === 'creature_moved' && c) {
+      busy = busy.then(async () => { for (const p of e.path) { c.pos = p; placeTokens(); await new Promise((r) => setTimeout(r, 90)); } });
+    } else if (e.type === 'creature_placed' && c) {
+      busy = busy.then(() => { c.pos = e.to; placeTokens(); });
+    }
   }
+  loadLog();
 }
 async function load() {
   const rooms = await (await fetch('/api/rooms')).json();
@@ -165,14 +170,14 @@ async function load() {
   document.getElementById('title').textContent = room.name;
   document.title = room.name;
   drawMap();
+  loadLog();
   return room;
 }
 function connect() {
   const es = new EventSource(`/api/rooms/${room.id}/stream?as=${encodeURIComponent(viewer)}&since=${room.seq}`);
-  es.addEventListener('event', (m) => ingest(JSON.parse(m.data)));
-  const reload = async () => { es.close(); await load(); connect(); };
-  es.addEventListener('rewind', (m) => { logLine(`rewound to #${JSON.parse(m.data).seq}`); reload(); });
-  es.addEventListener('resync', reload);
+  es.addEventListener('step', (m) => ingest(JSON.parse(m.data)));
+  // History changed under us (rewind, a committed edit, or we fell behind): start over from the new main.
+  es.addEventListener('reset', async () => { es.close(); await load(); connect(); });
   es.onopen = () => { if (!selected) status('Live. Pick one of your tokens.'); };
   es.onerror = () => { status('Connection lost, retrying…', true); es.close(); setTimeout(() => load().then((r) => r && connect()), 1000); };
 }

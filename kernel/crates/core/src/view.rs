@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 use crate::codex::Salience;
-use crate::event::{Event, Recorded};
+use crate::event::Event;
 use crate::geom::Cell;
 use crate::id::{EntityId, Handle};
 use crate::map::Map;
@@ -13,6 +13,8 @@ use crate::names::Acquaintance;
 use crate::observer::Observer;
 use crate::room::{Room, RoomState};
 use crate::stance::{self, Stance};
+use crate::surgery::{Change, ChangeKind};
+use crate::timeline::{GameTime, Outcome, Step, StepId};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RoomView<'a> {
@@ -97,12 +99,32 @@ fn known<'s>(s: &'s RoomState, obs: &Observer, id: EntityId) -> Option<&'s Acqua
     s.names.get(obs)?.of(id)
 }
 
-/// An event as an observer receives it.
+pub(crate) fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+}
+
+fn by_name(o: &Observer) -> String {
+    match o {
+        Observer::Dm => "dm".into(),
+        Observer::Seat(h) => h.to_string(),
+    }
+}
+
+/// A step as an observer receives it, or nothing if they'd notice none of it.
 #[derive(Clone, Debug, Serialize)]
-pub struct RecordedView<'a> {
-    pub seq: u64,
-    #[serde(flatten)]
-    pub event: EventView<'a>,
+pub struct StepView<'a> {
+    pub step: StepId,
+    pub time: GameTime,
+    /// `dm` or the seat's name.
+    pub by: String,
+    /// The author's summary, for the DM and the author only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gist: Option<&'a str>,
+    pub events: Vec<EventView<'a>>,
+    /// Why the step no longer applies, for the DM and the author only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dropped: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -110,16 +132,156 @@ pub struct RecordedView<'a> {
 pub enum EventView<'a> {
     CreatureMoved { who: &'a Handle, path: &'a [Cell], cost_ft: u32 },
     CreaturePlaced { who: &'a Handle, to: Cell },
+    TimePassed { seconds: u64 },
 }
 
-/// `r` as `obs` would receive it, or `None` if it isn't something they'd be told about.
-pub fn event_view<'a>(s: &'a RoomState, obs: &Observer, r: &'a Recorded) -> Option<RecordedView<'a>> {
-    let event = match &r.event {
-        Event::RoomOpened { .. } => return None,
-        Event::CreatureMoved { who, path, cost_ft } => {
-            EventView::CreatureMoved { who: &known(s, obs, *who)?.handle, path, cost_ft: *cost_ft }
-        }
+fn event_view<'a>(s: &'a RoomState, obs: &Observer, e: &'a Event) -> Option<EventView<'a>> {
+    Some(match e {
+        Event::CreatureMoved { who, path, cost_ft } => EventView::CreatureMoved { who: &known(s, obs, *who)?.handle, path, cost_ft: *cost_ft },
         Event::CreaturePlaced { who, to } => EventView::CreaturePlaced { who: &known(s, obs, *who)?.handle, to: *to },
+        Event::TimePassed { seconds } => EventView::TimePassed { seconds: *seconds },
+    })
+}
+
+impl<'a> StepView<'a> {
+    pub fn new(s: &'a RoomState, obs: &Observer, step: &'a Step) -> Option<Self> {
+        let insider = *obs == Observer::Dm || step.by == *obs;
+        let events: Vec<_> = step.events().iter().filter_map(|e| event_view(s, obs, e)).collect();
+        if events.is_empty() && !insider {
+            return None;
+        }
+        let dropped = match &step.outcome {
+            Outcome::Dropped { rejection, .. } if insider => Some(s.explain(obs, rejection)),
+            _ => None,
+        };
+        Some(Self { step: step.id, time: step.time, by: by_name(&step.by), gist: step.gist.as_deref().filter(|_| insider), events, dropped })
+    }
+}
+
+fn duration(seconds: u64) -> String {
+    let (n, unit) = match seconds {
+        s if s >= 3600 && s % 3600 == 0 => (s / 3600, "hour"),
+        s if s >= 60 && s % 60 == 0 => (s / 60, "minute"),
+        s if s >= 6 && s % 6 == 0 => (s / 6, "round"),
+        s => (s, "second"),
     };
-    Some(RecordedView { seq: r.seq, event })
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+/// An event in `obs`'s words, or nothing if they have no name for who it's about.
+pub fn event_text(s: &RoomState, obs: &Observer, e: &Event) -> Option<String> {
+    Some(match e {
+        Event::CreatureMoved { who, path, cost_ft } => {
+            known(s, obs, *who)?;
+            format!("{} moves {cost_ft} ft to {}", capitalize(&s.label(obs, *who)), path.last()?)
+        }
+        Event::CreaturePlaced { who, to } => {
+            known(s, obs, *who)?;
+            format!("{} is placed at {to}", capitalize(&s.label(obs, *who)))
+        }
+        Event::TimePassed { seconds } => format!("time passes: {}", duration(*seconds)),
+    })
+}
+
+fn events_text(s: &RoomState, obs: &Observer, events: &[Event]) -> String {
+    events.iter().filter_map(|e| event_text(s, obs, e)).collect::<Vec<_>>().join("; ")
+}
+
+/// A step's line without its id: `R3 alice: "gist" — Rook moves 15 ft to (4, 5)`.
+fn step_body(s: &RoomState, obs: &Observer, step: &Step) -> Option<String> {
+    let v = StepView::new(s, obs, step)?;
+    let mut line = format!("{} {}", v.time, v.by);
+    if let Some(g) = v.gist {
+        line += &format!(": \"{g}\"");
+    }
+    let what = events_text(s, obs, step.events());
+    if !what.is_empty() {
+        line += &format!(" — {what}");
+    }
+    if let Some(d) = v.dropped {
+        line += &format!(" ⚠ dropped: {d}");
+    }
+    Some(line)
+}
+
+/// One line per step, always the same shape, in `obs`'s names:
+/// `#12 R3 alice: "gist" — Rook moves 15 ft to (4, 5)`. Every id can be passed back as an argument.
+pub fn step_line(s: &RoomState, obs: &Observer, step: &Step) -> Option<String> {
+    Some(format!("{} {}", step.id, step_body(s, obs, step)?))
+}
+
+/// Seats that would have noticed something in this step.
+pub fn seen_by(s: &RoomState, step: &Step) -> Vec<String> {
+    s.seats
+        .keys()
+        .filter(|seat| {
+            let o = Observer::Seat((*seat).clone());
+            step.events().iter().any(|e| event_view(s, &o, e).is_some())
+        })
+        .map(|h| h.to_string())
+        .collect()
+}
+
+/// "3 changes: 1 inserted, 1 dropped, 1 rerouted", or "no changes".
+pub fn summary(changes: &[Change]) -> String {
+    if changes.is_empty() {
+        return "no changes".into();
+    }
+    let mut counts: Vec<(ChangeKind, usize)> = Vec::new();
+    for c in changes {
+        match counts.iter_mut().find(|(k, _)| *k == c.kind) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((c.kind, 1)),
+        }
+    }
+    let parts: Vec<String> = counts.iter().map(|(k, n)| format!("{n} {}", kind_word(*k))).collect();
+    format!("{} change{}: {}", changes.len(), if changes.len() == 1 { "" } else { "s" }, parts.join(", "))
+}
+
+fn kind_word(k: ChangeKind) -> &'static str {
+    match k {
+        ChangeKind::Inserted => "inserted",
+        ChangeKind::Removed => "removed",
+        ChangeKind::Edited => "edited",
+        ChangeKind::KeptAsFiat => "kept as fiat",
+        ChangeKind::Rerouted => "rerouted",
+        ChangeKind::Differs => "differs",
+        ChangeKind::Dropped => "dropped",
+        ChangeKind::Recovered => "recovered",
+    }
+}
+
+/// A change as the DM reads it: what the step does now, what it did before, and who saw the old version.
+/// `⚠` marks the ones that need a decision.
+pub fn change_line(room: &Room, c: &Change) -> String {
+    let (s, t, dm) = (room.state(), room.timeline(), &Observer::Dm);
+    let old = c.old.and_then(|id| t.step(id));
+    let new = c.new.and_then(|id| t.step(id));
+    let warn = matches!(c.kind, ChangeKind::Dropped | ChangeKind::Differs);
+    let ids = match (c.old, c.new) {
+        (Some(o), Some(n)) => format!("{o} → {n}"),
+        (Some(o), None) => o.to_string(),
+        (None, Some(n)) => n.to_string(),
+        (None, None) => String::new(),
+    };
+    let mut line = format!("{} {} {ids}: ", if warn { "⚠" } else { "·" }, kind_word(c.kind));
+    line += &new.or(old).and_then(|st| step_body(s, dm, st)).unwrap_or_default();
+    if let (Some(o), true) = (old, new.is_some() && !matches!(c.kind, ChangeKind::Edited | ChangeKind::KeptAsFiat)) {
+        let before = events_text(s, dm, o.events());
+        if !before.is_empty() {
+            line += &format!("; was: {before}");
+        }
+    }
+    if let Some(o) = old.filter(|_| c.kind != ChangeKind::Recovered) {
+        let seen = seen_by(s, o);
+        if !seen.is_empty() {
+            line += &format!(" · seen by {}", seen.join(", "));
+        }
+    }
+    line
+}
+
+/// A draft's summary line followed by one line per change.
+pub fn preview_lines(room: &Room, changes: &[Change]) -> Vec<String> {
+    std::iter::once(summary(changes)).chain(changes.iter().map(|c| change_line(room, c))).collect()
 }

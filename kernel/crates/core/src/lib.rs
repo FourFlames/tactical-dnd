@@ -11,6 +11,7 @@
 pub mod command;
 pub mod codex;
 pub mod creature;
+pub mod dice;
 pub mod def;
 pub mod event;
 pub mod geom;
@@ -22,17 +23,23 @@ pub mod observer;
 pub mod reading;
 pub mod room;
 pub mod stance;
+pub mod surgery;
+#[cfg(test)]
+mod testkit;
+pub mod timeline;
 pub mod view;
 
 pub use command::{Command, Rejection};
 pub use codex::Codex;
 pub use creature::Creature;
 pub use def::{CreatureDef, RoomDef};
-pub use event::{Event, Recorded};
+pub use event::Event;
 pub use geom::Cell;
 pub use id::{EntityId, Handle};
 pub use map::{Map, Terrain};
 pub use observer::Observer;
 pub use room::{Refused, Room, RoomState};
 pub use stance::Stance;
-pub use view::{event_view, RoomView};
+pub use surgery::{Change, ChangeKind, Preview, Surgery};
+pub use timeline::{GameTime, Step, StepId};
+pub use view::{change_line, preview_lines, step_line, summary, RoomView, StepView};

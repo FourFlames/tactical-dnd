@@ -5,7 +5,8 @@ use crate::codex::Codex;
 use crate::command::{Command, Rejection};
 use crate::creature::Creature;
 use crate::def::RoomDef;
-use crate::event::{Event, Recorded};
+use crate::dice::Dice;
+use crate::event::Event;
 use crate::geom::Cell;
 use crate::id::{EntityId, Handle};
 use crate::map::Map;
@@ -13,6 +14,7 @@ use crate::movement;
 use crate::names::Names;
 use crate::observer::Observer;
 use crate::stance::{self, Stance};
+use crate::timeline::{Branch, GameTime, Input, Outcome, Step, StepId, Timeline, MAIN};
 
 /// Everything true about a room right now. Only ever changed by [`RoomState::apply`].
 #[derive(Clone, Debug, PartialEq)]
@@ -27,13 +29,15 @@ pub struct RoomState {
     pub names: BTreeMap<Observer, Names>,
     /// The next id to give out. Ids are never reused, so an old event can't point at a new creature.
     pub next_id: u32,
+    /// Game time, advanced only by events.
+    pub clock: GameTime,
 }
 
 impl RoomState {
     /// The DM knows everything by the author's key and true name. A seat sees through its lead
     /// creature: its own creatures and the lead's acquaintances by name, everyone else by the most
     /// salient identity the lead reads in passing ("goblin", then "goblin-2"), or "someone".
-    fn genesis(def: &RoomDef, codex: Arc<Codex>) -> Result<Self, String> {
+    pub(crate) fn genesis(def: &RoomDef, codex: Arc<Codex>) -> Result<Self, String> {
         let built = def.build(&codex)?;
         let mut names = BTreeMap::new();
         let dm: &mut Names = names.entry(Observer::Dm).or_default();
@@ -68,6 +72,7 @@ impl RoomState {
             creatures: built.creatures,
             seats: built.seats,
             names,
+            clock: GameTime(0),
         })
     }
 
@@ -118,8 +123,7 @@ impl RoomState {
                 format!("{to} is {cost_ft} ft away by the shortest route; {} has {speed_ft} ft of speed", name(*who))
             }
         };
-        let mut chars = text.chars();
-        chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+        crate::view::capitalize(&text)
     }
 
     /// Turns a command as `obs` sent it, in their names, into one the rules understand, and checks
@@ -145,11 +149,18 @@ impl RoomState {
                 }
                 Ok(Command::Place { who: find(who)?, to: *to })
             }
+            Command::Wait { seconds } => {
+                if *obs != Observer::Dm {
+                    return Err(Rejection::DmOnly);
+                }
+                Ok(Command::Wait { seconds: *seconds })
+            }
         }
     }
 
     /// Checks a resolved command against this state and says what would happen. Changes nothing.
-    pub fn decide(&self, cmd: &Command) -> Result<Vec<Event>, Rejection> {
+    /// Any roll comes from `dice`, which is tied to the step, so replays roll the same.
+    pub fn decide(&self, cmd: &Command, _dice: &mut Dice) -> Result<Vec<Event>, Rejection> {
         match *cmd {
             Command::Move { who: id, to } => {
                 let who = &self.creatures[&id];
@@ -183,13 +194,14 @@ impl RoomState {
                 }
                 Ok(vec![Event::CreaturePlaced { who, to }])
             }
+            Command::Wait { seconds } => Ok(vec![Event::TimePassed { seconds }]),
         }
     }
 
     /// Folds one event in. Never fails: `decide` already checked it.
-    fn apply(&mut self, event: &Event) {
+    pub(crate) fn apply(&mut self, event: &Event) {
         match event {
-            Event::RoomOpened { .. } => unreachable!("RoomOpened only starts a log"),
+            Event::TimePassed { seconds } => self.clock.0 += seconds,
             Event::CreatureMoved { who, path, .. } => {
                 if let (Some(c), Some(&end)) = (self.creatures.get_mut(who), path.last()) {
                     c.pos = end;
@@ -211,202 +223,114 @@ pub struct Refused {
     pub rejection: Rejection,
 }
 
-/// A room: its event log and the state folded from it.
+/// A room: its timeline, and the state at the head of the main branch.
 #[derive(Clone, Debug)]
 pub struct Room {
     pub id: String,
-    log: Vec<Recorded>,
-    state: RoomState,
+    pub(crate) timeline: Timeline,
+    pub(crate) state: RoomState,
 }
 
 impl Room {
     pub fn open(id: impl Into<String>, def: RoomDef, codex: Codex) -> Result<Self, String> {
         codex.check()?;
-        let codex = Arc::new(codex);
-        let state = RoomState::genesis(&def, codex.clone())?;
-        let log = vec![Recorded { seq: 1, event: Event::RoomOpened { def: Arc::new(def), codex } }];
-        Ok(Self { id: id.into(), log, state })
+        let (timeline, state) = Timeline::open(def, Arc::new(codex))?;
+        Ok(Self { id: id.into(), timeline, state })
     }
 
     pub fn state(&self) -> &RoomState {
         &self.state
     }
 
-    /// The seq of the last event.
+    pub fn timeline(&self) -> &Timeline {
+        &self.timeline
+    }
+
+    /// The main head's id. Clients use it to tell whether they're behind.
     pub fn seq(&self) -> u64 {
-        self.log.last().map_or(0, |r| r.seq)
+        self.timeline.head().0
     }
 
-    /// Events with seq greater than `seq`.
-    pub fn events_since(&self, seq: u64) -> &[Recorded] {
-        let start = self.log.partition_point(|r| r.seq <= seq);
-        &self.log[start..]
+    /// Steps on the main branch after `seq`, oldest first.
+    pub fn steps_since(&self, seq: u64) -> Vec<&Step> {
+        let path = self.timeline.path(self.timeline.head());
+        path.into_iter().filter(|id| id.0 > seq).filter_map(|id| self.timeline.step(id)).collect()
     }
 
-    /// Runs a batch of commands from `obs` atomically: each sees the effects of the ones before
-    /// it, and if any is refused, nothing is committed. With `dry_run`, nothing is committed either way.
-    pub fn execute(&mut self, obs: &Observer, cmds: &[Command<String>], dry_run: bool) -> Result<Vec<Recorded>, Refused> {
+    /// The last `limit` steps of a branch (main if `None`), oldest first.
+    pub fn history(&self, branch: Option<&str>, limit: usize) -> Result<Vec<&Step>, String> {
+        let name = branch.unwrap_or(MAIN);
+        let head = self.timeline.branch(name).ok_or_else(|| format!("there is no branch called {name}"))?.head;
+        let path = self.timeline.path(head);
+        Ok(path[path.len().saturating_sub(limit)..].iter().filter_map(|id| self.timeline.step(*id)).collect())
+    }
+
+    /// Runs a batch of commands from `obs` as one step on the main branch: each sees the effects of
+    /// the ones before it, and if any is refused, nothing is recorded. With `dry_run`, nothing is
+    /// recorded either way; the returned step shows what would happen.
+    pub fn execute(&mut self, obs: &Observer, cmds: &[Command<String>], gist: Option<String>, dry_run: bool) -> Result<Step, Refused> {
+        let key = self.timeline.peek_id();
         let mut scratch = self.state.clone();
-        let mut seq = self.seq();
-        let mut out = Vec::new();
+        let mut dice = Dice::new(key);
+        let (mut resolved, mut events) = (Vec::new(), Vec::new());
         for (index, cmd) in cmds.iter().enumerate() {
-            let events = scratch
-                .resolve(obs, cmd)
-                .and_then(|c| scratch.decide(&c))
-                .map_err(|rejection| Refused { index, rejection })?;
-            for event in events {
-                scratch.apply(&event);
-                seq += 1;
-                out.push(Recorded { seq, event });
+            let refused = |rejection| Refused { index, rejection };
+            let cmd = scratch.resolve(obs, cmd).map_err(refused)?;
+            let out = scratch.decide(&cmd, &mut dice).map_err(refused)?;
+            for e in &out {
+                scratch.apply(e);
             }
+            events.extend(out);
+            resolved.push(cmd);
         }
-        if !dry_run {
-            self.state = scratch;
-            self.log.extend(out.iter().cloned());
+        let head = self.timeline.head();
+        let (input, outcome, time) = (Input::Commands(resolved), Outcome::Applied(events), self.state.clock);
+        if dry_run {
+            let depth = self.timeline.step(head).map_or(0, |s| s.depth + 1);
+            return Ok(Step { id: key, parent: Some(head), depth, key, replaces: None, by: obs.clone(), gist, time, input, outcome });
         }
-        Ok(out)
+        let id = self.timeline.push(head, obs.clone(), gist, time, input, outcome, None, None, &scratch);
+        self.timeline.set_head(MAIN, Branch { head: id, forked_at: None, gist: None });
+        self.state = scratch;
+        Ok(self.timeline.step(id).unwrap().clone())
     }
 
-    /// Drops every event after `seq` and rebuilds the state from what's left.
-    pub fn rewind_to(&mut self, seq: u64) -> Result<(), String> {
-        if seq == 0 {
-            return Err("can't rewind past the room's opening".into());
+    /// Moves the main head back to `step`. The steps after it stay on a branch called
+    /// `before-rewind-<old head>`, which is returned, so nothing is lost.
+    pub fn rewind_to(&mut self, step: StepId) -> Result<String, String> {
+        let head = self.timeline.head();
+        if step == head {
+            return Err(format!("main is already at {step}"));
         }
-        self.log.truncate(self.log.partition_point(|r| r.seq <= seq));
-        self.state = Self::fold(&self.log)?;
-        Ok(())
-    }
-
-    fn fold(log: &[Recorded]) -> Result<RoomState, String> {
-        let (first, rest) = log.split_first().ok_or("empty log")?;
-        let Event::RoomOpened { def, codex } = &first.event else {
-            return Err("the log doesn't start with the room opening".into());
-        };
-        let mut state = RoomState::genesis(def, codex.clone())?;
-        for r in rest {
-            state.apply(&r.event);
+        if !self.timeline.on_path(head, step) {
+            return Err(format!("{step} isn't on the main branch"));
         }
-        Ok(state)
+        let saved = format!("before-rewind-{}", head.0);
+        self.timeline.set_head(&saved, Branch { head, forked_at: None, gist: Some(format!("main before rewinding to {step}")) });
+        self.timeline.set_head(MAIN, Branch { head: step, forked_at: None, gist: None });
+        self.state = self.timeline.state_at(step);
+        Ok(saved)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::def::CreatureDef;
-    use crate::stance::Stance;
-    use crate::map::Terrain;
-
-    fn terrain(name: &str, blocks: bool, difficult: bool) -> Terrain {
-        Terrain { name: name.into(), blocks_move: blocks, blocks_sight: blocks, difficult }
-    }
-
-    fn h(s: &str) -> Handle {
-        Handle::new(s).unwrap()
-    }
-
-    fn codex() -> Codex {
-        serde_json::from_value(serde_json::json!({
-            "identities": {
-                "human": { "label": "human", "kind": "kind" },
-                "goblin": { "label": "goblin", "kind": "kind" },
-                "red-watch": { "label": "Red Watch", "kind": "group" },
-                "stranger": { "label": "stranger", "kind": "relational" }
-            },
-            "marks": {
-                "human-features": { "senses": { "sight": 2 }, "layers": [ { "reveals": { "text": "a human", "identity": "human" } } ] },
-                "goblin-features": { "senses": { "sight": 3 }, "layers": [ { "reveals": { "text": "a goblin", "identity": "goblin", "salience": "high" } } ] },
-                "red-tabard": { "senses": { "sight": 3 }, "layers": [ { "reveals": { "text": "a red tabard" }, "children": [
-                    { "gate": { "knows": "red-watch-insignia" }, "reveals": { "text": "the Red Watch's colours", "identity": "red-watch", "salience": "high" } }
-                ] } ] }
-            }
-        }))
-        .unwrap()
-    }
-
-    fn creature(key: &str, name: &str, x: i32, y: i32, extra: serde_json::Value) -> CreatureDef {
-        let mut v = serde_json::json!({ "key": key, "name": name, "at": { "x": x, "y": y }, "hp": 10 });
-        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
-        serde_json::from_value(v).unwrap()
-    }
-
-    /// Rook wears the Red Watch's colours. Snikka knows them and hates the Watch; Grub doesn't know
-    /// them and is merely wary of humans, so Grub's square doesn't block Rook but Snikka's would.
-    fn room_with(snikka_at: (i32, i32), grub_at: (i32, i32)) -> Room {
-        use serde_json::json;
-        let def = RoomDef {
-            name: "test".into(),
-            legend: BTreeMap::from([
-                ('.', terrain("floor", false, false)),
-                ('#', terrain("wall", true, false)),
-                (',', terrain("rubble", false, true)),
-            ]),
-            rows: vec![
-                "#########".into(),
-                "#.......#".into(),
-                "#.#####.#".into(),
-                "#.,,,,,.#".into(),
-                "#########".into(),
-            ],
-            creatures: vec![
-                creature("rook", "Rook", 1, 1, json!({
-                    "marks": [ { "kind": "human-features" }, { "kind": "red-tabard" } ],
-                    "identities": ["red-watch"], "knows": ["red-watch-insignia"], "dispositions": { "goblin": "hostile" }
-                })),
-                creature("snikka", "Snikka", snikka_at.0, snikka_at.1, json!({
-                    "marks": [ { "kind": "goblin-features" } ], "knows": ["red-watch-insignia"], "dispositions": { "red-watch": "hostile" }
-                })),
-                creature("grub", "Grub", grub_at.0, grub_at.1, json!({
-                    "marks": [ { "kind": "goblin-features" } ], "dispositions": { "human": "wary" }
-                })),
-            ],
-            seats: BTreeMap::from([(h("alice"), vec![h("rook")])]),
-        };
-        Room::open("t", def, codex()).unwrap()
-    }
-
-    fn room() -> Room {
-        room_with((7, 3), (4, 1))
-    }
-
-    const DM: Observer = Observer::Dm;
-
-    fn alice() -> Observer {
-        Observer::Seat(h("alice"))
-    }
-
-    fn mv(who: &str, x: i32, y: i32) -> Command<String> {
-        Command::Move { who: who.into(), to: Cell::new(x, y) }
-    }
-
-    fn place(who: &str, x: i32, y: i32) -> Command<String> {
-        Command::Place { who: who.into(), to: Cell::new(x, y) }
-    }
-
-    fn cost(ev: &[Recorded]) -> u32 {
-        match &ev[0].event {
-            Event::CreatureMoved { cost_ft, .. } => *cost_ft,
-            e => panic!("{e:?}"),
-        }
-    }
-
-    fn rook_pos(r: &Room) -> Cell {
-        r.state().creatures[&EntityId(1)].pos
-    }
+    use crate::testkit::*;
 
     #[test]
     fn moves_along_open_floor() {
         let mut r = room();
-        let ev = r.execute(&DM, &[mv("rook", 5, 1)], false).unwrap();
-        assert_eq!(ev[0].seq, 2);
-        assert_eq!(rook_pos(&r), Cell::new(5, 1));
+        let st = run(&mut r, &[mv("rook", 5, 1)]);
+        assert_eq!(st.id, StepId(2));
+        assert_eq!(pos(&r, 1), Cell::new(5, 1));
     }
 
     #[test]
     fn routes_run_straight() {
         let mut r = room();
-        let ev = r.execute(&DM, &[mv("rook", 5, 1)], false).unwrap();
-        let Event::CreatureMoved { path, cost_ft, .. } = &ev[0].event else { panic!() };
+        let st = run(&mut r, &[mv("rook", 5, 1)]);
+        let Event::CreatureMoved { path, cost_ft, .. } = &st.events()[0] else { panic!() };
         assert_eq!(*cost_ft, 20);
         assert!(path.iter().all(|c| c.y == 1), "{path:?}");
     }
@@ -414,9 +338,9 @@ mod tests {
     #[test]
     fn routes_around_walls_and_refuses_beyond_speed() {
         let mut r = room();
-        r.execute(&DM, &[mv("rook", 1, 3)], false).unwrap();
+        run(&mut r, &[mv("rook", 1, 3)]);
         // Through the rubble is 45 ft; back round the top of the wall is 40. Both are past 30 ft of speed.
-        let err = r.execute(&DM, &[mv("rook", 6, 3)], false).unwrap_err();
+        let err = r.execute(&DM, &[mv("rook", 6, 3)], None, false).unwrap_err();
         assert_eq!(err.index, 0);
         assert_eq!(err.rejection.code(), "too_far");
     }
@@ -424,34 +348,21 @@ mod tests {
     #[test]
     fn difficult_terrain_costs_double_to_leave_not_to_enter() {
         let mut r = room();
-        r.execute(&DM, &[place("rook", 1, 3)], false).unwrap();
-        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 2, 3)], false).unwrap()), 5, "stepping into rubble");
-        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 3, 3)], false).unwrap()), 10, "rubble to rubble");
-        r.execute(&DM, &[place("rook", 6, 3)], false).unwrap();
-        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 7, 2)], false).unwrap()), 10, "stepping out of rubble");
+        run(&mut r, &[place("rook", 1, 3)]);
+        assert_eq!(cost(&run(&mut r, &[mv("rook", 2, 3)])), 5, "stepping into rubble");
+        assert_eq!(cost(&run(&mut r, &[mv("rook", 3, 3)])), 10, "rubble to rubble");
+        run(&mut r, &[place("rook", 6, 3)]);
+        assert_eq!(cost(&run(&mut r, &[mv("rook", 7, 2)])), 10, "stepping out of rubble");
     }
 
     #[test]
     fn hostile_squares_block_and_batches_are_atomic() {
         let mut r = room();
         let before = r.state().clone();
-        let err = r.execute(&DM, &[mv("rook", 6, 1), mv("rook", 7, 3)], false).unwrap_err();
+        let err = r.execute(&DM, &[mv("rook", 6, 1), mv("rook", 7, 3)], None, false).unwrap_err();
         assert_eq!(err.index, 1, "the second move ends on Snikka");
         assert_eq!(r.state(), &before);
         assert_eq!(r.seq(), 1);
-    }
-
-    #[test]
-    fn dry_run_and_rewind_leave_no_trace() {
-        let mut r = room();
-        r.execute(&DM, &[mv("rook", 6, 1)], true).unwrap();
-        assert_eq!(r.seq(), 1);
-        let start = r.state().clone();
-        r.execute(&DM, &[mv("rook", 6, 1), mv("rook", 7, 2)], false).unwrap();
-        assert_eq!(r.seq(), 3);
-        r.rewind_to(1).unwrap();
-        assert_eq!(r.state(), &start);
-        assert!(r.events_since(1).is_empty());
     }
 
     #[test]
@@ -470,13 +381,13 @@ mod tests {
     #[test]
     fn seats_command_only_their_own_and_hear_rejections_in_their_own_words() {
         let mut r = room();
-        let err = r.execute(&alice(), &[mv("goblin", 6, 1)], false).unwrap_err();
+        let err = r.execute(&alice(), &[mv("goblin", 6, 1)], None, false).unwrap_err();
         assert_eq!(err.rejection, Rejection::NotYours { who: EntityId(2) });
         assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin isn't yours to command");
-        assert_eq!(r.execute(&alice(), &[mv("snikka", 6, 1)], false).unwrap_err().rejection.code(), "unknown_name");
-        assert_eq!(r.execute(&alice(), &[place("rook", 6, 1)], false).unwrap_err().rejection, Rejection::DmOnly);
+        assert_eq!(r.execute(&alice(), &[mv("snikka", 6, 1)], None, false).unwrap_err().rejection.code(), "unknown_name");
+        assert_eq!(r.execute(&alice(), &[place("rook", 6, 1)], None, false).unwrap_err().rejection, Rejection::DmOnly);
 
-        let err = r.execute(&alice(), &[mv("rook", 4, 1)], false).unwrap_err();
+        let err = r.execute(&alice(), &[mv("rook", 4, 1)], None, false).unwrap_err();
         assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin is already at (4, 1)");
         assert_eq!(r.state().explain(&DM, &err.rejection), "Grub is already at (4, 1)");
     }
@@ -486,11 +397,11 @@ mod tests {
         let rook = EntityId(1);
         let mut r = room();
         assert_eq!(r.state().stance(EntityId(3), rook), Stance::Wary, "Grub sees only a human");
-        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 6, 1)], false).unwrap()), 25, "straight through Grub's square");
+        assert_eq!(cost(&run(&mut r, &[mv("rook", 6, 1)])), 25, "straight through Grub's square");
 
         let mut r = room_with((4, 1), (7, 3));
         assert_eq!(r.state().stance(EntityId(2), rook), Stance::Hostile, "Snikka reads the Watch's colours");
-        assert_eq!(r.execute(&DM, &[mv("rook", 6, 1)], false).unwrap_err().rejection.code(), "too_far", "the long way round");
+        assert_eq!(r.execute(&DM, &[mv("rook", 6, 1)], None, false).unwrap_err().rejection.code(), "too_far", "the long way round");
     }
 
     #[test]
@@ -499,5 +410,38 @@ mod tests {
         let names = &r.state().names[&alice()];
         assert_eq!(names.of(EntityId(2)).unwrap().label, "goblin");
         assert_eq!(names.of(EntityId(3)).unwrap().handle.as_str(), "goblin-2");
+    }
+
+    #[test]
+    fn dry_runs_record_nothing() {
+        let mut r = room();
+        let st = r.execute(&DM, &[mv("rook", 6, 1)], None, true).unwrap();
+        assert_eq!(st.id, StepId(2), "shows the id it would get");
+        assert_eq!(r.seq(), 1);
+        assert_eq!(pos(&r, 1), Cell::new(1, 1));
+    }
+
+    #[test]
+    fn waiting_advances_the_clock_and_steps_record_when_they_began() {
+        let mut r = room();
+        run(&mut r, &[Command::Wait { seconds: 60 }]);
+        let st = run(&mut r, &[mv("rook", 2, 1)]);
+        assert_eq!(st.time, GameTime(60));
+        assert_eq!(st.time.round(), 11);
+        assert_eq!(r.execute(&alice(), &[Command::Wait { seconds: 6 }], None, false).unwrap_err().rejection, Rejection::DmOnly);
+    }
+
+    #[test]
+    fn rewind_moves_the_head_and_keeps_the_rest_on_a_branch() {
+        let mut r = room();
+        let start = r.state().clone();
+        run(&mut r, &[mv("rook", 6, 1)]);
+        run(&mut r, &[mv("rook", 7, 2)]);
+        let saved = r.rewind_to(StepId(1)).unwrap();
+        assert_eq!(r.state(), &start);
+        assert!(r.steps_since(1).is_empty());
+        assert_eq!(r.timeline().branch(&saved).unwrap().head, StepId(3));
+        // New steps continue from the rewound head with fresh ids.
+        assert_eq!(run(&mut r, &[mv("rook", 2, 1)]).id, StepId(4));
     }
 }

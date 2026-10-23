@@ -1,13 +1,20 @@
-//! Hosts kernel rooms over HTTP and pushes their events to browsers over SSE.
+//! Hosts kernel rooms over HTTP and pushes their steps to browsers over SSE.
 //! Every request is made as an observer (`as`: `dm`, the default, or a seat's name) and everything
-//! sent back is rendered for that observer, in their names.
+//! sent back is rendered for that observer, in their names. Step ids can be written `12` or `"#12"`.
 //!
-//!   GET  /api/rooms                         the rooms on offer, with their seats
-//!   GET  /api/rooms/{id}?as                 the room as that observer sees it
-//!   POST /api/rooms/{id}/commands           { as?, commands: [Command], dry_run? } → events, atomically
-//!   POST /api/rooms/{id}/rewind             { seq } → drop every event after seq (DM only)
-//!   GET  /api/rooms/{id}/stream?as&since    SSE: missed events since `since`, then live ones
-//!   anything else                           static files from kernel/web
+//!   GET  /api/rooms                              the rooms on offer, with their seats
+//!   GET  /api/rooms/{id}?as                      the room as that observer sees it
+//!   POST /api/rooms/{id}/commands                { as?, gist?, commands: [Command], dry_run? } → one step
+//!   GET  /api/rooms/{id}/history?as&limit&branch the last steps, one line each (default 20, main)
+//!   GET  /api/rooms/{id}/branches                branches and their heads (DM)
+//!   POST /api/rooms/{id}/surgery                 { op: insert|remove|edit|keep_as_fiat, …, gist? } → a draft
+//!                                                branch and a summary-first preview (DM)
+//!   POST /api/rooms/{id}/branches/{name}/commit  make a draft the main branch (DM)
+//!   POST /api/rooms/{id}/branches/{name}/discard throw a draft away (DM)
+//!   POST /api/rooms/{id}/rewind                  { step } → move main's head back (DM)
+//!   GET  /api/rooms/{id}/stream?as&since         SSE: missed steps since `since`, then live ones;
+//!                                                `reset` when history changes under the client
+//!   anything else                                static files from kernel/web
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -21,7 +28,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::{self, StreamExt};
-use kernel_core::{event_view, Codex, Command, Handle, Observer, Recorded, Room, RoomDef, RoomState, RoomView};
+use kernel_core::{preview_lines, step_line, Codex, Command, Handle, Observer, Room, RoomDef, RoomState, RoomView, Step, StepId, StepView, Surgery};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{broadcast, RwLock};
@@ -41,16 +48,18 @@ struct Hosted {
 }
 
 impl Hosted {
-    /// Renders new events once per observer and sends them down the channel.
-    fn publish(&self, events: &[Recorded]) {
+    /// Renders a new step once per observer and sends it down the channel.
+    fn publish(&self, step: &Step) {
         let s = self.room.state();
-        for e in events {
-            let bodies = s
-                .observers()
-                .filter_map(|o| event_view(s, &o, e).map(|v| (o, serde_json::to_string(&v).unwrap())))
-                .collect();
-            let _ = self.tx.send(Arc::new(Push { name: "event", bodies }));
-        }
+        let bodies = s.observers().filter_map(|o| StepView::new(s, &o, step).map(|v| (o, serde_json::to_string(&v).unwrap()))).collect();
+        let _ = self.tx.send(Arc::new(Push { name: "step", bodies }));
+    }
+
+    /// Tells every client that history changed under them, so they reload.
+    fn reset(&self) {
+        let body = json!({ "seq": self.room.seq() }).to_string();
+        let bodies = self.room.state().observers().map(|o| (o, body.clone())).collect();
+        let _ = self.tx.send(Arc::new(Push { name: "reset", bodies }));
     }
 }
 
@@ -111,27 +120,57 @@ fn no_room(id: &str) -> Response {
     error(StatusCode::NOT_FOUND, format!("no room called {id}"))
 }
 
-/// `as` → observer: `dm` (or nothing) is the DM, anything else must be one of the room's seats.
-fn observer(s: &RoomState, who: Option<&str>) -> Result<Observer, NoSeat> {
-    match who {
-        None | Some("dm") => Ok(Observer::Dm),
-        Some(name) => Handle::new(name).ok().filter(|h| s.seats.contains_key(h)).map(Observer::Seat).ok_or_else(|| NoSeat(name.into())),
+/// A refusal from a helper, turned into a response by `tri!`.
+struct Fail(StatusCode, String);
+
+impl IntoResponse for Fail {
+    fn into_response(self) -> Response {
+        error(self.0, self.1)
     }
 }
 
-struct NoSeat(String);
-
-impl IntoResponse for NoSeat {
-    fn into_response(self) -> Response {
-        error(StatusCode::NOT_FOUND, format!("this room has no seat called {}", self.0))
+/// `as` → observer: `dm` (or nothing) is the DM, anything else must be one of the room's seats.
+fn observer(s: &RoomState, who: Option<&str>) -> Result<Observer, Fail> {
+    match who {
+        None | Some("dm") => Ok(Observer::Dm),
+        Some(name) => Handle::new(name)
+            .ok()
+            .filter(|h| s.seats.contains_key(h))
+            .map(Observer::Seat)
+            .ok_or_else(|| Fail(StatusCode::NOT_FOUND, format!("this room has no seat called {name}"))),
     }
+}
+
+fn dm_only(s: &RoomState, who: Option<&str>) -> Result<(), Fail> {
+    match observer(s, who)? {
+        Observer::Dm => Ok(()),
+        Observer::Seat(_) => Err(Fail(StatusCode::FORBIDDEN, "only the DM can do that".into())),
+    }
+}
+
+/// Unwraps a `Result<T, Fail>`, returning the refusal from the handler on error.
+macro_rules! tri {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(r) => return r.into_response(),
+        }
+    };
 }
 
 #[derive(Deserialize)]
-struct As {
+struct Query_ {
     #[serde(rename = "as")]
     who: Option<String>,
     since: Option<u64>,
+    limit: Option<usize>,
+    branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AsOnly {
+    #[serde(rename = "as")]
+    who: Option<String>,
 }
 
 async fn list_rooms(State(rooms): State<Rooms>) -> Json<serde_json::Value> {
@@ -142,19 +181,18 @@ async fn list_rooms(State(rooms): State<Rooms>) -> Json<serde_json::Value> {
         .collect::<Vec<_>>()))
 }
 
-async fn get_room(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<As>) -> Response {
+async fn get_room(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
     let rooms = rooms.read().await;
     let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    match observer(h.room.state(), q.who.as_deref()) {
-        Ok(obs) => Json(RoomView::new(&h.room, &obs)).into_response(),
-        Err(r) => r.into_response(),
-    }
+    let obs = tri!(observer(h.room.state(), q.who.as_deref()));
+    Json(RoomView::new(&h.room, &obs)).into_response()
 }
 
 #[derive(Deserialize)]
 struct Batch {
     #[serde(rename = "as")]
     who: Option<String>,
+    gist: Option<String>,
     commands: Vec<Command<String>>,
     #[serde(default)]
     dry_run: bool,
@@ -163,18 +201,14 @@ struct Batch {
 async fn post_commands(State(rooms): State<Rooms>, Path(id): Path<String>, Json(batch): Json<Batch>) -> Response {
     let mut rooms = rooms.write().await;
     let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    let obs = match observer(h.room.state(), batch.who.as_deref()) {
-        Ok(o) => o,
-        Err(r) => return r.into_response(),
-    };
-    match h.room.execute(&obs, &batch.commands, batch.dry_run) {
-        Ok(events) => {
+    let obs = tri!(observer(h.room.state(), batch.who.as_deref()));
+    match h.room.execute(&obs, &batch.commands, batch.gist, batch.dry_run) {
+        Ok(step) => {
             if !batch.dry_run {
-                h.publish(&events);
+                h.publish(&step);
             }
             let s = h.room.state();
-            let views: Vec<_> = events.iter().filter_map(|e| event_view(s, &obs, e)).collect();
-            Json(json!({ "ok": true, "dry_run": batch.dry_run, "events": views })).into_response()
+            Json(json!({ "ok": true, "dry_run": batch.dry_run, "line": step_line(s, &obs, &step), "step": StepView::new(s, &obs, &step) })).into_response()
         }
         Err(refused) => (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -189,26 +223,92 @@ async fn post_commands(State(rooms): State<Rooms>, Path(id): Path<String>, Json(
     }
 }
 
+/// The last steps of a branch as one line each, in the asker's names. Seats only see main.
+async fn history(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
+    let rooms = rooms.read().await;
+    let Some(h) = rooms.get(&id) else { return no_room(&id) };
+    let s = h.room.state();
+    let obs = tri!(observer(s, q.who.as_deref()));
+    if obs != Observer::Dm && q.branch.as_deref().is_some_and(|b| b != "main") {
+        return error(StatusCode::FORBIDDEN, "only the DM can read other branches");
+    }
+    let steps = match h.room.history(q.branch.as_deref(), q.limit.unwrap_or(20)) {
+        Ok(s) => s,
+        Err(e) => return error(StatusCode::NOT_FOUND, e),
+    };
+    let lines: Vec<String> = steps.iter().filter_map(|st| step_line(s, &obs, st)).collect();
+    Json(json!({ "branch": q.branch.as_deref().unwrap_or("main"), "head": h.room.seq(), "lines": lines })).into_response()
+}
+
+async fn branches(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
+    let rooms = rooms.read().await;
+    let Some(h) = rooms.get(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), q.who.as_deref()));
+    let list: Vec<_> = h.room.timeline().branches().map(|(name, b)| json!({ "name": name, "head": b.head, "gist": b.gist })).collect();
+    Json(json!(list)).into_response()
+}
+
+#[derive(Deserialize)]
+struct SurgeryReq {
+    #[serde(rename = "as")]
+    who: Option<String>,
+    gist: Option<String>,
+    #[serde(flatten)]
+    op: Surgery,
+}
+
+async fn surgery(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<SurgeryReq>) -> Response {
+    let mut rooms = rooms.write().await;
+    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), req.who.as_deref()));
+    match h.room.surgery(req.op, req.gist) {
+        Ok(p) => {
+            let lines = preview_lines(&h.room, &p.changes);
+            Json(json!({ "ok": true, "branch": p.branch, "base": p.base, "head": p.head, "summary": lines[0], "lines": &lines[1..] })).into_response()
+        }
+        Err(e) => error(StatusCode::UNPROCESSABLE_ENTITY, e),
+    }
+}
+
+async fn commit(State(rooms): State<Rooms>, Path((id, name)): Path<(String, String)>, Json(req): Json<AsOnly>) -> Response {
+    let mut rooms = rooms.write().await;
+    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), req.who.as_deref()));
+    match h.room.commit(&name) {
+        Ok(changes) => {
+            h.reset();
+            let lines = preview_lines(&h.room, &changes);
+            Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": format!("before-{name}"), "replayed": lines })).into_response()
+        }
+        Err(e) => error(StatusCode::UNPROCESSABLE_ENTITY, e),
+    }
+}
+
+async fn discard(State(rooms): State<Rooms>, Path((id, name)): Path<(String, String)>, Json(req): Json<AsOnly>) -> Response {
+    let mut rooms = rooms.write().await;
+    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), req.who.as_deref()));
+    match h.room.discard(&name) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => error(StatusCode::NOT_FOUND, e),
+    }
+}
+
 #[derive(Deserialize)]
 struct Rewind {
     #[serde(rename = "as")]
     who: Option<String>,
-    seq: u64,
+    step: StepId,
 }
 
 async fn post_rewind(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<Rewind>) -> Response {
     let mut rooms = rooms.write().await;
     let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    if !matches!(observer(h.room.state(), req.who.as_deref()), Ok(Observer::Dm)) {
-        return error(StatusCode::FORBIDDEN, "only the DM can rewind");
-    }
-    match h.room.rewind_to(req.seq) {
-        Ok(()) => {
-            let seq = h.room.seq();
-            let body = json!({ "seq": seq }).to_string();
-            let bodies = h.room.state().observers().map(|o| (o, body.clone())).collect();
-            let _ = h.tx.send(Arc::new(Push { name: "rewind", bodies }));
-            Json(json!({ "ok": true, "seq": seq })).into_response()
+    tri!(dm_only(h.room.state(), req.who.as_deref()));
+    match h.room.rewind_to(req.step) {
+        Ok(saved) => {
+            h.reset();
+            Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": saved })).into_response()
         }
         Err(why) => error(StatusCode::UNPROCESSABLE_ENTITY, why),
     }
@@ -218,29 +318,26 @@ fn sse(name: &str, data: &str) -> Result<SseEvent, Infallible> {
     Ok(SseEvent::default().event(name).data(data))
 }
 
-/// Missed events first, then live ones, each as this observer sees it. Subscribing and reading the
+/// Missed steps first, then live ones, each as this observer sees it. Subscribing and reading the
 /// backlog under the same lock means nothing falls between them. A client that falls too far
 /// behind is told to resync.
-async fn stream(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<As>) -> Response {
+async fn stream(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
     let rooms = rooms.read().await;
     let Some(h) = rooms.get(&id) else { return no_room(&id) };
     let s = h.room.state();
-    let obs = match observer(s, q.who.as_deref()) {
-        Ok(o) => o,
-        Err(r) => return r.into_response(),
-    };
+    let obs = tri!(observer(s, q.who.as_deref()));
     let rx = h.tx.subscribe();
     let backlog: Vec<String> = q
         .since
-        .map(|since| h.room.events_since(since).iter().filter_map(|e| event_view(s, &obs, e)).map(|v| serde_json::to_string(&v).unwrap()).collect())
+        .map(|since| h.room.steps_since(since).into_iter().filter_map(|st| StepView::new(s, &obs, st)).map(|v| serde_json::to_string(&v).unwrap()).collect())
         .unwrap_or_default();
     drop(rooms);
 
-    let missed = stream::iter(backlog).map(|body| sse("event", &body));
+    let missed = stream::iter(backlog).map(|body| sse("step", &body));
     let live = BroadcastStream::new(rx).filter_map(move |msg| {
         let out = match msg {
             Ok(p) => p.bodies.get(&obs).map(|body| sse(p.name, body)),
-            Err(_lagged) => Some(sse("resync", "{}")),
+            Err(_lagged) => Some(sse("reset", "{}")),
         };
         std::future::ready(out)
     });
@@ -257,6 +354,11 @@ async fn main() {
         .route("/api/rooms", get(list_rooms))
         .route("/api/rooms/{id}", get(get_room))
         .route("/api/rooms/{id}/commands", post(post_commands))
+        .route("/api/rooms/{id}/history", get(history))
+        .route("/api/rooms/{id}/branches", get(branches))
+        .route("/api/rooms/{id}/surgery", post(surgery))
+        .route("/api/rooms/{id}/branches/{name}/commit", post(commit))
+        .route("/api/rooms/{id}/branches/{name}/discard", post(discard))
         .route("/api/rooms/{id}/rewind", post(post_rewind))
         .route("/api/rooms/{id}/stream", get(stream))
         .fallback_service(ServeDir::new(dir.join("web")))

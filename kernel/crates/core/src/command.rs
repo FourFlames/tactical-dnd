@@ -14,6 +14,8 @@ pub enum Command<R = EntityId> {
     Move { who: R, to: Cell },
     /// Put a creature on a square directly (DM fiat: no route, no speed).
     Place { who: R, to: Cell },
+    /// Let game time pass (DM only).
+    Wait { seconds: u64 },
 }
 
 /// Why a command was refused. It names things by id, never by text: it's rendered for whoever
