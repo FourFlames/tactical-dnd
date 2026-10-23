@@ -1,71 +1,161 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::command::{Command, Rejection};
-use crate::creature::{Creature, CreatureId};
+use crate::creature::{Creature, Side};
 use crate::def::RoomDef;
 use crate::event::{Event, Recorded};
 use crate::geom::Cell;
+use crate::id::{EntityId, Handle};
 use crate::map::Map;
 use crate::movement;
+use crate::names::Names;
+use crate::observer::Observer;
 
 /// Everything true about a room right now. Only ever changed by [`RoomState::apply`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomState {
     pub name: String,
     pub map: Map,
-    pub creatures: BTreeMap<CreatureId, Creature>,
+    pub creatures: BTreeMap<EntityId, Creature>,
+    /// Each seat and the creatures it controls.
+    pub seats: BTreeMap<Handle, BTreeSet<EntityId>>,
+    /// Every observer's names for things.
+    pub names: BTreeMap<Observer, Names>,
+    /// The next id to give out. Ids are never reused, so an old event can't point at a new creature.
+    pub next_id: u32,
 }
 
 impl RoomState {
-    fn genesis(def: &RoomDef) -> Result<Self, Rejection> {
-        let (map, creatures) = def.build()?;
-        Ok(Self { name: def.name.clone(), map, creatures })
+    /// The DM knows everything by the author's key and true name. A seat knows the party by name
+    /// and everyone else by how they look, numbered in the order listed.
+    fn genesis(def: &RoomDef) -> Result<Self, String> {
+        let built = def.build()?;
+        let mut names = BTreeMap::new();
+        let dm: &mut Names = names.entry(Observer::Dm).or_default();
+        for (id, key) in &built.keys {
+            dm.learn(*id, key.clone(), built.creatures[id].name.clone());
+        }
+        for seat in built.seats.keys() {
+            let n: &mut Names = names.entry(Observer::Seat(seat.clone())).or_default();
+            for (id, key) in &built.keys {
+                let c = &built.creatures[id];
+                match c.side {
+                    Side::Party => n.learn(*id, key.clone(), c.name.clone()),
+                    _ => n.learn(*id, Handle::slug(&c.looks), c.looks.clone()),
+                };
+            }
+        }
+        Ok(Self {
+            name: def.name.clone(),
+            map: built.map,
+            next_id: built.keys.len() as u32 + 1,
+            creatures: built.creatures,
+            seats: built.seats,
+            names,
+        })
     }
 
-    pub fn creature(&self, id: &CreatureId) -> Result<&Creature, Rejection> {
-        self.creatures.get(id).ok_or_else(|| Rejection::new(format!("there is no creature called {id}")))
+    pub fn observers(&self) -> impl Iterator<Item = Observer> + '_ {
+        std::iter::once(Observer::Dm).chain(self.seats.keys().cloned().map(Observer::Seat))
     }
 
     pub fn creature_at(&self, c: Cell) -> Option<&Creature> {
         self.creatures.values().find(|cr| cr.pos == c)
     }
 
-    /// Checks a command against this state and says what would happen. Changes nothing.
-    pub fn decide(&self, cmd: &Command) -> Result<Vec<Event>, Rejection> {
-        match cmd {
-            Command::Move { id, to } => {
-                let who = self.creature(id)?;
-                if !self.map.in_bounds(*to) {
-                    return Err(Rejection::new(format!("{to} is off the map")));
-                }
-                if *to == who.pos {
-                    return Err(Rejection::new(format!("{} is already at {to}", who.name)));
-                }
-                if let Some(t) = self.map.terrain(*to).filter(|t| t.blocks_move) {
-                    return Err(Rejection::new(format!("{to} is {}", t.name)));
-                }
-                if let Some(other) = self.creature_at(*to) {
-                    return Err(Rejection::new(format!("{} is already at {to}", other.name)));
-                }
-                let route = movement::route(self, who, *to)
-                    .ok_or_else(|| Rejection::new(format!("{} has no way to reach {to}", who.name)))?;
-                if route.cost_ft > who.speed_ft {
-                    return Err(Rejection::new(format!(
-                        "{to} is {} ft away by the shortest route; {} has {} ft of speed",
-                        route.cost_ft, who.name, who.speed_ft
-                    )));
-                }
-                Ok(vec![Event::CreatureMoved { id: id.clone(), path: route.path, cost_ft: route.cost_ft }])
+    /// Whether `obs` may command `who`.
+    pub fn controls(&self, obs: &Observer, who: EntityId) -> bool {
+        match obs {
+            Observer::Dm => true,
+            Observer::Seat(s) => self.seats.get(s).is_some_and(|ids| ids.contains(&who)),
+        }
+    }
+
+    /// How `obs` would refer to `id` in a sentence.
+    pub fn label(&self, obs: &Observer, id: EntityId) -> String {
+        self.names.get(obs).and_then(|n| n.of(id)).map_or_else(|| "something".into(), |a| a.label.clone())
+    }
+
+    /// A rejection in `obs`'s own words.
+    pub fn explain(&self, obs: &Observer, r: &Rejection) -> String {
+        let name = |id| self.label(obs, id);
+        let text = match r {
+            Rejection::UnknownName { name } => format!("you don't know anything called \"{name}\""),
+            Rejection::NotYours { who } => format!("{} isn't yours to command", name(*who)),
+            Rejection::DmOnly => "only the DM can do that".into(),
+            Rejection::OffMap { at } => format!("{at} is off the map"),
+            Rejection::AlreadyThere { who, at } => format!("{} is already at {at}", name(*who)),
+            Rejection::Blocked { at, terrain } => format!("{at} is {terrain}"),
+            Rejection::Occupied { at, by } => format!("{} is already at {at}", name(*by)),
+            Rejection::NoRoute { who, to } => format!("{} has no way to reach {to}", name(*who)),
+            Rejection::TooFar { who, to, cost_ft, speed_ft } => {
+                format!("{to} is {cost_ft} ft away by the shortest route; {} has {speed_ft} ft of speed", name(*who))
             }
-            Command::Place { id, to } => {
-                self.creature(id)?;
-                if !self.map.passable(*to) {
-                    return Err(Rejection::new(format!("{to} isn't open floor")));
+        };
+        let mut chars = text.chars();
+        chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+    }
+
+    /// Turns a command as `obs` sent it, in their names, into one the rules understand, and checks
+    /// that they're allowed to send it.
+    pub fn resolve(&self, obs: &Observer, cmd: &Command<String>) -> Result<Command, Rejection> {
+        let find = |name: &String| {
+            self.names
+                .get(obs)
+                .and_then(|n| n.resolve(name))
+                .ok_or_else(|| Rejection::UnknownName { name: name.clone() })
+        };
+        match cmd {
+            Command::Move { who, to } => {
+                let who = find(who)?;
+                if !self.controls(obs, who) {
+                    return Err(Rejection::NotYours { who });
                 }
-                if let Some(other) = self.creature_at(*to).filter(|c| &c.id != id) {
-                    return Err(Rejection::new(format!("{} is already at {to}", other.name)));
+                Ok(Command::Move { who, to: *to })
+            }
+            Command::Place { who, to } => {
+                if *obs != Observer::Dm {
+                    return Err(Rejection::DmOnly);
                 }
-                Ok(vec![Event::CreaturePlaced { id: id.clone(), to: *to }])
+                Ok(Command::Place { who: find(who)?, to: *to })
+            }
+        }
+    }
+
+    /// Checks a resolved command against this state and says what would happen. Changes nothing.
+    pub fn decide(&self, cmd: &Command) -> Result<Vec<Event>, Rejection> {
+        match *cmd {
+            Command::Move { who: id, to } => {
+                let who = &self.creatures[&id];
+                if !self.map.in_bounds(to) {
+                    return Err(Rejection::OffMap { at: to });
+                }
+                if to == who.pos {
+                    return Err(Rejection::AlreadyThere { who: id, at: to });
+                }
+                if let Some(t) = self.map.terrain(to).filter(|t| t.blocks_move) {
+                    return Err(Rejection::Blocked { at: to, terrain: t.name.clone() });
+                }
+                if let Some(other) = self.creature_at(to) {
+                    return Err(Rejection::Occupied { at: to, by: other.id });
+                }
+                let route = movement::route(self, who, to).ok_or(Rejection::NoRoute { who: id, to })?;
+                if route.cost_ft > who.speed_ft {
+                    return Err(Rejection::TooFar { who: id, to, cost_ft: route.cost_ft, speed_ft: who.speed_ft });
+                }
+                Ok(vec![Event::CreatureMoved { who: id, path: route.path, cost_ft: route.cost_ft }])
+            }
+            Command::Place { who, to } => {
+                if !self.map.in_bounds(to) {
+                    return Err(Rejection::OffMap { at: to });
+                }
+                if let Some(t) = self.map.terrain(to).filter(|t| t.blocks_move) {
+                    return Err(Rejection::Blocked { at: to, terrain: t.name.clone() });
+                }
+                if let Some(other) = self.creature_at(to).filter(|c| c.id != who) {
+                    return Err(Rejection::Occupied { at: to, by: other.id });
+                }
+                Ok(vec![Event::CreaturePlaced { who, to }])
             }
         }
     }
@@ -74,18 +164,25 @@ impl RoomState {
     fn apply(&mut self, event: &Event) {
         match event {
             Event::RoomOpened { .. } => unreachable!("RoomOpened only starts a log"),
-            Event::CreatureMoved { id, path, .. } => {
-                if let (Some(c), Some(&end)) = (self.creatures.get_mut(id), path.last()) {
+            Event::CreatureMoved { who, path, .. } => {
+                if let (Some(c), Some(&end)) = (self.creatures.get_mut(who), path.last()) {
                     c.pos = end;
                 }
             }
-            Event::CreaturePlaced { id, to } => {
-                if let Some(c) = self.creatures.get_mut(id) {
+            Event::CreaturePlaced { who, to } => {
+                if let Some(c) = self.creatures.get_mut(who) {
                     c.pos = *to;
                 }
             }
         }
     }
+}
+
+/// A command in a batch that was refused, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refused {
+    pub index: usize,
+    pub rejection: Rejection,
 }
 
 /// A room: its event log and the state folded from it.
@@ -97,7 +194,7 @@ pub struct Room {
 }
 
 impl Room {
-    pub fn open(id: impl Into<String>, def: RoomDef) -> Result<Self, Rejection> {
+    pub fn open(id: impl Into<String>, def: RoomDef) -> Result<Self, String> {
         let state = RoomState::genesis(&def)?;
         let log = vec![Recorded { seq: 1, event: Event::RoomOpened { def } }];
         Ok(Self { id: id.into(), log, state })
@@ -118,15 +215,18 @@ impl Room {
         &self.log[start..]
     }
 
-    /// Runs a batch of commands atomically: each sees the effects of the ones before it, and if
-    /// any is refused, nothing is committed. Returns the recorded events, or the index of the
-    /// refused command and why. With `dry_run`, nothing is committed either way.
-    pub fn execute(&mut self, cmds: &[Command], dry_run: bool) -> Result<Vec<Recorded>, (usize, Rejection)> {
+    /// Runs a batch of commands from `obs` atomically: each sees the effects of the ones before
+    /// it, and if any is refused, nothing is committed. With `dry_run`, nothing is committed either way.
+    pub fn execute(&mut self, obs: &Observer, cmds: &[Command<String>], dry_run: bool) -> Result<Vec<Recorded>, Refused> {
         let mut scratch = self.state.clone();
         let mut seq = self.seq();
         let mut out = Vec::new();
-        for (i, cmd) in cmds.iter().enumerate() {
-            for event in scratch.decide(cmd).map_err(|r| (i, r))? {
+        for (index, cmd) in cmds.iter().enumerate() {
+            let events = scratch
+                .resolve(obs, cmd)
+                .and_then(|c| scratch.decide(&c))
+                .map_err(|rejection| Refused { index, rejection })?;
+            for event in events {
                 scratch.apply(&event);
                 seq += 1;
                 out.push(Recorded { seq, event });
@@ -140,19 +240,19 @@ impl Room {
     }
 
     /// Drops every event after `seq` and rebuilds the state from what's left.
-    pub fn rewind_to(&mut self, seq: u64) -> Result<(), Rejection> {
+    pub fn rewind_to(&mut self, seq: u64) -> Result<(), String> {
         if seq == 0 {
-            return Err(Rejection::new("can't rewind past the room's opening"));
+            return Err("can't rewind past the room's opening".into());
         }
         self.log.truncate(self.log.partition_point(|r| r.seq <= seq));
         self.state = Self::fold(&self.log)?;
         Ok(())
     }
 
-    fn fold(log: &[Recorded]) -> Result<RoomState, Rejection> {
-        let (first, rest) = log.split_first().ok_or_else(|| Rejection::new("empty log"))?;
+    fn fold(log: &[Recorded]) -> Result<RoomState, String> {
+        let (first, rest) = log.split_first().ok_or("empty log")?;
         let Event::RoomOpened { def } = &first.event else {
-            return Err(Rejection::new("the log doesn't start with the room opening"));
+            return Err("the log doesn't start with the room opening".into());
         };
         let mut state = RoomState::genesis(def)?;
         for r in rest {
@@ -165,12 +265,19 @@ impl Room {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::creature::Side;
     use crate::def::CreatureDef;
     use crate::map::Terrain;
 
     fn terrain(name: &str, blocks: bool, difficult: bool) -> Terrain {
         Terrain { name: name.into(), blocks_move: blocks, blocks_sight: blocks, difficult }
+    }
+
+    fn h(s: &str) -> Handle {
+        Handle::new(s).unwrap()
+    }
+
+    fn creature(key: &str, name: &str, looks: Option<&str>, side: Side, x: i32, y: i32) -> CreatureDef {
+        CreatureDef { key: h(key), name: name.into(), looks: looks.map(Into::into), side, at: Cell::new(x, y), speed_ft: 30, hp: 10 }
     }
 
     fn room() -> Room {
@@ -189,65 +296,83 @@ mod tests {
                 "#########".into(),
             ],
             creatures: vec![
-                CreatureDef { id: "rook".into(), name: "Rook".into(), side: Side::Party, at: Cell::new(1, 1), speed_ft: 30, hp: 20 },
-                CreatureDef { id: "gob".into(), name: "Goblin".into(), side: Side::Hostile, at: Cell::new(7, 3), speed_ft: 30, hp: 7 },
+                creature("rook", "Rook", None, Side::Party, 1, 1),
+                creature("snikka", "Snikka", Some("goblin"), Side::Hostile, 7, 3),
+                creature("grub", "Grub", Some("goblin"), Side::Hostile, 7, 1),
             ],
+            seats: BTreeMap::from([(h("alice"), vec![h("rook")])]),
         };
         Room::open("t", def).unwrap()
     }
 
-    fn mv(id: &str, x: i32, y: i32) -> Command {
-        Command::Move { id: id.into(), to: Cell::new(x, y) }
+    const DM: Observer = Observer::Dm;
+
+    fn alice() -> Observer {
+        Observer::Seat(h("alice"))
+    }
+
+    fn mv(who: &str, x: i32, y: i32) -> Command<String> {
+        Command::Move { who: who.into(), to: Cell::new(x, y) }
+    }
+
+    fn place(who: &str, x: i32, y: i32) -> Command<String> {
+        Command::Place { who: who.into(), to: Cell::new(x, y) }
+    }
+
+    fn cost(ev: &[Recorded]) -> u32 {
+        match &ev[0].event {
+            Event::CreatureMoved { cost_ft, .. } => *cost_ft,
+            e => panic!("{e:?}"),
+        }
+    }
+
+    fn rook_pos(r: &Room) -> Cell {
+        r.state().creatures[&EntityId(1)].pos
     }
 
     #[test]
     fn moves_along_open_floor() {
         let mut r = room();
-        let ev = r.execute(&[mv("rook", 6, 1)], false).unwrap();
-        assert_eq!(ev.len(), 1);
+        let ev = r.execute(&DM, &[mv("rook", 5, 1)], false).unwrap();
         assert_eq!(ev[0].seq, 2);
-        assert_eq!(r.state().creatures[&"rook".into()].pos, Cell::new(6, 1));
-    }
-
-    #[test]
-    fn routes_around_walls_and_refuses_beyond_speed() {
-        let mut r = room();
-        r.execute(&[mv("rook", 1, 3)], false).unwrap();
-        // Through the rubble is 45 ft; back round the top of the wall is 40. Both are past 30 ft of speed.
-        let err = r.execute(&[mv("rook", 6, 3)], false).unwrap_err();
-        assert_eq!(err.0, 0);
-        assert!(err.1.reason.contains("ft away"), "{}", err.1);
+        assert_eq!(rook_pos(&r), Cell::new(5, 1));
     }
 
     #[test]
     fn routes_run_straight() {
         let mut r = room();
-        let ev = r.execute(&[mv("rook", 5, 1)], false).unwrap();
-        let crate::event::Event::CreatureMoved { path, cost_ft, .. } = &ev[0].event else { panic!() };
+        let ev = r.execute(&DM, &[mv("rook", 5, 1)], false).unwrap();
+        let Event::CreatureMoved { path, cost_ft, .. } = &ev[0].event else { panic!() };
         assert_eq!(*cost_ft, 20);
         assert!(path.iter().all(|c| c.y == 1), "{path:?}");
     }
 
     #[test]
-    fn difficult_terrain_costs_double_to_leave_not_to_enter() {
-        let cost = |ev: &[Recorded]| match &ev[0].event {
-            crate::event::Event::CreatureMoved { cost_ft, .. } => *cost_ft,
-            e => panic!("{e:?}"),
-        };
+    fn routes_around_walls_and_refuses_beyond_speed() {
         let mut r = room();
-        r.execute(&[Command::Place { id: "rook".into(), to: Cell::new(1, 3) }], false).unwrap();
-        assert_eq!(cost(&r.execute(&[mv("rook", 2, 3)], false).unwrap()), 5, "stepping into rubble");
-        assert_eq!(cost(&r.execute(&[mv("rook", 3, 3)], false).unwrap()), 10, "rubble to rubble");
-        r.execute(&[Command::Place { id: "rook".into(), to: Cell::new(6, 3) }], false).unwrap();
-        assert_eq!(cost(&r.execute(&[mv("rook", 7, 2)], false).unwrap()), 10, "stepping out of rubble");
+        r.execute(&DM, &[mv("rook", 1, 3)], false).unwrap();
+        // Through the rubble is 45 ft; back round the top of the wall is 40. Both are past 30 ft of speed.
+        let err = r.execute(&DM, &[mv("rook", 6, 3)], false).unwrap_err();
+        assert_eq!(err.index, 0);
+        assert_eq!(err.rejection.code(), "too_far");
+    }
+
+    #[test]
+    fn difficult_terrain_costs_double_to_leave_not_to_enter() {
+        let mut r = room();
+        r.execute(&DM, &[place("rook", 1, 3)], false).unwrap();
+        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 2, 3)], false).unwrap()), 5, "stepping into rubble");
+        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 3, 3)], false).unwrap()), 10, "rubble to rubble");
+        r.execute(&DM, &[place("rook", 6, 3)], false).unwrap();
+        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 7, 2)], false).unwrap()), 10, "stepping out of rubble");
     }
 
     #[test]
     fn hostile_squares_block_and_batches_are_atomic() {
         let mut r = room();
         let before = r.state().clone();
-        let err = r.execute(&[mv("rook", 6, 1), mv("rook", 7, 3)], false).unwrap_err();
-        assert_eq!(err.0, 1, "the second move ends on the goblin");
+        let err = r.execute(&DM, &[mv("rook", 6, 1), mv("rook", 7, 3)], false).unwrap_err();
+        assert_eq!(err.index, 1, "the second move ends on Snikka");
         assert_eq!(r.state(), &before);
         assert_eq!(r.seq(), 1);
     }
@@ -255,13 +380,41 @@ mod tests {
     #[test]
     fn dry_run_and_rewind_leave_no_trace() {
         let mut r = room();
-        r.execute(&[mv("rook", 6, 1)], true).unwrap();
+        r.execute(&DM, &[mv("rook", 6, 1)], true).unwrap();
         assert_eq!(r.seq(), 1);
         let start = r.state().clone();
-        r.execute(&[mv("rook", 6, 1), mv("rook", 7, 2)], false).unwrap();
+        r.execute(&DM, &[mv("rook", 6, 1), mv("rook", 7, 2)], false).unwrap();
         assert_eq!(r.seq(), 3);
         r.rewind_to(1).unwrap();
         assert_eq!(r.state(), &start);
         assert!(r.events_since(1).is_empty());
+    }
+
+    #[test]
+    fn each_observer_has_its_own_names() {
+        let r = room();
+        let s = r.state();
+        let dm = &s.names[&DM];
+        let seat = &s.names[&alice()];
+        assert_eq!(dm.resolve("snikka"), Some(EntityId(2)));
+        assert_eq!(seat.resolve("snikka"), None, "Alice has never heard the name");
+        assert_eq!(seat.resolve("goblin"), Some(EntityId(2)));
+        assert_eq!(seat.resolve("goblin-2"), Some(EntityId(3)));
+        assert_eq!(seat.resolve("rook"), Some(EntityId(1)));
+    }
+
+    #[test]
+    fn seats_command_only_their_own_and_hear_rejections_in_their_own_words() {
+        let mut r = room();
+        let err = r.execute(&alice(), &[mv("goblin", 6, 1)], false).unwrap_err();
+        assert_eq!(err.rejection, Rejection::NotYours { who: EntityId(2) });
+        assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin isn't yours to command");
+        assert_eq!(r.execute(&alice(), &[mv("snikka", 6, 1)], false).unwrap_err().rejection.code(), "unknown_name");
+        assert_eq!(r.execute(&alice(), &[place("rook", 6, 1)], false).unwrap_err().rejection, Rejection::DmOnly);
+
+        r.execute(&alice(), &[mv("rook", 6, 1)], false).unwrap();
+        let err = r.execute(&alice(), &[mv("rook", 7, 1)], false).unwrap_err();
+        assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin is already at (7, 1)");
+        assert_eq!(r.state().explain(&DM, &err.rejection), "Grub is already at (7, 1)");
     }
 }

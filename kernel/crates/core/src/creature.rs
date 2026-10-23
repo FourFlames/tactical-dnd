@@ -1,22 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geom::Cell;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct CreatureId(pub String);
-
-impl std::fmt::Display for CreatureId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl From<&str> for CreatureId {
-    fn from(s: &str) -> Self {
-        Self(s.to_owned())
-    }
-}
+use crate::id::EntityId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,10 +18,13 @@ impl Side {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Creature {
-    pub id: CreatureId,
+    pub id: EntityId,
+    /// The true name. Only observers who know it see it.
     pub name: String,
+    /// What a stranger would call it: "goblin", "robed old man".
+    pub looks: String,
     pub side: Side,
     pub pos: Cell,
     pub speed_ft: u32,
