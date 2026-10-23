@@ -29,7 +29,7 @@ tools; its **Build order** is the roadmap) and, for the wider priorities, `docs/
    summary-first previews, commit/discard/rewind, keyframes, drop-and-flag.
 5. `6899728` DM tools: short command language (`script.rs`), inbox with instant acks and batched wakes
    (`dm wait`), context bundle, hop timings (`dm stats`), the `dm` CLI, the page's "Tell the DM" box.
-6. (uncommitted) Card A, the session journal: `crates/server/src/journal.rs`, written from every server
+6. `1b1afb3` Card A, the session journal: `crates/server/src/journal.rs`, written from every server
    handler to `kernel/sessions/<room>-<date>[-n]/journal.log` + `journal.jsonl` (git-ignored); `--re` on
    `dm act` and surgery; `dm log`, `dm wish`, `dm review`; `script::write` turns commands back into
    script text; surgery takes `script` (parsed by the server, so its parse errors are journaled).
