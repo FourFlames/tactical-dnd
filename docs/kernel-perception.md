@@ -230,6 +230,29 @@ should stay in milliseconds.
    wake carries a draft to approve (see "Drafter evaluation" in `docs/rust-kernel-api.md`).
 5. *Skip the DM:* plain mechanical text ("move to 4,5") parsed and run by the server directly.
 
+**The session journal.** An append-only operations log, separate from the timeline: surgery never
+rewrites it, so a rewound or replaced step stays in it with the rewind after it. It exists for
+post-mortems: which player messages turned into what, which could have been handled without the DM,
+which tools the DM reached for and didn't have.
+
+- `kernel/sessions/<room>-<date>/journal.log`, one line per event, always
+  `<time> <ref> <verb> <actor> <payload> [key=value …]`. Refs are prefixed so one grep finds an item's
+  whole story: `m3` messages, `#12` steps, `draft-15` branches, `w7` wakes, `?` for lines that belong
+  to nothing yet (parse errors, refusals, wishes). `journal.jsonl` is the same with structured facts.
+- Verbs: `open`, `sent`, `wake` (`batch`, `waited`, and `late` or `idle`: whether messages were already
+  waiting when the DM called, or the DM sat waiting), `reply`, `done`, `step` (`cmd`, `game`, `took`),
+  `dry`, `refused` (`code`), `parse`, `preview`, `commit`, `discard`, `rewind`, `wish`.
+- Steps and refusals carry `re=m3` when the DM tags them (`dm act … --re 3`); untagged DM steps get the
+  open message the DM saw most recently, written `re=m3?` (a guess; `grep -w re=m3` finds both).
+  Replies always link to their message. A seat's own clicks get no guess.
+- Until rooms are saved, each server start is a session of its own (`…-2`, `-3`), so refs stay unique
+  within a journal.
+- `dm review` sorts every message: *could have skipped the DM* (its steps only moved the sender's own
+  creatures), *answered without a step* (did the bundle already hold the answer?), *rulings*, *still
+  open*; then the slowest waits with their hops, wishes, parse errors grouped by the missing command
+  (the `dm` tool's unknown subcommands count too), refusals by code, and fiat (places, inserted places,
+  dropped steps kept).
+
 **Deferred properties.** Some things aren't decided until someone looks closely: what's in the chest,
 what this flower does in a potion. A mark can carry a *deferred* layer: when an observer first reaches it
 (attending, with the right gate), the kernel can't answer alone and queues a `needs_dm` item for it
@@ -276,6 +299,10 @@ DM's queue only shows what needs a decision.
    - [x] The DM's tools: the `dm` command line, the inbox with instant acknowledgement, batched wakes with
          a context bundle, timed hops (`dm stats`), the short command language. (Next: quiet/loud, the
          `needs_dm` queue for non-message items, deferred properties.)
+   - [x] The session journal: `kernel/sessions/<room>-<date>/journal.log` (+ `journal.jsonl`), one line per
+         message, wake, reply, step, refusal, parse error, surgery and rewind; `--re` tags; `dm log`,
+         `dm wish`, `dm review`. (`crates/server/src/journal.rs`. Next: agent-call lines `a4`, a session
+         that continues across restarts once rooms are saved.)
 3. [ ] Passive readings producing traces during replay, stamped with game time; individuals binding marks.
 4. [ ] `umwelt(who, focus)` rendering for the DM view and players; `knows` and `why` queries.
 5. [ ] Memory decay, recall with recognition (familiarity and recollection), relative dating in briefs.

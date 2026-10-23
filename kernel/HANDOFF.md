@@ -12,9 +12,11 @@ tools; its **Build order** is the roadmap) and, for the wider priorities, `docs/
 - **Run:** `cargo run --manifest-path kernel/Cargo.toml -p kernel-server` (port 5180; `kernel` entry in
   `.claude/launch.json`). Battlemap at `http://localhost:5180/?as=dm`, or `?as=alice` / `?as=sam`.
   DM tool: `cargo build --manifest-path kernel/Cargo.toml -p kernel-dm`, then `kernel/target/debug/dm`.
-- **Check:** `cargo test --workspace` (28 tests) and `cargo clippy --workspace --all-targets` (clean),
+- **Check:** `cargo test --workspace` (34 tests) and `cargo clippy --workspace --all-targets` (clean),
   from `kernel/`. On Windows the server exe is locked while the preview runs; stop it before rebuilding
-  the server.
+  the server. A session whose browser pane reads the main checkout's `.claude/launch.json` won't find the
+  `kernel` entry (it's only in this worktree): run the same `cargo run` in the background and open the
+  pane at `http://localhost:5180/?as=alice`.
 
 ## What's built (commits on the branch, oldest first)
 
@@ -27,6 +29,10 @@ tools; its **Build order** is the roadmap) and, for the wider priorities, `docs/
    summary-first previews, commit/discard/rewind, keyframes, drop-and-flag.
 5. `6899728` DM tools: short command language (`script.rs`), inbox with instant acks and batched wakes
    (`dm wait`), context bundle, hop timings (`dm stats`), the `dm` CLI, the page's "Tell the DM" box.
+6. (uncommitted) Card A, the session journal: `crates/server/src/journal.rs`, written from every server
+   handler to `kernel/sessions/<room>-<date>[-n]/journal.log` + `journal.jsonl` (git-ignored); `--re` on
+   `dm act` and surgery; `dm log`, `dm wish`, `dm review`; `script::write` turns commands back into
+   script text; surgery takes `script` (parsed by the server, so its parse errors are journaled).
 
 Crates: `kernel/crates/core` (pure rules, no I/O), `kernel/crates/server` (HTTP + SSE + inbox),
 `kernel/crates/dm` (CLI). Data: `kernel/codex/*.json`, `kernel/rooms/*.json`. Page: `kernel/web/index.html`.
@@ -41,30 +47,19 @@ Crates: `kernel/crates/core` (pure rules, no I/O), `kernel/crates/server` (HTTP 
 
 ## Next cards
 
-### Card A: the session journal (agreed, not started)
+### Card A: the session journal (done)
 
-An append-only operations log, separate from the timeline (surgery never rewrites it).
-
-- `kernel/sessions/<room>-<date>/journal.log`: one line per event, always
-  `<time> <ref> <verb> <actor> <payload> [key=value …]`, refs prefixed so one grep finds an item's whole
-  story: `m3` messages, `#12` steps, `draft-15` branches, `w7` wakes (later `a4` agent calls). Plus a
-  `journal.jsonl` twin for structured queries.
-- Log: messages (sent, reply, done), wakes (batch ids, wait time), steps (gist, line, took), refusals,
-  parse errors, surgery previews/commits/discards, rewinds.
-- `dm act … --re 3` and replies tag what they resolve (`re=m3`); untagged ones are guessed by timing and
-  marked as guesses.
-- `dm log [--re m3] [--kind …] [--who …] [--since …]`; `dm wish "…"` for tools the DM wanted.
-- `dm review`: the post-mortem report: messages that could have skipped the DM (resolved only by moving
-  the sender's own creature, or answered with facts the kernel already had), rulings, slowest waits,
-  wishes, parse errors (missing commands), refusals, fiat used.
-
-Example lines:
+See "The session journal" in `docs/kernel-perception.md` and `kernel/DM.md`. Example from a live run:
 ```
-10:02:11.402 m3  sent      alice   "I walk over and ask the priest what that book is." at=priest→osric
-10:02:11.655 w7  wake      dm      m3 batch=1 waited=253ms
-10:02:20.118 #4  step      dm      "Rook walks over to Brother Osric" — Rook moves 20 ft to (4, 4) re=m3 took=0.3ms
-10:04:02.511 ?   parse     dm      act "shove grub east": unknown command "shove"
+00:25:42.286 m1   sent      alice   "I head for the doorway in the south wall."
+00:25:42.543 w1   wake      dm      m1 batch=1 waited=257ms idle=10.1s
+00:25:50.267 #2   step      dm      "Rook steps into the south doorway" — Rook moves 10 ft to (4, 6) cmd="move rook 4,6" game=R1 re=m1? took=0.21ms
+00:25:52.369 m1   reply     dm      "You stand in the doorway; …" after=10.1s
+00:23:51.490 ?    parse     dm      act "walk rook to priest": unknown command "walk" re=m1
 ```
+Follow-ups: `a4` agent-call lines when agents arrive; one session across restarts once rooms are saved
+(today each start opens a new `-n` directory so refs stay unique); "answered without a step" can't yet
+tell whether the kernel already knew the answer (needs `knows`, step 4).
 
 ### Then, from the build order
 

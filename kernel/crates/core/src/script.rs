@@ -22,6 +22,23 @@ pub fn parse(script: &str) -> Result<Vec<Command<String>>, String> {
         .collect()
 }
 
+/// Commands back in the short form, `; `-separated: what the journal shows of a step.
+pub fn write(cmds: &[Command<String>]) -> String {
+    cmds.iter()
+        .map(|c| match c {
+            Command::Move { who, to } => format!("move {who} {},{}", to.x, to.y),
+            Command::Place { who, to } => format!("place {who} {},{}", to.x, to.y),
+            Command::Wait { seconds } => match *seconds {
+                s if s >= 3600 && s % 3600 == 0 => format!("wait {} hours", s / 3600),
+                s if s >= 60 && s % 60 == 0 => format!("wait {} min", s / 60),
+                s if s % 6 == 0 => format!("wait {} rounds", s / 6),
+                s => format!("wait {s}s"),
+            },
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn statement(s: &str) -> Result<Command<String>, String> {
     let words: Vec<&str> = s.split_whitespace().collect();
     let (verb, rest) = words.split_first().ok_or("empty command")?;
@@ -89,6 +106,12 @@ mod tests {
             ]
         );
         assert_eq!(parse("wait 10m").unwrap(), vec![Command::Wait { seconds: 600 }]);
+    }
+
+    #[test]
+    fn writes_what_it_parses() {
+        let text = "move rook 4,5; place snikka 3,1; wait 3 rounds; wait 10 min; wait 7s";
+        assert_eq!(write(&parse(text).unwrap()), text);
     }
 
     #[test]

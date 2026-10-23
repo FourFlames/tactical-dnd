@@ -33,6 +33,15 @@ impl Inbox {
         self.next
     }
 
+    pub fn get(&self, id: u64) -> Option<&Message> {
+        self.messages.iter().find(|m| m.id == id)
+    }
+
+    /// The open message the DM was shown most recently: the likeliest one an untagged step answers.
+    pub fn guess(&self) -> Option<u64> {
+        self.messages.iter().filter(|m| m.done.is_none() && m.delivered.is_some()).max_by_key(|m| m.delivered).map(|m| m.id)
+    }
+
     pub fn get_mut(&mut self, id: u64) -> Option<&mut Message> {
         self.messages.iter_mut().find(|m| m.id == id)
     }

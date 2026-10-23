@@ -1,23 +1,27 @@
 //! `dm`: the DM's tool. Talks to a running kernel server and prints short text: one line per
 //! step, summary first, with ids that can be passed straight back. See kernel/DM.md.
 
-use kernel_core::script;
 use serde_json::{json, Value};
 
 const HELP: &str = "\
 dm <command> [--room R]          (server: $KERNEL_URL, default http://localhost:5180)
 
   look                            the room now: everyone, where, HP, stance to the party
-  act \"<script>\" [--gist G] [--as SEAT] [--dry]
-                                  run commands as one step, e.g. act \"move rook 4,5; wait 1 round\"
+  act \"<script>\" [--gist G] [--re MSG] [--as SEAT] [--dry]
+                                  run commands as one step, e.g. act \"move rook 4,5; wait 1 round\" --re 3
   history [N] [--branch B]        the last N steps (default 20)
   wait [--timeout SECONDS]        block until players message you; prints them as one batch
   reply <id> \"<text>\" [--done]    answer a message (--done when it's resolved)
   messages                        every message and its replies
   insert <after> \"<script>\"       edit history: each makes a draft branch and prints a preview
-  remove <step> · edit <step> \"<script>\" · fiat <step>     (all take --gist)
+  remove <step> · edit <step> \"<script>\" · fiat <step>     (all take --gist and --re)
   commit <branch> · discard <branch> · branches · rewind <step>
   stats                           latency of every hop
+
+  log [N] [--re m3] [--kind step,reply] [--who alice] [--since 10:02|5m]
+                                  the session journal (last 50 lines that match)
+  wish \"<tool you wanted>\" [--re MSG]   note a command or tool you wished you had
+  review                          the post-mortem: what skipped the DM, rulings, slow waits, wishes
 
 script: move <who> <x>,<y> · place <who> <x>,<y> · wait <n> s|rounds|min|hours  (one per line or ;)";
 
@@ -34,6 +38,11 @@ impl Client {
 
     fn get(&self, path: &str) -> Result<Value, String> {
         self.read(self.agent.get(&self.url(path)).call())
+    }
+
+    fn get_with(&self, path: &str, query: &[(&str, &str)]) -> Result<Value, String> {
+        let req = query.iter().fold(self.agent.get(&self.url(path)), |r, (k, v)| r.query(k, v));
+        self.read(req.call())
     }
 
     fn post(&self, path: &str, body: Value) -> Result<Value, String> {
@@ -104,6 +113,8 @@ fn run() -> Result<(), String> {
     let seat = opt(&mut args, "--as");
     let branch = opt(&mut args, "--branch");
     let timeout = opt(&mut args, "--timeout");
+    let re = opt(&mut args, "--re");
+    let (kind, who, since) = (opt(&mut args, "--kind"), opt(&mut args, "--who"), opt(&mut args, "--since"));
     let (dry, done) = (flag(&mut args, "--dry"), flag(&mut args, "--done"));
     let Some((cmd, rest)) = args.split_first() else {
         println!("{HELP}");
@@ -114,7 +125,7 @@ fn run() -> Result<(), String> {
         "look" => look(&c)?,
         "act" => {
             let text = rest.join(" ");
-            let v = c.post("/commands", json!({ "as": seat, "gist": gist, "script": text, "dry_run": dry }))?;
+            let v = c.post("/commands", json!({ "as": seat, "gist": gist, "script": text, "dry_run": dry, "re": re }))?;
             match refused(&v) {
                 Some(r) if v["index"].is_number() => return Err(format!("REFUSED (command {}): {r}", v["index"].as_u64().unwrap_or(0) + 1)),
                 Some(r) => return Err(format!("REFUSED: {r}")),
@@ -158,15 +169,15 @@ fn run() -> Result<(), String> {
         }
         "insert" | "remove" | "edit" | "fiat" => {
             let step = step_arg(rest, "step")?;
-            let commands = || script::parse(&rest[1..].join(" "));
-            let body = match cmd.as_str() {
-                "insert" => json!({ "op": "insert", "after": step, "commands": commands()? }),
-                "edit" => json!({ "op": "edit", "step": step, "commands": commands()? }),
+            let script = rest[1..].join(" ");
+            let mut body = match cmd.as_str() {
+                "insert" => json!({ "op": "insert", "after": step, "script": script }),
+                "edit" => json!({ "op": "edit", "step": step, "script": script }),
                 "remove" => json!({ "op": "remove", "step": step }),
                 _ => json!({ "op": "keep_as_fiat", "step": step }),
             };
-            let mut body = body;
             body["gist"] = json!(gist);
+            body["re"] = json!(re);
             let v = ok(c.post("/surgery", body)?)?;
             let name = v["branch"].as_str().unwrap_or("?");
             println!("{}", v["summary"].as_str().unwrap_or(""));
@@ -201,8 +212,32 @@ fn run() -> Result<(), String> {
             println!("main is now at #{} (what came after is kept as {})", v["head"], v["kept_as"].as_str().unwrap_or("?"));
         }
         "stats" => println!("{}", ok(c.get("/stats")?)?["text"].as_str().unwrap_or("")),
+        "log" => {
+            let limit = rest.first().filter(|s| s.parse::<usize>().is_ok()).cloned();
+            let q: Vec<(&str, &str)> = [("re", &re), ("kind", &kind), ("who", &who), ("since", &since), ("limit", &limit)]
+                .into_iter()
+                .filter_map(|(k, v)| Some((k, v.as_deref()?)))
+                .collect();
+            let v = ok(c.get_with("/journal", &q)?)?;
+            let found = lines(&v["lines"]);
+            if found.is_empty() {
+                println!("(nothing in the journal matches)");
+            }
+            found.iter().for_each(|l| println!("{l}"));
+        }
+        "wish" => {
+            let text = rest.join(" ");
+            let v = ok(c.post("/journal", json!({ "verb": "wish", "text": text, "re": re }))?)?;
+            println!("{}", v["line"].as_str().unwrap_or("noted"));
+        }
+        "review" => println!("{}", ok(c.get("/review")?)?["text"].as_str().unwrap_or("")),
         "help" | "--help" | "-h" => println!("{HELP}"),
-        other => return Err(format!("unknown command \"{other}\"\n\n{HELP}")),
+        other => {
+            // A command the DM reached for and didn't find: worth knowing in the review.
+            let tried = std::iter::once(other).chain(rest.iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
+            let _ = c.post("/journal", json!({ "verb": "parse", "text": format!("dm {tried}: unknown dm command \"{other}\""), "re": re }));
+            return Err(format!("unknown command \"{other}\"\n\n{HELP}"));
+        }
     }
     footer(&c);
     Ok(())
