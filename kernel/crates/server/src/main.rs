@@ -32,6 +32,7 @@
 
 mod inbox;
 mod journal;
+mod store;
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -39,8 +40,9 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use inbox::Inbox;
+use inbox::{now_ms, Inbox};
 use journal::{quote, short, Entry, Filter, Journal};
+use store::Store;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -54,7 +56,7 @@ use kernel_core::view::event_text;
 use kernel_core::{preview_lines, script, step_line, Codex, Command, Handle, Observer, Room, RoomDef, RoomState, RoomView, Step, StepId, StepView, Surgery};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::sync::{broadcast, Notify, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::services::ServeDir;
 
@@ -72,14 +74,25 @@ struct Hosted {
     journal: Journal,
     /// Wakes a waiting DM when a message arrives.
     notify: Arc<Notify>,
+    /// Where the room is saved after every request; none if the disk wouldn't have it.
+    store: Option<Store>,
 }
 
 /// How long a wake waits for more messages to join the batch once the first arrives.
 const BATCH_WINDOW: Duration = Duration::from_millis(250);
 
 impl Hosted {
-    fn new(room: Room, journal: Journal) -> Self {
-        Self { room, tx: broadcast::channel(256).0, inbox: Inbox::default(), journal, notify: Arc::new(Notify::new()) }
+    fn new(room: Room, inbox: Inbox, journal: Journal, store: Option<Store>) -> Self {
+        Self { room, tx: broadcast::channel(256).0, inbox, journal, notify: Arc::new(Notify::new()), store }
+    }
+
+    /// Writes what the last request changed: new steps, branch heads, the inbox.
+    fn save(&mut self) {
+        if let Some(store) = &mut self.store {
+            if let Err(e) = store.sync(&self.room, &mut self.inbox) {
+                eprintln!("room {}: can't save: {e}", self.room.id);
+            }
+        }
     }
 
     /// `re=m3` for a step or refusal the DM tagged, or `re=m3?` guessed: the open message the DM
@@ -113,7 +126,42 @@ impl Hosted {
     }
 }
 
-type Rooms = Arc<RwLock<BTreeMap<String, Hosted>>>;
+/// A request for a room's task: runs on its `Hosted`, alone, then the room is saved.
+type Job = Box<dyn FnOnce(&mut Hosted) + Send>;
+
+/// How handlers reach a room. Each room is one task that owns its `Hosted` and runs requests one at
+/// a time from a queue, so nothing locks and one room never waits on another.
+struct RoomHandle {
+    jobs: mpsc::UnboundedSender<Job>,
+    /// Shared with the room's `Hosted`, so `wait` can sleep without occupying the task.
+    notify: Arc<Notify>,
+}
+
+impl RoomHandle {
+    fn spawn(mut hosted: Hosted) -> Self {
+        let (jobs, mut queue) = mpsc::unbounded_channel::<Job>();
+        let notify = hosted.notify.clone();
+        tokio::spawn(async move {
+            while let Some(job) = queue.recv().await {
+                job(&mut hosted);
+                hosted.save();
+            }
+        });
+        Self { jobs, notify }
+    }
+
+    /// Runs `f` on the room and returns what it returns.
+    async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Hosted) -> R + Send + 'static) -> R {
+        let (done, result) = oneshot::channel();
+        let job: Job = Box::new(move |h| {
+            let _ = done.send(f(h));
+        });
+        self.jobs.send(job).unwrap_or_else(|_| panic!("the room's task has stopped"));
+        result.await.expect("the room's task stopped mid-request")
+    }
+}
+
+type Rooms = Arc<BTreeMap<String, RoomHandle>>;
 
 fn kernel_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -145,23 +193,46 @@ fn load_codex(dir: &FsPath) -> Codex {
     codex
 }
 
-/// Opens every `rooms/*.json`; the file name is the room id.
-fn load_rooms(dir: &FsPath, codex: &Codex, sessions: &FsPath) -> BTreeMap<String, Hosted> {
+/// Opens every room that has a file in `rooms/` or a save in `saves/`. A saved room is loaded from
+/// its save (its own copy of the definition and codex), so editing `rooms/<id>.json` changes
+/// nothing until the save folder is deleted.
+fn load_rooms(dir: &FsPath, codex: &Codex, saves: &FsPath) -> BTreeMap<String, Hosted> {
+    let mut ids: Vec<String> = json_files(dir).iter().map(|p| p.file_stem().unwrap().to_string_lossy().into_owned()).collect();
+    for entry in std::fs::read_dir(saves).into_iter().flatten().flatten() {
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if store::exists(&entry.path()) && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids.sort();
     let mut rooms = BTreeMap::new();
-    for path in json_files(dir) {
-        let id = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let opened = read_json::<RoomDef>(&path).and_then(|def| Room::open(id.clone(), def, codex.clone()));
+    for id in ids {
+        let save_dir = saves.join(&id);
+        let opened = if store::exists(&save_dir) {
+            Store::load(&save_dir, &id).map(|(store, loaded)| (loaded.room, loaded.inbox, Some(store), true))
+        } else {
+            read_json::<RoomDef>(&dir.join(format!("{id}.json")))
+                .and_then(|def| Room::open(id.clone(), def, codex.clone()))
+                .map(|room| match Store::create(&save_dir, &room) {
+                    Ok(store) => (room, Inbox::default(), Some(store), false),
+                    Err(e) => {
+                        eprintln!("room {id}: can't save to {} ({e}); keeping it in memory", save_dir.display());
+                        (room, Inbox::default(), None, false)
+                    }
+                })
+        };
         match opened {
-            Ok(room) => {
-                let journal = Journal::open(sessions, &id, &room.state().name).unwrap_or_else(|e| {
+            Ok((room, inbox, store, resumed)) => {
+                let journal = Journal::open(&save_dir, &id, &room.state().name).unwrap_or_else(|e| {
                     eprintln!("room {id}: no journal on disk ({e}); keeping it in memory");
                     Journal::memory(&id)
                 });
-                let at = journal.dir.as_ref().map_or("in memory".into(), |d| d.display().to_string());
-                println!("room {id}: {} · journal {at}", room.state().name);
-                rooms.insert(id, Hosted::new(room, journal));
+                let how = if resumed { format!("resumed at #{} with {} messages", room.seq(), inbox.all().count()) } else { "opened fresh".into() };
+                let at = if store.is_some() { save_dir.display().to_string() } else { "in memory".into() };
+                println!("room {id}: {} · {how} · saved in {at}", room.state().name);
+                rooms.insert(id, Hosted::new(room, inbox, journal, store));
             }
-            Err(e) => eprintln!("skipping {}: {e}", path.display()),
+            Err(e) => eprintln!("skipping room {id}: {e}"),
         }
     }
     rooms
@@ -229,18 +300,22 @@ struct AsOnly {
 }
 
 async fn list_rooms(State(rooms): State<Rooms>) -> Json<serde_json::Value> {
-    let rooms = rooms.read().await;
-    Json(json!(rooms
-        .iter()
-        .map(|(id, h)| json!({ "id": id, "name": h.room.state().name, "seats": h.room.state().seats.keys().collect::<Vec<_>>() }))
-        .collect::<Vec<_>>()))
+    let mut list = Vec::new();
+    for (id, room) in rooms.iter() {
+        let id = id.clone();
+        list.push(room.call(move |h| json!({ "id": id, "name": h.room.state().name, "seats": h.room.state().seats.keys().collect::<Vec<_>>() })).await);
+    }
+    Json(json!(list))
 }
 
 async fn get_room(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    let obs = tri!(observer(h.room.state(), q.who.as_deref()));
-    Json(RoomView::new(&h.room, &obs)).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        let obs = tri!(observer(h.room.state(), q.who.as_deref()));
+        Json(RoomView::new(&h.room, &obs)).into_response()
+        })
+        .await
 }
 
 /// Commands as JSON (`commands`) or in the short text form (`script`, see kernel_core::script).
@@ -320,79 +395,88 @@ fn tagged(e: Entry, re: &Option<String>) -> Entry {
 }
 
 async fn post_commands(State(rooms): State<Rooms>, Path(id): Path<String>, Json(batch): Json<Batch>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    let obs = tri!(observer(h.room.state(), batch.who.as_deref()));
-    let actor = observer_name(&obs);
-    let re = h.re(&obs, tri!(message_ref(&h.inbox, batch.re.as_deref())));
-    let (commands, text) = match (batch.commands, batch.script) {
-        (Some(c), None) => {
-            let text = script::write(&c);
-            (c, text)
-        }
-        (None, Some(s)) => match script::parse(&s) {
-            Ok(c) => (c, s.trim().to_owned()),
-            Err(e) => {
-                h.journal.record(tagged(parse_entry(actor, format!("act {}", quote(s.trim())), &s, &e), &re));
-                return error(StatusCode::UNPROCESSABLE_ENTITY, e);
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        let obs = tri!(observer(h.room.state(), batch.who.as_deref()));
+        let actor = observer_name(&obs);
+        let re = h.re(&obs, tri!(message_ref(&h.inbox, batch.re.as_deref())));
+        let (commands, text) = match (batch.commands, batch.script) {
+            (Some(c), None) => {
+                let text = script::write(&c);
+                (c, text)
             }
-        },
-        _ => return error(StatusCode::BAD_REQUEST, "send either `commands` or `script`"),
-    };
-    let started = Instant::now();
-    let result = h.room.execute(&obs, &commands, batch.gist, batch.dry_run);
-    let took = started.elapsed();
-    h.inbox.record_exec(took);
-    match result {
-        Ok(step) => {
-            let s = h.room.state();
-            let (refr, verb) = if batch.dry_run { ("?".to_owned(), "dry") } else { (step.id.to_string(), "step") };
-            let places = commands.iter().filter(|c| matches!(c, Command::Place { .. })).count();
-            let entry = Entry::new(refr, verb, actor, step_payload(s, &step))
-                .kv("cmd", text)
-                .kv("game", step.time.to_string())
-                .fact("own_moves_of", own_moves_of(s, &step))
-                .fact("places", places);
-            h.journal.record(tagged(entry, &re).kv("took", short(took)));
-            if !batch.dry_run {
-                h.publish(&step);
+            (None, Some(s)) => match script::parse(&s) {
+                Ok(c) => (c, s.trim().to_owned()),
+                Err(e) => {
+                    h.journal.record(tagged(parse_entry(actor, format!("act {}", quote(s.trim())), &s, &e), &re));
+                    return error(StatusCode::UNPROCESSABLE_ENTITY, e);
+                }
+            },
+            _ => return error(StatusCode::BAD_REQUEST, "send either `commands` or `script`"),
+        };
+        let started = Instant::now();
+        let result = h.room.execute(&obs, &commands, batch.gist, batch.dry_run);
+        let took = started.elapsed();
+        h.inbox.record_exec(took);
+        match result {
+            Ok(step) => {
+                let s = h.room.state();
+                let (refr, verb) = if batch.dry_run { ("?".to_owned(), "dry") } else { (step.id.to_string(), "step") };
+                let places = commands.iter().filter(|c| matches!(c, Command::Place { .. })).count();
+                let entry = Entry::new(refr, verb, actor, step_payload(s, &step))
+                    .kv("cmd", text)
+                    .kv("game", step.time.to_string())
+                    .fact("own_moves_of", own_moves_of(s, &step))
+                    .fact("places", places);
+                h.journal.record(tagged(entry, &re).kv("took", short(took)));
+                if !batch.dry_run {
+                    h.publish(&step);
+                }
+                let s = h.room.state();
+                Json(json!({ "ok": true, "dry_run": batch.dry_run, "line": step_line(s, &obs, &step), "step": StepView::new(s, &obs, &step) })).into_response()
             }
-            let s = h.room.state();
-            Json(json!({ "ok": true, "dry_run": batch.dry_run, "line": step_line(s, &obs, &step), "step": StepView::new(s, &obs, &step) })).into_response()
+            Err(refused) => {
+                let reason = h.room.state().explain(&obs, &refused.rejection);
+                let code = refused.rejection.code();
+                let entry = Entry::new("?", "refused", actor, format!("{}: {reason}", quote(&text))).kv("code", code).kv("cmd", (refused.index + 1).to_string());
+                h.journal.record(tagged(entry, &re));
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "ok": false, "index": refused.index, "code": code, "reason": reason }))).into_response()
+            }
         }
-        Err(refused) => {
-            let reason = h.room.state().explain(&obs, &refused.rejection);
-            let code = refused.rejection.code();
-            let entry = Entry::new("?", "refused", actor, format!("{}: {reason}", quote(&text))).kv("code", code).kv("cmd", (refused.index + 1).to_string());
-            h.journal.record(tagged(entry, &re));
-            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "ok": false, "index": refused.index, "code": code, "reason": reason }))).into_response()
-        }
-    }
+        })
+        .await
 }
 
 /// The last steps of a branch as one line each, in the asker's names. Seats only see main.
 async fn history(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    let s = h.room.state();
-    let obs = tri!(observer(s, q.who.as_deref()));
-    if obs != Observer::Dm && q.branch.as_deref().is_some_and(|b| b != "main") {
-        return error(StatusCode::FORBIDDEN, "only the DM can read other branches");
-    }
-    let steps = match h.room.history(q.branch.as_deref(), q.limit.unwrap_or(20)) {
-        Ok(s) => s,
-        Err(e) => return error(StatusCode::NOT_FOUND, e),
-    };
-    let lines: Vec<String> = steps.iter().filter_map(|st| step_line(s, &obs, st)).collect();
-    Json(json!({ "branch": q.branch.as_deref().unwrap_or("main"), "head": h.room.seq(), "lines": lines })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        let s = h.room.state();
+        let obs = tri!(observer(s, q.who.as_deref()));
+        if obs != Observer::Dm && q.branch.as_deref().is_some_and(|b| b != "main") {
+            return error(StatusCode::FORBIDDEN, "only the DM can read other branches");
+        }
+        let steps = match h.room.history(q.branch.as_deref(), q.limit.unwrap_or(20)) {
+            Ok(s) => s,
+            Err(e) => return error(StatusCode::NOT_FOUND, e),
+        };
+        let lines: Vec<String> = steps.iter().filter_map(|st| step_line(s, &obs, st)).collect();
+        Json(json!({ "branch": q.branch.as_deref().unwrap_or("main"), "head": h.room.seq(), "lines": lines })).into_response()
+        })
+        .await
 }
 
 async fn branches(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), q.who.as_deref()));
-    let list: Vec<_> = h.room.timeline().branches().map(|(name, b)| json!({ "name": name, "head": b.head, "gist": b.gist })).collect();
-    Json(json!(list)).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.who.as_deref()));
+        let list: Vec<_> = h.room.timeline().branches().map(|(name, b)| json!({ "name": name, "head": b.head, "gist": b.gist })).collect();
+        Json(json!(list)).into_response()
+        })
+        .await
 }
 
 /// An edit to history. Commands may come as JSON (`commands`) or as a `script`.
@@ -408,84 +492,93 @@ struct SurgeryReq {
 }
 
 async fn surgery(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<SurgeryReq>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    let re = h.re(&Observer::Dm, tri!(message_ref(&h.inbox, req.re.as_deref())));
-    let mut op = req.op;
-    let name = op.get("op").and_then(|o| o.as_str()).unwrap_or("?").to_owned();
-    // `after=#12` or `step=#12`, for the line.
-    let target = ["after", "step"].into_iter().find_map(|k| op.get(k).map(|v| (k, format!("#{}", v.to_string().trim_matches('"').trim_start_matches('#')))));
-    let with_target = |e: Entry| match &target {
-        Some((k, v)) => e.kv(k, v.clone()),
-        None => e,
-    };
-    if let Some(text) = &req.script {
-        match script::parse(text) {
-            Ok(c) => {
-                op.insert("commands".into(), json!(c));
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        let re = h.re(&Observer::Dm, tri!(message_ref(&h.inbox, req.re.as_deref())));
+        let mut op = req.op;
+        let name = op.get("op").and_then(|o| o.as_str()).unwrap_or("?").to_owned();
+        // `after=#12` or `step=#12`, for the line.
+        let target = ["after", "step"].into_iter().find_map(|k| op.get(k).map(|v| (k, format!("#{}", v.to_string().trim_matches('"').trim_start_matches('#')))));
+        let with_target = |e: Entry| match &target {
+            Some((k, v)) => e.kv(k, v.clone()),
+            None => e,
+        };
+        if let Some(text) = &req.script {
+            match script::parse(text) {
+                Ok(c) => {
+                    op.insert("commands".into(), json!(c));
+                }
+                Err(e) => {
+                    h.journal.record(tagged(with_target(parse_entry("dm".into(), format!("{name} {}", quote(text.trim())), text, &e)), &re));
+                    return error(StatusCode::UNPROCESSABLE_ENTITY, e);
+                }
+            }
+        }
+        let op: Surgery = match serde_json::from_value(serde_json::Value::Object(op)) {
+            Ok(op) => op,
+            Err(e) => return error(StatusCode::BAD_REQUEST, format!("not a surgery: {e}")),
+        };
+        match h.room.surgery(op, req.gist.clone()) {
+            Ok(p) => {
+                let lines = preview_lines(&h.room, &p.changes);
+                let gist = req.gist.as_deref().map(|g| format!(" {}", quote(g))).unwrap_or_default();
+                let mut entry = with_target(Entry::new(p.branch.clone(), "preview", "dm", format!("{name}{gist}: {}", lines[0])));
+                if let Some(t) = &req.script {
+                    entry = entry.kv("cmd", t.trim());
+                }
+                h.journal.record(tagged(entry, &re).fact("op", name));
+                Json(json!({ "ok": true, "branch": p.branch, "base": p.base, "head": p.head, "summary": lines[0], "lines": &lines[1..] })).into_response()
             }
             Err(e) => {
-                h.journal.record(tagged(with_target(parse_entry("dm".into(), format!("{name} {}", quote(text.trim())), text, &e)), &re));
-                return error(StatusCode::UNPROCESSABLE_ENTITY, e);
+                h.journal.record(tagged(with_target(Entry::new("?", "refused", "dm", format!("{name}: {e}")).kv("code", "surgery")), &re));
+                error(StatusCode::UNPROCESSABLE_ENTITY, e)
             }
         }
-    }
-    let op: Surgery = match serde_json::from_value(serde_json::Value::Object(op)) {
-        Ok(op) => op,
-        Err(e) => return error(StatusCode::BAD_REQUEST, format!("not a surgery: {e}")),
-    };
-    match h.room.surgery(op, req.gist.clone()) {
-        Ok(p) => {
-            let lines = preview_lines(&h.room, &p.changes);
-            let gist = req.gist.as_deref().map(|g| format!(" {}", quote(g))).unwrap_or_default();
-            let mut entry = with_target(Entry::new(p.branch.clone(), "preview", "dm", format!("{name}{gist}: {}", lines[0])));
-            if let Some(t) = &req.script {
-                entry = entry.kv("cmd", t.trim());
-            }
-            h.journal.record(tagged(entry, &re).fact("op", name));
-            Json(json!({ "ok": true, "branch": p.branch, "base": p.base, "head": p.head, "summary": lines[0], "lines": &lines[1..] })).into_response()
-        }
-        Err(e) => {
-            h.journal.record(tagged(with_target(Entry::new("?", "refused", "dm", format!("{name}: {e}")).kv("code", "surgery")), &re));
-            error(StatusCode::UNPROCESSABLE_ENTITY, e)
-        }
-    }
+        })
+        .await
 }
 
 async fn commit(State(rooms): State<Rooms>, Path((id, name)): Path<(String, String)>, Json(req): Json<AsOnly>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    match h.room.commit(&name) {
-        Ok(changes) => {
-            h.reset();
-            let lines = preview_lines(&h.room, &changes);
-            let entry = Entry::new(name.clone(), "commit", "dm", format!("replayed: {}", lines[0])).kv("main", format!("#{}", h.room.seq())).kv("kept", format!("before-{name}"));
-            h.journal.record(entry);
-            Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": format!("before-{name}"), "replayed": lines })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        match h.room.commit(&name) {
+            Ok(changes) => {
+                h.reset();
+                let lines = preview_lines(&h.room, &changes);
+                let entry = Entry::new(name.clone(), "commit", "dm", format!("replayed: {}", lines[0])).kv("main", format!("#{}", h.room.seq())).kv("kept", format!("before-{name}"));
+                h.journal.record(entry);
+                Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": format!("before-{name}"), "replayed": lines })).into_response()
+            }
+            Err(e) => {
+                h.journal.record(Entry::new("?", "refused", "dm", format!("commit {name}: {e}")).kv("code", "branch"));
+                error(StatusCode::UNPROCESSABLE_ENTITY, e)
+            }
         }
-        Err(e) => {
-            h.journal.record(Entry::new("?", "refused", "dm", format!("commit {name}: {e}")).kv("code", "branch"));
-            error(StatusCode::UNPROCESSABLE_ENTITY, e)
-        }
-    }
+        })
+        .await
 }
 
 async fn discard(State(rooms): State<Rooms>, Path((id, name)): Path<(String, String)>, Json(req): Json<AsOnly>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    match h.room.discard(&name) {
-        Ok(()) => {
-            h.journal.record(Entry::new(name, "discard", "dm", "-"));
-            Json(json!({ "ok": true })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        match h.room.discard(&name) {
+            Ok(()) => {
+                h.journal.record(Entry::new(name, "discard", "dm", "-"));
+                Json(json!({ "ok": true })).into_response()
+            }
+            Err(e) => {
+                h.journal.record(Entry::new("?", "refused", "dm", format!("discard {name}: {e}")).kv("code", "branch"));
+                error(StatusCode::NOT_FOUND, e)
+            }
         }
-        Err(e) => {
-            h.journal.record(Entry::new("?", "refused", "dm", format!("discard {name}: {e}")).kv("code", "branch"));
-            error(StatusCode::NOT_FOUND, e)
-        }
-    }
+        })
+        .await
 }
 
 #[derive(Deserialize)]
@@ -496,21 +589,24 @@ struct Rewind {
 }
 
 async fn post_rewind(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<Rewind>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    let from = h.room.seq();
-    match h.room.rewind_to(req.step) {
-        Ok(saved) => {
-            h.reset();
-            h.journal.record(Entry::new(req.step.to_string(), "rewind", "dm", format!("main back to {}", req.step)).kv("from", format!("#{from}")).kv("kept", saved.clone()));
-            Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": saved })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        let from = h.room.seq();
+        match h.room.rewind_to(req.step) {
+            Ok(saved) => {
+                h.reset();
+                h.journal.record(Entry::new(req.step.to_string(), "rewind", "dm", format!("main back to {}", req.step)).kv("from", format!("#{from}")).kv("kept", saved.clone()));
+                Json(json!({ "ok": true, "head": h.room.seq(), "kept_as": saved })).into_response()
+            }
+            Err(why) => {
+                h.journal.record(Entry::new("?", "refused", "dm", format!("rewind {}: {why}", req.step)).kv("code", "branch"));
+                error(StatusCode::UNPROCESSABLE_ENTITY, why)
+            }
         }
-        Err(why) => {
-            h.journal.record(Entry::new("?", "refused", "dm", format!("rewind {}: {why}", req.step)).kv("code", "branch"));
-            error(StatusCode::UNPROCESSABLE_ENTITY, why)
-        }
-    }
+        })
+        .await
 }
 
 #[derive(Deserialize)]
@@ -523,44 +619,50 @@ struct NewMessage {
 
 /// A seat tells the DM something. It's acknowledged at once, and wakes a waiting DM.
 async fn post_message(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<NewMessage>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    let Observer::Seat(seat) = tri!(observer(h.room.state(), req.who.as_deref())) else {
-        return error(StatusCode::BAD_REQUEST, "messages come from a seat; the DM replies with dm reply");
-    };
-    if req.text.trim().is_empty() {
-        return error(StatusCode::BAD_REQUEST, "say something");
-    }
-    let at = req.at.filter(|a| !a.is_empty());
-    let n = h.inbox.add(seat.clone(), req.text.trim().to_owned(), at.clone());
-    let mut entry = Entry::new(format!("m{n}"), "sent", seat.to_string(), quote(req.text.trim())).fact("msg", n);
-    if let Some(at) = at {
-        // Their name for it → the DM's, so the line reads in the DM's names too.
-        let s = h.room.state();
-        let id = s.names.get(&Observer::Seat(seat.clone())).and_then(|names| names.resolve(&at));
-        let dm = id.and_then(|id| s.names.get(&Observer::Dm)?.of(id)).map(|a| a.handle.to_string());
-        entry = entry.kv("at", dm.map_or_else(|| at.clone(), |d| format!("{at}→{d}")));
-    }
-    h.journal.record(entry);
-    h.tell(&seat, json!({ "msg": n, "kind": "sent", "text": "Sent to the DM." }));
-    h.notify.notify_waiters();
-    Json(json!({ "ok": true, "id": n })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        let Observer::Seat(seat) = tri!(observer(h.room.state(), req.who.as_deref())) else {
+            return error(StatusCode::BAD_REQUEST, "messages come from a seat; the DM replies with dm reply");
+        };
+        if req.text.trim().is_empty() {
+            return error(StatusCode::BAD_REQUEST, "say something");
+        }
+        let at = req.at.filter(|a| !a.is_empty());
+        let n = h.inbox.add(seat.clone(), req.text.trim().to_owned(), at.clone());
+        let mut entry = Entry::new(format!("m{n}"), "sent", seat.to_string(), quote(req.text.trim())).fact("msg", n);
+        if let Some(at) = at {
+            // Their name for it → the DM's, so the line reads in the DM's names too.
+            let s = h.room.state();
+            let id = s.names.get(&Observer::Seat(seat.clone())).and_then(|names| names.resolve(&at));
+            let dm = id.and_then(|id| s.names.get(&Observer::Dm)?.of(id)).map(|a| a.handle.to_string());
+            entry = entry.kv("at", dm.map_or_else(|| at.clone(), |d| format!("{at}→{d}")));
+        }
+        h.journal.record(entry);
+        h.tell(&seat, json!({ "msg": n, "kind": "sent", "text": "Sent to the DM." }));
+        h.notify.notify_waiters();
+        Json(json!({ "ok": true, "id": n })).into_response()
+        })
+        .await
 }
 
 async fn list_messages(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    let obs = tri!(observer(h.room.state(), q.who.as_deref()));
-    let list: Vec<_> = h
-        .inbox
-        .all()
-        .filter(|m| matches!(&obs, Observer::Dm) || matches!(&obs, Observer::Seat(s) if *s == m.from))
-        .map(|m| {
-            let status = if m.done.is_some() { "done" } else if m.delivered.is_some() { "reading" } else { "sent" };
-            json!({ "id": m.id, "from": m.from, "text": m.text, "at": m.at, "status": status, "replies": m.replies })
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        let obs = tri!(observer(h.room.state(), q.who.as_deref()));
+        let list: Vec<_> = h
+            .inbox
+            .all()
+            .filter(|m| matches!(&obs, Observer::Dm) || matches!(&obs, Observer::Seat(s) if *s == m.from))
+            .map(|m| {
+                let status = if m.done.is_some() { "done" } else if m.delivered.is_some() { "reading" } else { "sent" };
+                json!({ "id": m.id, "from": m.from, "text": m.text, "at": m.at, "status": status, "replies": m.replies })
+            })
+            .collect();
+        Json(json!(list)).into_response()
         })
-        .collect();
-    Json(json!(list)).into_response()
+        .await
 }
 
 #[derive(Deserialize)]
@@ -573,43 +675,49 @@ struct WaitQuery {
 /// The DM's wake. Blocks until at least one message is unseen, waits a moment for others to join
 /// the batch, then returns them all with a context bundle. Each sender is told the DM is reading.
 async fn wait(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<WaitQuery>) -> Response {
-    let called = Instant::now();
+    let called = now_ms();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(q.timeout.unwrap_or(300).min(3600));
-    let notify = {
-        let rooms = rooms.read().await;
-        let Some(h) = rooms.get(&id) else { return no_room(&id) };
-        tri!(dm_only(h.room.state(), q.who.as_deref()));
-        h.notify.clone()
-    };
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    let who = q.who;
+    let allowed = room.call(move |h| dm_only(h.room.state(), who.as_deref())).await;
+    tri!(allowed);
+    // The waiting happens here, off the room's task, so the room keeps serving while the DM sleeps.
+    let notify = room.notify.clone();
     loop {
         let notified = notify.notified();
         tokio::pin!(notified);
         notified.as_mut().enable(); // registered before checking, so a message arriving now isn't missed
-        if rooms.read().await[&id].inbox.undelivered() == 0 {
+        if room.call(|h| h.inbox.undelivered()).await == 0 {
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return Json(json!({ "timeout": true, "text": "TIMEOUT: nothing for the DM yet" })).into_response();
             }
             continue;
         }
         tokio::time::sleep(BATCH_WINDOW).await;
-        let mut rooms = rooms.write().await;
-        let h = rooms.get_mut(&id).unwrap();
-        let ids = h.inbox.deliver();
-        if ids.is_empty() {
-            continue; // another waiter took them
+        let woke = room
+            .call(move |h| {
+                let ids = h.inbox.deliver();
+                if ids.is_empty() {
+                    return None; // another waiter took them
+                }
+                let text = inbox::bundle(&h.room, &ids, &h.inbox);
+                let now = now_ms();
+                let oldest = h.inbox.all().filter(|m| ids.contains(&m.id)).map(|m| m.received).min().unwrap_or(now);
+                let span = |a: i64, b: i64| Duration::from_millis((b - a).max(0) as u64);
+                let w = h.journal.next_wake();
+                let refs = ids.iter().map(|n| format!("m{n}")).collect::<Vec<_>>().join(",");
+                // `late`: messages were already waiting when the DM called; `idle`: the DM waited for them.
+                let (k, d) = if oldest < called { ("late", span(oldest, called)) } else { ("idle", span(called, oldest)) };
+                h.journal.record(Entry::new(w, "wake", "dm", refs).kv("batch", ids.len().to_string()).kv("waited", short(span(oldest, now))).kv(k, short(d)).fact("msgs", ids.clone()));
+                for m in h.inbox.all().filter(|m| ids.contains(&m.id)) {
+                    h.tell(&m.from, json!({ "msg": m.id, "kind": "reading", "text": "The DM is reading…" }));
+                }
+                Some(Json(json!({ "timeout": false, "ids": ids, "text": text })).into_response())
+            })
+            .await;
+        if let Some(response) = woke {
+            return response;
         }
-        let text = inbox::bundle(&h.room, &ids, &h.inbox);
-        let now = Instant::now();
-        let oldest = h.inbox.all().filter(|m| ids.contains(&m.id)).map(|m| m.received).min().unwrap_or(now);
-        let w = h.journal.next_wake();
-        let refs = ids.iter().map(|n| format!("m{n}")).collect::<Vec<_>>().join(",");
-        // `late`: messages were already waiting when the DM called; `idle`: the DM waited for them.
-        let (k, d) = if oldest < called { ("late", called - oldest) } else { ("idle", oldest - called) };
-        h.journal.record(Entry::new(w, "wake", "dm", refs).kv("batch", ids.len().to_string()).kv("waited", short(now - oldest)).kv(k, short(d)).fact("msgs", ids.clone()));
-        for m in h.inbox.all().filter(|m| ids.contains(&m.id)) {
-            h.tell(&m.from, json!({ "msg": m.id, "kind": "reading", "text": "The DM is reading…" }));
-        }
-        return Json(json!({ "timeout": false, "ids": ids, "text": text })).into_response();
     }
 }
 
@@ -623,40 +731,49 @@ struct Reply {
 }
 
 async fn reply(State(rooms): State<Rooms>, Path((id, n)): Path<(String, String)>, Json(req): Json<Reply>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    let Ok(n) = n.trim_start_matches('#').parse::<u64>() else { return error(StatusCode::BAD_REQUEST, "messages are numbered: reply 3") };
-    let Some(m) = h.inbox.get_mut(n) else { return error(StatusCode::NOT_FOUND, format!("there is no message #{n}")) };
-    let now = Instant::now();
-    m.delivered.get_or_insert(now);
-    m.first_reply.get_or_insert(now);
-    if req.done {
-        m.done = Some(now);
-    }
-    m.replies.push(req.text.clone());
-    let seat = m.from.clone();
-    let since = short(now - m.received);
-    h.journal.record(Entry::new(format!("m{n}"), "reply", "dm", quote(&req.text)).kv("after", since.clone()).fact("msg", n));
-    if req.done {
-        h.journal.record(Entry::new(format!("m{n}"), "done", "dm", "-").kv("total", since).fact("msg", n));
-    }
-    h.tell(&seat, json!({ "msg": n, "kind": "reply", "text": req.text, "done": req.done }));
-    Json(json!({ "ok": true })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        let Ok(n) = n.trim_start_matches('#').parse::<u64>() else { return error(StatusCode::BAD_REQUEST, "messages are numbered: reply 3") };
+        let Some(m) = h.inbox.get_mut(n) else { return error(StatusCode::NOT_FOUND, format!("there is no message #{n}")) };
+        let now = now_ms();
+        m.delivered.get_or_insert(now);
+        m.first_reply.get_or_insert(now);
+        if req.done {
+            m.done = Some(now);
+        }
+        m.replies.push(req.text.clone());
+        let seat = m.from.clone();
+        let since = short(Duration::from_millis((now - m.received).max(0) as u64));
+        h.journal.record(Entry::new(format!("m{n}"), "reply", "dm", quote(&req.text)).kv("after", since.clone()).fact("msg", n));
+        if req.done {
+            h.journal.record(Entry::new(format!("m{n}"), "done", "dm", "-").kv("total", since).fact("msg", n));
+        }
+        h.tell(&seat, json!({ "msg": n, "kind": "reply", "text": req.text, "done": req.done }));
+        Json(json!({ "ok": true })).into_response()
+        })
+        .await
 }
 
 async fn pending(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), q.who.as_deref()));
-    Json(json!({ "unseen": h.inbox.undelivered(), "open": h.inbox.open() })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.who.as_deref()));
+        Json(json!({ "unseen": h.inbox.undelivered(), "open": h.inbox.open() })).into_response()
+        })
+        .await
 }
 
 async fn stats(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), q.who.as_deref()));
-    Json(json!({ "text": h.inbox.stats() })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.who.as_deref()));
+        Json(json!({ "text": h.inbox.stats() })).into_response()
+        })
+        .await
 }
 
 #[derive(Deserialize)]
@@ -671,11 +788,14 @@ struct JournalQuery {
 }
 
 async fn get_journal(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<JournalQuery>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), q.asker.as_deref()));
-    let lines = h.journal.query(&Filter { re: q.re, kind: q.kind, who: q.who, since: q.since, limit: q.limit });
-    Json(json!({ "lines": lines, "dir": h.journal.dir })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.asker.as_deref()));
+        let lines = h.journal.query(&Filter { re: q.re, kind: q.kind, who: q.who, since: q.since, limit: q.limit });
+        Json(json!({ "lines": lines, "dir": h.journal.dir })).into_response()
+        })
+        .await
 }
 
 /// A line the DM adds: a `wish` for a tool it didn't have, or a `parse` error from the `dm` tool.
@@ -689,33 +809,39 @@ struct JournalNote {
 }
 
 async fn post_journal(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<JournalNote>) -> Response {
-    let mut rooms = rooms.write().await;
-    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), req.who.as_deref()));
-    let text = req.text.trim();
-    if text.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "say what");
-    }
-    let entry = match req.verb.as_str() {
-        "wish" => Entry::new("?", "wish", "dm", quote(text)),
-        "parse" => {
-            let (what, err) = text.split_once(": ").unwrap_or((text, ""));
-            parse_entry("dm".into(), what.to_owned(), "", err)
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), req.who.as_deref()));
+        let text = req.text.trim();
+        if text.is_empty() {
+            return error(StatusCode::BAD_REQUEST, "say what");
         }
-        other => return error(StatusCode::BAD_REQUEST, format!("the DM can add wish or parse lines, not \"{other}\"")),
-    };
-    let re = tri!(message_ref(&h.inbox, req.re.as_deref())).map(|n| format!("m{n}"));
-    let entry = tagged(entry, &re);
-    let line = entry.line();
-    h.journal.record(entry);
-    Json(json!({ "ok": true, "line": line })).into_response()
+        let entry = match req.verb.as_str() {
+            "wish" => Entry::new("?", "wish", "dm", quote(text)),
+            "parse" => {
+                let (what, err) = text.split_once(": ").unwrap_or((text, ""));
+                parse_entry("dm".into(), what.to_owned(), "", err)
+            }
+            other => return error(StatusCode::BAD_REQUEST, format!("the DM can add wish or parse lines, not \"{other}\"")),
+        };
+        let re = tri!(message_ref(&h.inbox, req.re.as_deref())).map(|n| format!("m{n}"));
+        let entry = tagged(entry, &re);
+        let line = entry.line();
+        h.journal.record(entry);
+        Json(json!({ "ok": true, "line": line })).into_response()
+        })
+        .await
 }
 
 async fn review(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<AsOnly>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    tri!(dm_only(h.room.state(), q.who.as_deref()));
-    Json(json!({ "text": h.journal.review() })).into_response()
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.who.as_deref()));
+        Json(json!({ "text": h.journal.review() })).into_response()
+        })
+        .await
 }
 
 fn sse(name: &str, data: &str) -> Result<SseEvent, Infallible> {
@@ -723,19 +849,23 @@ fn sse(name: &str, data: &str) -> Result<SseEvent, Infallible> {
 }
 
 /// Missed steps first, then live ones, each as this observer sees it. Subscribing and reading the
-/// backlog under the same lock means nothing falls between them. A client that falls too far
-/// behind is told to resync.
+/// backlog in the same call on the room's task means nothing falls between them. A client that falls
+/// too far behind is told to resync.
 async fn stream(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
-    let rooms = rooms.read().await;
-    let Some(h) = rooms.get(&id) else { return no_room(&id) };
-    let s = h.room.state();
-    let obs = tri!(observer(s, q.who.as_deref()));
-    let rx = h.tx.subscribe();
-    let backlog: Vec<String> = q
-        .since
-        .map(|since| h.room.steps_since(since).into_iter().filter_map(|st| StepView::new(s, &obs, st)).map(|v| serde_json::to_string(&v).unwrap()).collect())
-        .unwrap_or_default();
-    drop(rooms);
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    let subscribed = room
+        .call(move |h| {
+            let s = h.room.state();
+            let obs = observer(s, q.who.as_deref())?;
+            let rx = h.tx.subscribe();
+            let backlog: Vec<String> = q
+                .since
+                .map(|since| h.room.steps_since(since).into_iter().filter_map(|st| StepView::new(s, &obs, st)).map(|v| serde_json::to_string(&v).unwrap()).collect())
+                .unwrap_or_default();
+            Ok::<_, Fail>((obs, rx, backlog))
+        })
+        .await;
+    let (obs, rx, backlog): (Observer, broadcast::Receiver<Arc<Push>>, Vec<String>) = tri!(subscribed);
 
     let missed = stream::iter(backlog).map(|body| sse("step", &body));
     let live = BroadcastStream::new(rx).filter_map(move |msg| {
@@ -752,10 +882,10 @@ async fn stream(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Qu
 async fn main() {
     let dir = kernel_dir();
     let codex = load_codex(&dir.join("codex"));
-    let sessions = std::env::var("KERNEL_SESSIONS").map_or_else(|_| dir.join("sessions"), PathBuf::from);
+    let saves = std::env::var("KERNEL_SAVES").map_or_else(|_| dir.join("saves"), PathBuf::from);
     // Canonical, for a readable path in the startup line (without Windows' `\\?\` prefix).
-    let sessions = std::fs::create_dir_all(&sessions).and_then(|_| sessions.canonicalize()).map_or(sessions, |p| PathBuf::from(p.display().to_string().trim_start_matches(r"\\?\")));
-    let rooms: Rooms = Arc::new(RwLock::new(load_rooms(&dir.join("rooms"), &codex, &sessions)));
+    let saves = std::fs::create_dir_all(&saves).and_then(|_| saves.canonicalize()).map_or(saves, |p| PathBuf::from(p.display().to_string().trim_start_matches(r"\\?\")));
+    let rooms: Rooms = Arc::new(load_rooms(&dir.join("rooms"), &codex, &saves).into_iter().map(|(id, hosted)| (id, RoomHandle::spawn(hosted))).collect());
 
     let app = Router::new()
         .route("/api/rooms", get(list_rooms))

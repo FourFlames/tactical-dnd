@@ -51,7 +51,7 @@ fn creature(key: &str, name: &str, x: i32, y: i32, extra: serde_json::Value) -> 
 ///
 /// ```text
 /// #########
-/// #.......#   row 1: a corridor between the walls
+/// #.......#   row 1: a corridor between the walls (the places `corridor` and `rubble-strip`)
 /// #.#####.#
 /// #.,,,,,.#   row 3: rubble
 /// #########
@@ -75,6 +75,11 @@ pub fn room_with(snikka_at: (i32, i32), grub_at: (i32, i32)) -> Room {
             })),
         ],
         seats: BTreeMap::from([(h("alice"), vec![h("rook")])]),
+        places: serde_json::from_value(json!([
+            { "key": "corridor", "name": "the corridor", "rects": [ { "x": 1, "y": 1, "w": 7, "h": 1 } ] },
+            { "key": "rubble-strip", "name": "the rubble", "rects": [ { "x": 2, "y": 3, "w": 5, "h": 1 } ] }
+        ]))
+        .unwrap(),
     };
     Room::open("t", def, codex()).unwrap()
 }

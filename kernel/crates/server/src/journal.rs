@@ -2,7 +2,7 @@
 //! players, the DM and the room, for post-mortems. It is not the timeline: surgery never rewrites
 //! it, and a rewound step stays in it with the rewind after it.
 //!
-//! `kernel/sessions/<room>-<date>/journal.log` has one line per event, always the same shape:
+//! `kernel/saves/<room>/journal.log` (with the room's other saved files) has one line per event, always the same shape:
 //!
 //! ```text
 //! <time> <ref> <verb> <actor> <payload> [key=value …]
@@ -15,7 +15,8 @@
 //! Refs are prefixed so one grep finds an item's whole story: `m3` messages, `#12` steps,
 //! `draft-15` branches, `w7` wakes, `?` for things that belong to nothing yet. A link guessed from
 //! timing rather than tagged is written `re=m3?`. `journal.jsonl` holds the same entries with
-//! the structured facts the review needs.
+//! the structured facts the review needs; it is also what a restart reads back, so a room's journal
+//! is one session across restarts (the `open` line of each later start says `resume=true`).
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -82,7 +83,25 @@ impl Entry {
             map.insert((*k).into(), json!(v));
         }
         map.insert("facts".into(), Value::Object(self.facts.clone()));
+        // In order, which the flattened keys above can't keep.
+        map.insert("kv".into(), json!(self.kv));
         o
+    }
+
+    /// An entry as `journal.jsonl` wrote it.
+    fn from_json(v: &Value) -> Option<Self> {
+        let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+        let kv = v.get("kv")?.as_array()?.iter().filter_map(|p| Some((intern(p.get(0)?.as_str()?), p.get(1)?.as_str()?.to_owned()))).collect();
+        Some(Self {
+            ms: v.get("ms")?.as_i64()?,
+            time: text("time")?,
+            refr: text("ref")?,
+            verb: intern(v.get("verb")?.as_str()?),
+            actor: text("actor")?,
+            payload: text("payload")?,
+            kv,
+            facts: v.get("facts")?.as_object()?.clone(),
+        })
     }
 
     fn get(&self, key: &str) -> Option<&str> {
@@ -99,6 +118,14 @@ impl Entry {
         let guess = re.ends_with('?');
         re.trim_end_matches('?').strip_prefix('m')?.parse().ok().map(|n| (n, guess))
     }
+}
+
+/// Verbs and keys read back from disk, as the `&'static str`s the journal uses. A handful of
+/// distinct words, so leaking them is fine.
+fn intern(word: &str) -> &'static str {
+    static WORDS: std::sync::Mutex<BTreeMap<String, &'static str>> = std::sync::Mutex::new(BTreeMap::new());
+    let mut words = WORDS.lock().unwrap();
+    words.entry(word.to_owned()).or_insert_with(|| Box::leak(word.to_owned().into_boxed_str()))
 }
 
 /// Text in double quotes, on one line.
@@ -139,25 +166,32 @@ pub struct Journal {
     /// `journal.log` and `journal.jsonl`; none for a journal kept in memory only.
     files: Option<(File, File)>,
     pub dir: Option<PathBuf>,
-    /// `crossroads-2026-10-23`, or `crossroads-2026-10-23-2` for the day's second session.
+    /// The room's id: one session per room, however many times the server restarts.
     pub session: String,
     entries: Vec<Entry>,
     wakes: u64,
 }
 
 impl Journal {
-    /// Starts a session directory for a room and writes the `open` line. Rooms don't survive a
-    /// restart yet, so each start is a new session, and its refs (`m1`, `#2`) are unique within
-    /// its journal: today's first is `<room>-<date>`, then `<room>-<date>-2`, …
-    pub fn open(sessions: &Path, room: &str, title: &str) -> std::io::Result<Self> {
-        let day = format!("{room}-{}", chrono::Local::now().format("%Y-%m-%d"));
-        let session = (1..).map(|n| if n == 1 { day.clone() } else { format!("{day}-{n}") }).find(|name| !sessions.join(name).exists()).unwrap();
-        let dir = sessions.join(&session);
-        std::fs::create_dir_all(&dir)?;
+    /// Opens a room's journal in its save directory and writes the `open` line. If the directory
+    /// already has a journal, its entries are read back (so `dm log` and `dm review` see the whole
+    /// session), numbering carries on from the highest wake, and the `open` line says `resume=true`.
+    pub fn open(dir: &Path, room: &str, title: &str) -> std::io::Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        let (entries, resume) = match std::fs::read_to_string(dir.join("journal.jsonl")) {
+            Ok(text) => {
+                let entries: Vec<Entry> = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter_map(|v| Entry::from_json(&v)).collect();
+                let resume = !entries.is_empty();
+                (entries, resume)
+            }
+            Err(_) => (Vec::new(), false),
+        };
+        let wakes = entries.iter().filter(|e| e.verb == "wake").filter_map(|e| e.refr.strip_prefix('w')?.parse::<u64>().ok()).max().unwrap_or(0);
         let create = |name: &str| OpenOptions::new().create(true).append(true).open(dir.join(name));
         let files = Some((create("journal.log")?, create("journal.jsonl")?));
-        let mut j = Self { files, dir: Some(dir), session, entries: Vec::new(), wakes: 0 };
-        j.record(Entry::new("-", "open", "kernel", quote(title)).kv("room", room).kv("session", j.session.clone()));
+        let mut j = Self { files, dir: Some(dir.to_owned()), session: room.to_owned(), entries, wakes };
+        let open = Entry::new("-", "open", "kernel", quote(title)).kv("room", room).kv("session", j.session.clone());
+        j.record(if resume { open.kv("resume", "true") } else { open });
         Ok(j)
     }
 
@@ -471,19 +505,28 @@ mod tests {
     }
 
     #[test]
-    fn each_start_is_a_session_of_its_own() {
+    fn a_restart_resumes_the_same_journal() {
         let dir = std::env::temp_dir().join(format!("kernel-journal-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let first = Journal::open(&dir, "crossroads", "The Crossroads Shrine").unwrap();
         let mut j = Journal::open(&dir, "crossroads", "The Crossroads Shrine").unwrap();
-        assert_eq!(j.session, format!("{}-2", first.session));
-        j.record(Entry::new("m1", "sent", "alice", quote("hi")).fact("msg", 1));
-        let session = j.dir.clone().unwrap();
-        let log = std::fs::read_to_string(session.join("journal.log")).unwrap();
-        assert_eq!(log.lines().count(), 2);
-        assert!(log.lines().last().unwrap().ends_with("m1   sent      alice   \"hi\""), "{log}");
-        let last: Value = serde_json::from_str(std::fs::read_to_string(session.join("journal.jsonl")).unwrap().lines().last().unwrap()).unwrap();
-        assert_eq!((last["ref"].as_str(), last["facts"]["msg"].as_u64()), (Some("m1"), Some(1)));
+        j.record(Entry::new("m1", "sent", "alice", quote("hi \"there\"")).kv("at", "priest→osric").fact("msg", 1));
+        j.record(Entry::new("w1", "wake", "dm", "m1").kv("batch", "1").fact("msgs", json!([1])));
+        j.record(Entry::new("#2", "step", "dm", "— moves").kv("re", "m1").kv("took", "0.30ms").fact("places", 0));
+        let before = j.query(&Filter::default());
+        assert_eq!(before.len(), 4);
+        assert!(!before[0].contains("resume"), "{}", before[0]);
+        drop(j);
+
+        let mut j = Journal::open(&dir, "crossroads", "The Crossroads Shrine").unwrap();
+        let after = j.query(&Filter::default());
+        assert_eq!(after[..4], before[..], "the old lines come back exactly, key order included");
+        assert!(after[4].contains(" open ") && after[4].ends_with("session=crossroads resume=true"), "{}", after[4]);
+        assert_eq!(j.next_wake(), "w2", "wake numbers continue");
+        assert!(j.review().contains("1 message, 1 step, 1 wake"), "{}", j.review());
+        let log = std::fs::read_to_string(dir.join("journal.log")).unwrap();
+        assert_eq!(log.lines().count(), 5);
+        let last: Value = serde_json::from_str(std::fs::read_to_string(dir.join("journal.jsonl")).unwrap().lines().last().unwrap()).unwrap();
+        assert_eq!(last["verb"], "open");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

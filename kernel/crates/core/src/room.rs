@@ -12,6 +12,7 @@ use crate::id::{EntityId, Handle};
 use crate::map::Map;
 use crate::movement;
 use crate::names::Names;
+use crate::place::Places;
 use crate::observer::Observer;
 use crate::stance::{self, Stance};
 use crate::timeline::{Branch, GameTime, Input, Outcome, Step, StepId, Timeline, MAIN};
@@ -22,6 +23,8 @@ pub struct RoomState {
     pub name: String,
     pub codex: Arc<Codex>,
     pub map: Map,
+    /// Named areas of the map (from the room definition for now).
+    pub places: Places,
     pub creatures: BTreeMap<EntityId, Creature>,
     /// Each seat and the creatures it controls.
     pub seats: BTreeMap<Handle, BTreeSet<EntityId>>,
@@ -68,6 +71,7 @@ impl RoomState {
             name: def.name.clone(),
             codex,
             map: built.map,
+            places: built.places,
             next_id: built.keys.len() as u32 + 1,
             creatures: built.creatures,
             seats: built.seats,
@@ -143,6 +147,31 @@ impl RoomState {
                 }
                 Ok(Command::Move { who, to: *to })
             }
+            Command::MoveToward { who, toward } => {
+                let who = find(who)?;
+                if !self.controls(obs, who) {
+                    return Err(Rejection::NotYours { who });
+                }
+                // A creature the sender knows by that name, else a place (the DM's handles, for now).
+                let goals: Vec<Cell> = if let Some(other) = self.names.get(obs).and_then(|n| n.resolve(toward)) {
+                    let at = self.creatures[&other].pos;
+                    at.neighbors().collect()
+                } else if let Some(place) = self.places.resolve(toward) {
+                    self.places.squares_within(place)
+                } else {
+                    return Err(Rejection::UnknownName { name: toward.clone() });
+                };
+                let me = &self.creatures[&who];
+                if goals.contains(&me.pos) || self.names.get(obs).and_then(|n| n.resolve(toward)) == Some(who) {
+                    return Err(Rejection::AlreadyThere { who, at: me.pos });
+                }
+                let near = goals.iter().copied().min_by_key(|g| g.distance_ft(me.pos));
+                let to = movement::route_to_any(self, me, &goals.iter().copied().collect()).map(|r| *r.path.last().unwrap());
+                match to {
+                    Some(to) => Ok(Command::Move { who, to }),
+                    None => Err(Rejection::NoRoute { who, to: near.unwrap_or(me.pos) }),
+                }
+            }
             Command::Place { who, to } => {
                 if *obs != Observer::Dm {
                     return Err(Rejection::DmOnly);
@@ -194,6 +223,8 @@ impl RoomState {
                 }
                 Ok(vec![Event::CreaturePlaced { who, to }])
             }
+            // Turned into a `Move` by `resolve`; seeing one here means it was never resolved.
+            Command::MoveToward { who, .. } => Err(Rejection::NoRoute { who, to: self.creatures[&who].pos }),
             Command::Wait { seconds } => Ok(vec![Event::TimePassed { seconds }]),
         }
     }
@@ -443,5 +474,64 @@ mod tests {
         assert_eq!(r.timeline().branch(&saved).unwrap().head, StepId(3));
         // New steps continue from the rewound head with fresh ids.
         assert_eq!(run(&mut r, &[mv("rook", 2, 1)]).id, StepId(4));
+    }
+
+    fn toward(who: &str, target: &str) -> Command<String> {
+        Command::MoveToward { who: who.into(), toward: target.into() }
+    }
+
+    fn end_of(step: &Step) -> Cell {
+        let Event::CreatureMoved { path, .. } = &step.events()[0] else { panic!() };
+        *path.last().unwrap()
+    }
+
+    #[test]
+    fn moving_to_a_place_takes_the_cheapest_free_square_in_it() {
+        let mut r = room();
+        let st = run(&mut r, &[toward("rook", "rubble-strip")]);
+        assert_eq!(end_of(&st), Cell::new(2, 3));
+        assert_eq!(cost(&st), 10);
+        // The step records an ordinary move, not the request.
+        assert!(matches!(&st.input, Input::Commands(c) if matches!(c[0], Command::Move { .. })));
+        let err = r.execute(&DM, &[toward("rook", "rubble-strip")], None, false).unwrap_err();
+        assert_eq!(err.rejection, Rejection::AlreadyThere { who: EntityId(1), at: Cell::new(2, 3) });
+    }
+
+    #[test]
+    fn occupied_squares_are_skipped() {
+        let mut r = room();
+        run(&mut r, &[place("rook", 1, 3), place("grub", 2, 3)]);
+        let st = run(&mut r, &[toward("rook", "rubble-strip")]);
+        assert_eq!(end_of(&st), Cell::new(3, 3), "Grub holds the nearest square; Rook passes through and stops past him");
+    }
+
+    #[test]
+    fn moving_to_a_creature_stops_next_to_it() {
+        let mut r = room();
+        let st = run(&mut r, &[toward("rook", "grub")]);
+        assert_eq!(end_of(&st), Cell::new(3, 1));
+        assert_eq!(cost(&st), 10);
+        assert_eq!(r.execute(&DM, &[toward("rook", "grub")], None, false).unwrap_err().rejection, Rejection::AlreadyThere { who: EntityId(1), at: Cell::new(3, 1) });
+        assert_eq!(r.execute(&DM, &[toward("rook", "rook")], None, false).unwrap_err().rejection.code(), "already_there");
+    }
+
+    #[test]
+    fn out_of_reach_is_refused_like_any_long_move() {
+        let mut r = room();
+        run(&mut r, &[place("rook", 1, 3)]);
+        let err = r.execute(&DM, &[toward("rook", "snikka")], None, false).unwrap_err();
+        assert_eq!(err.rejection, Rejection::TooFar { who: EntityId(1), to: Cell::new(7, 2), cost_ft: 35, speed_ft: 30 });
+        assert_eq!(r.state().explain(&DM, &err.rejection), "(7, 2) is 35 ft away by the shortest route; Rook has 30 ft of speed");
+    }
+
+    #[test]
+    fn unknown_targets_and_other_peoples_creatures_are_refused() {
+        let mut r = room();
+        assert_eq!(r.execute(&DM, &[toward("rook", "cellar")], None, false).unwrap_err().rejection.code(), "unknown_name");
+        assert_eq!(r.execute(&alice(), &[toward("goblin", "corridor")], None, false).unwrap_err().rejection.code(), "not_yours");
+        // Alice knows Snikka only as "goblin"; the DM's name for her means nothing to Alice.
+        assert_eq!(r.execute(&alice(), &[toward("rook", "snikka")], None, false).unwrap_err().rejection.code(), "unknown_name");
+        let st = r.execute(&alice(), &[toward("rook", "goblin-2")], None, false).unwrap();
+        assert_eq!(end_of(&st), Cell::new(3, 1));
     }
 }

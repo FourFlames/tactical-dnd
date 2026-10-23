@@ -36,6 +36,15 @@ dm review                                 post-mortem: what skipped the DM, ruli
 Script: `move <who> <x>,<y>` · `place <who> <x>,<y>` · `wait <n> s|rounds|min|hours`, one per line or `;`.
 Names are your handles (`dm look` lists them). Players' handles differ; the bundle translates.
 
+## Saving
+
+Rooms are saved to `kernel/saves/<room>/` after every request (override the folder with `KERNEL_SAVES`)
+and reopened when the server starts: steps on every branch, branch heads, the inbox and the journal.
+A restart picks up where it stopped: same map, messages and history, message ids and `w`/`#` refs
+continue, and the journal gets a new `open` line ending `resume=true`. A saved room keeps its own copy of
+the room definition and codex, so editing `kernel/rooms/<room>.json` changes nothing for it.
+**To start a room fresh, stop the server and delete its folder** (`kernel/saves/<room>/`).
+
 ## Rules of thumb
 
 - Always give a `--gist`: it's the step's line in history, and only you and its author see it.

@@ -12,6 +12,10 @@ use crate::id::EntityId;
 pub enum Command<R = EntityId> {
     /// Walk to `to` along the cheapest legal route, within the creature's speed.
     Move { who: R, to: Cell },
+    /// Walk toward a named place or creature (`toward` is the sender's handle for it). The room
+    /// resolves it to an ordinary [`Command::Move`] to the cheapest reachable square in the place,
+    /// or next to the creature; the rules never see this form.
+    MoveToward { who: R, toward: String },
     /// Put a creature on a square directly (DM fiat: no route, no speed).
     Place { who: R, to: Cell },
     /// Let game time pass (DM only).
@@ -20,7 +24,7 @@ pub enum Command<R = EntityId> {
 
 /// Why a command was refused. It names things by id, never by text: it's rendered for whoever
 /// sent the command (`RoomState::explain`), in their own names.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rejection {
     UnknownName { name: String },
     NotYours { who: EntityId },

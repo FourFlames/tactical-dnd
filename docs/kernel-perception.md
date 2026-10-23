@@ -235,7 +235,7 @@ rewrites it, so a rewound or replaced step stays in it with the rewind after it.
 post-mortems: which player messages turned into what, which could have been handled without the DM,
 which tools the DM reached for and didn't have.
 
-- `kernel/sessions/<room>-<date>/journal.log`, one line per event, always
+- `kernel/saves/<room>/journal.log` (one session per room, continued across restarts), one line per event, always
   `<time> <ref> <verb> <actor> <payload> [key=value …]`. Refs are prefixed so one grep finds an item's
   whole story: `m3` messages, `#12` steps, `draft-15` branches, `w7` wakes, `?` for lines that belong
   to nothing yet (parse errors, refusals, wishes). `journal.jsonl` is the same with structured facts.
@@ -464,10 +464,9 @@ are measured the same way whichever harness drives it, so harnesses and models c
    - [x] The DM's tools: the `dm` command line, the inbox with instant acknowledgement, batched wakes with
          a context bundle, timed hops (`dm stats`), the short command language. (Next: quiet/loud, the
          `needs_dm` queue for non-message items, deferred properties.)
-   - [x] The session journal: `kernel/sessions/<room>-<date>/journal.log` (+ `journal.jsonl`), one line per
+   - [x] The session journal: `kernel/saves/<room>/journal.log` (+ `journal.jsonl`), one line per
          message, wake, reply, step, refusal, parse error, surgery and rewind; `--re` tags; `dm log`,
-         `dm wish`, `dm review`. (`crates/server/src/journal.rs`. Next: agent-call lines `a4`, a session
-         that continues across restarts once rooms are saved.)
+         `dm wish`, `dm review`. (`crates/server/src/journal.rs`. Next: agent-call lines `a4`.)
    - [ ] **The playable slice** (agreed 2026-10-23; before step 3, so there's a game to test perception in):
          P1 one task per room and saving rooms to disk (step inputs + snapshots; see "The server") · P2 space v1 behind the `Space` interface (one static frame, per-square
          height, typed terrain, edge walls and doors as events, pathing with climb cost, 3D distance, sight

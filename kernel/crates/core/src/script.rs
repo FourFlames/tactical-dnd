@@ -3,14 +3,16 @@
 //!
 //! ```text
 //! move rook 4,5          move rook to (4, 5)
+//! move rook to altar     move rook to osric   (a place or creature, by handle)
 //! place snikka 3,1       place snikka at 3 1
 //! wait 10m               wait 3 rounds · wait 30s · wait 1 hour
 //! ```
 
 use crate::command::Command;
 use crate::geom::Cell;
+use crate::id::Handle;
 
-pub const SYNTAX: &str = "move <who> <x>,<y> · place <who> <x>,<y> · wait <n> s|rounds|min|hours";
+pub const SYNTAX: &str = "move <who> <x>,<y> · move <who> to <place or creature> · place <who> <x>,<y> · wait <n> s|rounds|min|hours";
 
 /// Parses a script into commands, in the writer's own names. Errors say which statement and why.
 pub fn parse(script: &str) -> Result<Vec<Command<String>>, String> {
@@ -27,6 +29,7 @@ pub fn write(cmds: &[Command<String>]) -> String {
     cmds.iter()
         .map(|c| match c {
             Command::Move { who, to } => format!("move {who} {},{}", to.x, to.y),
+            Command::MoveToward { who, toward } => format!("move {who} to {toward}"),
             Command::Place { who, to } => format!("place {who} {},{}", to.x, to.y),
             Command::Wait { seconds } => match *seconds {
                 s if s >= 3600 && s % 3600 == 0 => format!("wait {} hours", s / 3600),
@@ -45,7 +48,15 @@ fn statement(s: &str) -> Result<Command<String>, String> {
     match verb.to_ascii_lowercase().as_str() {
         "move" | "go" => {
             let (who, rest) = rest.split_first().ok_or("move whom?")?;
-            Ok(Command::Move { who: who.to_string(), to: cell(skip(rest, "to"))? })
+            let target = skip(rest, "to");
+            // A handle starts with a letter; a square starts with a digit or a bracket.
+            match target {
+                [name] if name.starts_with(|c: char| c.is_ascii_alphabetic()) => {
+                    let toward = Handle::new(&name.to_ascii_lowercase())?.to_string();
+                    Ok(Command::MoveToward { who: who.to_string(), toward })
+                }
+                _ => Ok(Command::Move { who: who.to_string(), to: cell(target)? }),
+            }
         }
         "place" | "put" => {
             let (who, rest) = rest.split_first().ok_or("place whom?")?;
@@ -105,12 +116,16 @@ mod tests {
                 Command::Move { who: "wren".into(), to: Cell::new(2, 2) },
             ]
         );
+        assert_eq!(
+            parse("move rook to altar; go wren osric").unwrap(),
+            vec![Command::MoveToward { who: "rook".into(), toward: "altar".into() }, Command::MoveToward { who: "wren".into(), toward: "osric".into() }]
+        );
         assert_eq!(parse("wait 10m").unwrap(), vec![Command::Wait { seconds: 600 }]);
     }
 
     #[test]
     fn writes_what_it_parses() {
-        let text = "move rook 4,5; place snikka 3,1; wait 3 rounds; wait 10 min; wait 7s";
+        let text = "move rook 4,5; move rook to altar; place snikka 3,1; wait 3 rounds; wait 10 min; wait 7s";
         assert_eq!(write(&parse(text).unwrap()), text);
     }
 

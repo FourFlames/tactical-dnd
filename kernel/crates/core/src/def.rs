@@ -9,6 +9,7 @@ use crate::creature::Creature;
 use crate::geom::Cell;
 use crate::id::{EntityId, Handle};
 use crate::map::{Map, Terrain};
+use crate::place::{PlaceDef, Places};
 use crate::reading::{Abilities, MarkInstance, Skill};
 use crate::stance::Stance;
 
@@ -23,6 +24,9 @@ pub struct RoomDef {
     /// Player seats and the creatures (by key) each one controls.
     #[serde(default)]
     pub seats: BTreeMap<Handle, Vec<Handle>>,
+    /// Named areas of the map, in a tree (see [`crate::place`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub places: Vec<PlaceDef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -61,6 +65,7 @@ pub struct Built {
     pub creatures: BTreeMap<EntityId, Creature>,
     pub keys: Vec<(EntityId, Handle)>,
     pub seats: BTreeMap<Handle, BTreeSet<EntityId>>,
+    pub places: Places,
 }
 
 impl RoomDef {
@@ -84,6 +89,8 @@ impl RoomDef {
             }
         }
         let map = Map { width: width as i32, height: height as i32, palette: self.legend.values().cloned().collect(), tiles };
+
+        let places = Places::build(&self.places, &map)?;
 
         let keys: Vec<(EntityId, Handle)> = self.creatures.iter().enumerate().map(|(i, c)| (EntityId(i as u32 + 1), c.key.clone())).collect();
         let id_of = |k: &Handle| keys.iter().find(|(_, key)| key == k).map(|(id, _)| *id);
@@ -155,6 +162,6 @@ impl RoomDef {
                 .collect::<Result<BTreeSet<_>, _>>()?;
             seats.insert(seat.clone(), ids);
         }
-        Ok(Built { map, creatures, keys, seats })
+        Ok(Built { map, creatures, keys, seats, places })
     }
 }

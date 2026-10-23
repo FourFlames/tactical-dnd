@@ -1,20 +1,32 @@
 //! The DM's inbox: what players send, the batch the DM gets on each wake, and how fast each
 //! message moves through it (sent → seen by the DM → first reply → done).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use kernel_core::{step_line, Cell, Handle, Observer, Room};
+use serde::{Deserialize, Serialize};
 
+/// Unix milliseconds: the clock the inbox keeps, so it can be saved and compared across restarts.
+pub fn now_ms() -> i64 {
+    chrono::Local::now().timestamp_millis()
+}
+
+fn span(from: i64, to: i64) -> Duration {
+    Duration::from_millis((to - from).max(0) as u64)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub id: u64,
     pub from: Handle,
     pub text: String,
     /// What the player was pointing at, in their names: a handle, or a square "x,y".
     pub at: Option<String>,
-    pub received: Instant,
-    pub delivered: Option<Instant>,
-    pub first_reply: Option<Instant>,
-    pub done: Option<Instant>,
+    /// Unix milliseconds.
+    pub received: i64,
+    pub delivered: Option<i64>,
+    pub first_reply: Option<i64>,
+    pub done: Option<i64>,
     pub replies: Vec<String>,
 }
 
@@ -22,14 +34,34 @@ pub struct Message {
 pub struct Inbox {
     messages: Vec<Message>,
     next: u64,
-    /// Recent command execution times, for `stats`.
+    /// Recent command execution times, for `stats` (this run only; not saved).
     exec: Vec<Duration>,
+    /// Changed since it was last saved.
+    dirty: bool,
+}
+
+/// What an inbox saves: the messages and where numbering continues.
+#[derive(Serialize, Deserialize)]
+pub struct Saved {
+    next: u64,
+    messages: Vec<Message>,
 }
 
 impl Inbox {
+    pub fn restore(saved: Saved) -> Self {
+        let next = saved.messages.iter().map(|m| m.id).max().unwrap_or(0).max(saved.next);
+        Self { messages: saved.messages, next, exec: Vec::new(), dirty: false }
+    }
+
+    /// The text to save if anything changed since the last call.
+    pub fn take_save(&mut self) -> Option<String> {
+        std::mem::take(&mut self.dirty).then(|| serde_json::to_string(&Saved { next: self.next, messages: self.messages.clone() }).expect("inbox serializes"))
+    }
+
     pub fn add(&mut self, from: Handle, text: String, at: Option<String>) -> u64 {
         self.next += 1;
-        self.messages.push(Message { id: self.next, from, text, at, received: Instant::now(), delivered: None, first_reply: None, done: None, replies: Vec::new() });
+        self.dirty = true;
+        self.messages.push(Message { id: self.next, from, text, at, received: now_ms(), delivered: None, first_reply: None, done: None, replies: Vec::new() });
         self.next
     }
 
@@ -43,6 +75,7 @@ impl Inbox {
     }
 
     pub fn get_mut(&mut self, id: u64) -> Option<&mut Message> {
+        self.dirty = true;
         self.messages.iter_mut().find(|m| m.id == id)
     }
 
@@ -62,7 +95,8 @@ impl Inbox {
 
     /// Marks everything undelivered as delivered now, and returns their ids.
     pub fn deliver(&mut self) -> Vec<u64> {
-        let now = Instant::now();
+        let now = now_ms();
+        self.dirty = true;
         self.messages
             .iter_mut()
             .filter(|m| m.delivered.is_none())
@@ -81,10 +115,10 @@ impl Inbox {
     }
 
     pub fn stats(&self) -> String {
-        let span = |f: &dyn Fn(&Message) -> Option<Duration>| -> Vec<Duration> { self.messages.iter().filter_map(f).collect() };
-        let seen = span(&|m| Some(m.delivered? - m.received));
-        let first = span(&|m| Some(m.first_reply? - m.delivered?));
-        let done = span(&|m| Some(m.done? - m.received));
+        let gather = |f: &dyn Fn(&Message) -> Option<Duration>| -> Vec<Duration> { self.messages.iter().filter_map(f).collect() };
+        let seen = gather(&|m| Some(span(m.received, m.delivered?)));
+        let first = gather(&|m| Some(span(m.delivered?, m.first_reply?)));
+        let done = gather(&|m| Some(span(m.received, m.done?)));
         let answered = self.messages.iter().filter(|m| m.first_reply.is_some()).count();
         [
             format!("messages: {} ({answered} answered, {} open)", self.messages.len(), self.open()),

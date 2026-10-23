@@ -21,6 +21,15 @@
     "#...............~~~#",
     "####################"
   ],
+  "places": [
+    { "key": "shrine", "name": "the shrine", "rects": [ { "x": 1, "y": 1, "w": 18, "h": 10 } ] },
+    { "key": "nave", "name": "the nave", "parent": "shrine", "rects": [ { "x": 1, "y": 1, "w": 8, "h": 5 } ] },
+    { "key": "altar", "name": "the altar", "parent": "nave", "rects": [ { "x": 4, "y": 1, "w": 2, "h": 1 } ] },
+    { "key": "east-room", "name": "the east room", "parent": "shrine",
+      "rects": [ { "x": 10, "y": 1, "w": 9, "h": 5 }, { "x": 9, "y": 4, "w": 1, "h": 2 } ] },
+    { "key": "lower-hall", "name": "the lower hall", "parent": "shrine", "rects": [ { "x": 1, "y": 7, "w": 18, "h": 4 } ] },
+    { "key": "ford", "name": "the ford", "parent": "lower-hall", "rects": [ { "x": 16, "y": 7, "w": 3, "h": 4 } ] }
+  ],
   "creatures": [
     { "key": "rook", "name": "Rook", "at": { "x": 2, "y": 8 }, "hp": 28,
       "marks": [ { "kind": "human-features" }, { "kind": "red-tabard" } ],

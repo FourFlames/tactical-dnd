@@ -45,7 +45,17 @@ fn step_cost(state: &RoomState, blocked: &HashSet<Cell>, from: Cell, to: Cell) -
 /// through creatures that aren't hostile to it but must end on an empty square. Speed is not checked here. Among routes of
 /// equal cost it takes the one with fewest diagonal steps, so routes run straight, not zig-zag.
 pub fn route(state: &RoomState, who: &Creature, goal: Cell) -> Option<Route> {
-    if goal == who.pos || !state.map.passable(goal) || state.creature_at(goal).is_some() {
+    if goal == who.pos {
+        return None;
+    }
+    route_to_any(state, who, &HashSet::from([goal]))
+}
+
+/// The cheapest route for `who` to any of `goals` (same rules as [`route`]). Goals that aren't
+/// open, empty squares are ignored, as is the creature's own square.
+pub fn route_to_any(state: &RoomState, who: &Creature, goals: &HashSet<Cell>) -> Option<Route> {
+    let goals: HashSet<Cell> = goals.iter().copied().filter(|&g| g != who.pos && state.map.passable(g) && state.creature_at(g).is_none()).collect();
+    if goals.is_empty() {
         return None;
     }
     let blocked = blocked_by_occupants(state, who);
@@ -55,8 +65,8 @@ pub fn route(state: &RoomState, who: &Creature, goal: Cell) -> Option<Route> {
     let mut open = BinaryHeap::from([Reverse(((0u32, 0u32), who.pos))]);
 
     while let Some(Reverse(((cost, diagonals), at))) = open.pop() {
-        if at == goal {
-            let mut path = vec![goal];
+        if goals.contains(&at) {
+            let mut path = vec![at];
             while let Some(&prev) = came_from.get(path.last().unwrap()) {
                 if prev == who.pos {
                     break;

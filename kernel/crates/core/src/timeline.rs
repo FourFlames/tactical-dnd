@@ -62,7 +62,7 @@ impl std::fmt::Display for GameTime {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Input {
     /// The first step of every room.
     Open { def: Arc<RoomDef>, codex: Arc<Codex> },
@@ -72,14 +72,14 @@ pub enum Input {
     Fiat(Vec<Event>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Outcome {
     Applied(Vec<Event>),
     /// The input is no longer legal on this branch (after an edit to the past). Flagged, not hidden.
     Dropped { index: usize, rejection: Rejection },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Step {
     pub id: StepId,
     pub parent: Option<StepId>,
@@ -109,7 +109,7 @@ impl Step {
 
 pub const MAIN: &str = "main";
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Branch {
     pub head: StepId,
     /// For a draft: the main head when it was made, so commit can replay what happened since.
@@ -148,7 +148,7 @@ pub fn decide_input(state: &RoomState, input: &Input, key: StepId) -> (Outcome, 
 
 const KEYFRAME_EVERY: u32 = 32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Timeline {
     steps: BTreeMap<StepId, Step>,
     branches: BTreeMap<String, Branch>,
@@ -179,6 +179,50 @@ impl Timeline {
             next: 2,
         };
         Ok((t, state))
+    }
+
+    /// Rebuilds a timeline from saved steps (in any order) and branches, and the state at main's head.
+    /// Keyframes are recomputed, so they never need saving.
+    pub fn restore(mut steps: Vec<Step>, branches: BTreeMap<String, Branch>) -> Result<(Self, RoomState), String> {
+        steps.sort_by_key(|s| s.id);
+        let opening = "a saved timeline starts with the room's opening";
+        let (root, genesis) = {
+            let first = steps.first().filter(|s| s.parent.is_none()).ok_or(opening)?;
+            let Input::Open { def, codex } = &first.input else { return Err(opening.into()) };
+            (first.id, RoomState::genesis(def, codex.clone())?)
+        };
+        let next = steps.last().map_or(2, |s| s.id.0 + 1);
+        let mut t = Self { steps: BTreeMap::new(), branches, keyframes: HashMap::from([(root, genesis)]), next };
+        for step in steps {
+            let (id, depth) = (step.id, step.depth);
+            match step.parent {
+                Some(p) if !t.steps.contains_key(&p) => return Err(format!("saved step {id} follows {p}, which isn't saved")),
+                None if !t.steps.is_empty() => return Err(format!("saved step {id} has no parent")),
+                _ => {}
+            }
+            t.steps.insert(id, step);
+            if depth > 0 && depth.is_multiple_of(KEYFRAME_EVERY) {
+                let state = t.state_at(id);
+                t.keyframes.insert(id, state);
+            }
+        }
+        if let Some((name, b)) = t.branches.iter().find(|(_, b)| !t.steps.contains_key(&b.head)) {
+            return Err(format!("saved branch {name} points at {}, which isn't saved", b.head));
+        }
+        if !t.branches.contains_key(MAIN) {
+            return Err("a saved timeline has a main branch".into());
+        }
+        let state = t.state_at(t.head());
+        Ok((t, state))
+    }
+
+    /// Every step with an id above `after`, on any branch, oldest first: what a save hasn't seen.
+    pub fn steps_after(&self, after: u64) -> impl Iterator<Item = &Step> {
+        self.steps.range(StepId(after + 1)..).map(|(_, s)| s)
+    }
+
+    pub fn steps(&self) -> impl Iterator<Item = &Step> {
+        self.steps.values()
     }
 
     pub fn step(&self, id: StepId) -> Option<&Step> {

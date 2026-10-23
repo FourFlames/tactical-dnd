@@ -12,6 +12,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[serde(transparent)]
 pub struct EntityId(pub u32);
 
+/// The kernel's identity for a place (see [`crate::place`]). Like [`EntityId`], it never leaves the kernel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PlaceId(pub u32);
+
 /// A short name someone uses to refer to something: lowercase letters, digits and dashes,
 /// at most [`Handle::MAX`] long. The DM's might be `snikka`; a player's for the same goblin, `goblin-2`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
