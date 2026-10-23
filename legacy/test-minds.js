@@ -391,7 +391,7 @@ try {
   expect('take-in: a rethink waits for the next tick', dueOut === '0 1', dueOut);
 
   // ---------- the npc agent is fenced in ----------
-  const hook = (cmd) => spawnSync('node', ['.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
+  const hook = (cmd) => spawnSync('node', ['../.claude/hooks/npc-guard.js'], { cwd: __dirname, input: JSON.stringify({ tool_input: { command: cmd } }) }).status;
   expect('npc agent may read its brief', hook('node engine.js mind bram brief') === 0, '');
   expect('...and open its talk menu, but nothing else', hook('node engine.js mind bram menu talk') === 0 && hook('node engine.js mind bram menu talk; cat state.json') === 2 && hook('node engine.js mind bram trace') === 2, '');
   expect('npc agent may not read the state or the map', hook('cat state.json') === 2 && hook('node engine.js show') === 2 && hook('node engine.js mind bram brief; cat state.json') === 2, '');

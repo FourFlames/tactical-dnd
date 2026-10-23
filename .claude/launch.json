@@ -4,26 +4,31 @@
     {
       "name": "kernel",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run", "--manifest-path", "kernel/Cargo.toml", "-p", "kernel-server"],
+      "runtimeArgs": [
+        "run",
+        "--manifest-path",
+        "kernel/Cargo.toml",
+        "-p",
+        "kernel-server"
+      ],
       "port": 5180
     },
     {
-      "name": "viewer",
+      "name": "legacy-viewer",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
+      "runtimeArgs": [
+        "legacy/server.js"
+      ],
       "port": 5173
     },
     {
-      "name": "viewer-sandbox",
+      "name": "legacy-sandbox",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["-e", "process.env.PORT='5174'; process.env.TDND_DATA='.sandbox'; require('./server.js')"],
+      "runtimeArgs": [
+        "-e",
+        "process.env.PORT='5174'; process.env.TDND_DATA='legacy/.sandbox'; require('./legacy/server.js')"
+      ],
       "port": 5174
-    },
-    {
-      "name": "poc",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["-e", "require('http').createServer((q,s)=>require('fs').readFile((q.url.startsWith('/viewer/')?'viewer/':'poc/')+(require('path').basename(q.url.split('?')[0])||'wheel.html'),(e,d)=>{s.writeHead(e?404:200,{'content-type':(/\\.js$/.test(q.url.split('?')[0])?'text/javascript':'text/html')+'; charset=utf-8'});s.end(d)})).listen(5175)"],
-      "port": 5175
     }
   ]
 }

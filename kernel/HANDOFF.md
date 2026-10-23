@@ -7,8 +7,10 @@ tools; its **Build order** is the roadmap) and, for the wider priorities, `docs/
 ## Where things are
 
 - **Branch:** `rust-kernel` (worktree `.claude/worktrees/rust-kernel`), on top of `154c6f2` from
-  `codex/worldspace-orbs`. Nothing pushed. The Node engine in the repo root is untouched and still runs
-  live games; never run its commands against the root `state.json`.
+  `codex/worldspace-orbs` (tagged `node-engine-final`), pushed to `origin/rust-kernel`.
+- **The old engine** lives in `legacy/` on this branch (run it from that folder; `legacy/CLAUDE.md`). Each
+  card deletes the legacy code it replaced. The main checkout still runs live Node games: never run legacy
+  commands against its `state.json`.
 - **Run:** `cargo run --manifest-path kernel/Cargo.toml -p kernel-server` (port 5180; `kernel` entry in
   `.claude/launch.json`). Battlemap at `http://localhost:5180/?as=dm`, or `?as=alice` / `?as=sam`.
   DM tool: `cargo build --manifest-path kernel/Cargo.toml -p kernel-dm`, then `kernel/target/debug/dm`.
