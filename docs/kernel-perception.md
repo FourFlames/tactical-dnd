@@ -195,6 +195,58 @@ Uses:
 - The same shape works for everyone: the DM's batched actions and surgery branches carry a gist too, which
   becomes the chronicle line or the branch's description.
 
+## The DM's tools, latency and batching
+
+The DM (an Opus in Claude Code) works through `dm`, a command-line tool over the server (`kernel/DM.md`).
+The first version is deliberately naive; it is measured from the start so the next versions can be
+chosen by numbers, not guesses.
+
+**What exists:**
+
+- **An inbox.** A player's message is acknowledged at once ("Sent to the DM."), told "The DM is
+  reading…" when the DM's wake returns it, and gets the replies live. Every hop is timed: sent → DM saw
+  it → first reply → done, plus command execution time (`dm stats`, p50 and p95).
+- **Wakes are batched.** `dm wait` blocks until a message arrives, then waits a short window (250 ms) for
+  others to join, and returns them all as one bundle.
+- **The bundle answers the obvious questions up front:** the speaker's sheet, what they pointed at
+  (resolved from their names, with distance or terrain and occupant), who's within 30 ft and how they
+  stand, the last five steps. Target: a routine message needs no lookup calls, so one `act` and one
+  `reply`.
+- **A short command language** (`move rook 4,5; wait 1 round`), parsed by the kernel, so the DM never
+  writes JSON and typed player text can later go through the same parser.
+
+**Latency budget (from the post-mortem):** acknowledgement under 5 s (now: instant), routine resolution
+under 15 s, a ruling with a roll under 30 s. The DM's own thinking dominates; everything the kernel does
+should stay in milliseconds.
+
+**Batching: options to try, in rough order.**
+
+1. *Now:* one fixed window per wake. Simple; the cost is that the DM wakes once per burst of messages.
+2. *Quiet and loud:* only some things wake the DM (a question, a ruling, a deferred property); quiet ones
+   (moves, End turn) ride along with the next loud one. The Node engine did this and it helped.
+3. *Adaptive windows:* a longer window while the DM is mid-reply (more will pile up anyway), shorter when
+   idle; a priority item (an opportunity attack, a player mid-turn) skips the window.
+4. *Pre-drafting:* a cheap model drafts the response to each message the moment it arrives, so the DM's
+   wake carries a draft to approve (see "Drafter evaluation" in `docs/rust-kernel-api.md`).
+5. *Skip the DM:* plain mechanical text ("move to 4,5") parsed and run by the server directly.
+
+**Deferred properties.** Some things aren't decided until someone looks closely: what's in the chest,
+what this flower does in a potion. A mark can carry a *deferred* layer: when an observer first reaches it
+(attending, with the right gate), the kernel can't answer alone and queues a `needs_dm` item for it
+(`deferred: chest.contents, wren attending`). To keep that fast:
+
+- The DM can decide deferred properties **ahead of time**: whenever the DM is idle, the queue offers the
+  deferred properties nearest to being reached ("Wren is two squares from the chest"), so most are
+  settled before anyone asks.
+- A cheap model can **draft** a value for the DM to approve, within limits set in the codex (a loot
+  table, a list of plausible alchemical effects).
+- The answer becomes a step (setting the mark's parameters), so it is in history like everything else
+  and survives surgery.
+
+**NPC turns** should go by quickly: the turn's agent call is pre-thought in the background the moment
+the turn becomes likely (see "Reactive minds" in the API doc), routine flags never wake the DM, and the
+DM's queue only shows what needs a decision.
+
 ## Speech, pointing and sharing
 
 - **Speech is a mark:** sound → "someone is speaking" → gate on the language → the words; fallback "a lilting
@@ -221,6 +273,9 @@ Uses:
        and the `history` / `diff` / `preview` queries with summary-first output. (`timeline.rs`, `surgery.rs`,
        `dice.rs`, step lines in `view.rs`; endpoints in the server. Not yet: `reorder`, history filters beyond
        branch and limit, `diff` between arbitrary branches (previews cover draft vs main), saving to disk.)
+   - [x] The DM's tools: the `dm` command line, the inbox with instant acknowledgement, batched wakes with
+         a context bundle, timed hops (`dm stats`), the short command language. (Next: quiet/loud, the
+         `needs_dm` queue for non-message items, deferred properties.)
 3. [ ] Passive readings producing traces during replay, stamped with game time; individuals binding marks.
 4. [ ] `umwelt(who, focus)` rendering for the DM view and players; `knows` and `why` queries.
 5. [ ] Memory decay, recall with recognition (familiarity and recollection), relative dating in briefs.

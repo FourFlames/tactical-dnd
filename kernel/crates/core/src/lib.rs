@@ -22,6 +22,7 @@ pub mod names;
 pub mod observer;
 pub mod reading;
 pub mod room;
+pub mod script;
 pub mod stance;
 pub mod surgery;
 #[cfg(test)]

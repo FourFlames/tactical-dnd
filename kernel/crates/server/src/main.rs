@@ -13,13 +13,27 @@
 //!   POST /api/rooms/{id}/branches/{name}/discard throw a draft away (DM)
 //!   POST /api/rooms/{id}/rewind                  { step } → move main's head back (DM)
 //!   GET  /api/rooms/{id}/stream?as&since         SSE: missed steps since `since`, then live ones;
-//!                                                `reset` when history changes under the client
+//!                                                `reset` when history changes; `notice` for a seat's messages
+//!
+//! The DM's inbox:
+//!   POST /api/rooms/{id}/messages                { as: seat, text, at? } → acknowledged at once
+//!   GET  /api/rooms/{id}/messages?as             a seat's own messages and replies (DM: all)
+//!   GET  /api/rooms/{id}/wait?timeout            DM: blocks until messages arrive, then returns them
+//!                                                as one batch with a context bundle
+//!   POST /api/rooms/{id}/messages/{n}/reply      { text, done? } (DM)
+//!   GET  /api/rooms/{id}/pending                 DM: how many messages are unseen and open
+//!   GET  /api/rooms/{id}/stats                   DM: latency of every hop
 //!   anything else                                static files from kernel/web
+
+mod inbox;
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use inbox::Inbox;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -28,10 +42,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::{self, StreamExt};
-use kernel_core::{preview_lines, step_line, Codex, Command, Handle, Observer, Room, RoomDef, RoomState, RoomView, Step, StepId, StepView, Surgery};
+use kernel_core::{preview_lines, script, step_line, Codex, Command, Handle, Observer, Room, RoomDef, RoomState, RoomView, Step, StepId, StepView, Surgery};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::services::ServeDir;
 
@@ -45,9 +59,25 @@ struct Push {
 struct Hosted {
     room: Room,
     tx: broadcast::Sender<Arc<Push>>,
+    inbox: Inbox,
+    /// Wakes a waiting DM when a message arrives.
+    notify: Arc<Notify>,
 }
 
+/// How long a wake waits for more messages to join the batch once the first arrives.
+const BATCH_WINDOW: Duration = Duration::from_millis(250);
+
 impl Hosted {
+    fn new(room: Room) -> Self {
+        Self { room, tx: broadcast::channel(256).0, inbox: Inbox::default(), notify: Arc::new(Notify::new()) }
+    }
+
+    /// Sends one seat a notice about one of its messages.
+    fn tell(&self, seat: &Handle, body: serde_json::Value) {
+        let bodies = BTreeMap::from([(Observer::Seat(seat.clone()), body.to_string())]);
+        let _ = self.tx.send(Arc::new(Push { name: "notice", bodies }));
+    }
+
     /// Renders a new step once per observer and sends it down the channel.
     fn publish(&self, step: &Step) {
         let s = self.room.state();
@@ -104,7 +134,7 @@ fn load_rooms(dir: &FsPath, codex: &Codex) -> BTreeMap<String, Hosted> {
         match opened {
             Ok(room) => {
                 println!("room {id}: {}", room.state().name);
-                rooms.insert(id, Hosted { room, tx: broadcast::channel(256).0 });
+                rooms.insert(id, Hosted::new(room));
             }
             Err(e) => eprintln!("skipping {}: {e}", path.display()),
         }
@@ -188,21 +218,34 @@ async fn get_room(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): 
     Json(RoomView::new(&h.room, &obs)).into_response()
 }
 
+/// Commands as JSON (`commands`) or in the short text form (`script`, see kernel_core::script).
 #[derive(Deserialize)]
 struct Batch {
     #[serde(rename = "as")]
     who: Option<String>,
     gist: Option<String>,
-    commands: Vec<Command<String>>,
+    commands: Option<Vec<Command<String>>>,
+    script: Option<String>,
     #[serde(default)]
     dry_run: bool,
 }
 
 async fn post_commands(State(rooms): State<Rooms>, Path(id): Path<String>, Json(batch): Json<Batch>) -> Response {
+    let commands = match (batch.commands, batch.script) {
+        (Some(c), None) => c,
+        (None, Some(s)) => match script::parse(&s) {
+            Ok(c) => c,
+            Err(e) => return error(StatusCode::UNPROCESSABLE_ENTITY, e),
+        },
+        _ => return error(StatusCode::BAD_REQUEST, "send either `commands` or `script`"),
+    };
     let mut rooms = rooms.write().await;
     let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
     let obs = tri!(observer(h.room.state(), batch.who.as_deref()));
-    match h.room.execute(&obs, &batch.commands, batch.gist, batch.dry_run) {
+    let started = Instant::now();
+    let result = h.room.execute(&obs, &commands, batch.gist, batch.dry_run);
+    h.inbox.record_exec(started.elapsed());
+    match result {
         Ok(step) => {
             if !batch.dry_run {
                 h.publish(&step);
@@ -314,6 +357,129 @@ async fn post_rewind(State(rooms): State<Rooms>, Path(id): Path<String>, Json(re
     }
 }
 
+#[derive(Deserialize)]
+struct NewMessage {
+    #[serde(rename = "as")]
+    who: Option<String>,
+    text: String,
+    at: Option<String>,
+}
+
+/// A seat tells the DM something. It's acknowledged at once, and wakes a waiting DM.
+async fn post_message(State(rooms): State<Rooms>, Path(id): Path<String>, Json(req): Json<NewMessage>) -> Response {
+    let mut rooms = rooms.write().await;
+    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
+    let Observer::Seat(seat) = tri!(observer(h.room.state(), req.who.as_deref())) else {
+        return error(StatusCode::BAD_REQUEST, "messages come from a seat; the DM replies with dm reply");
+    };
+    if req.text.trim().is_empty() {
+        return error(StatusCode::BAD_REQUEST, "say something");
+    }
+    let n = h.inbox.add(seat.clone(), req.text.trim().to_owned(), req.at.filter(|a| !a.is_empty()));
+    h.tell(&seat, json!({ "msg": n, "kind": "sent", "text": "Sent to the DM." }));
+    h.notify.notify_waiters();
+    Json(json!({ "ok": true, "id": n })).into_response()
+}
+
+async fn list_messages(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
+    let rooms = rooms.read().await;
+    let Some(h) = rooms.get(&id) else { return no_room(&id) };
+    let obs = tri!(observer(h.room.state(), q.who.as_deref()));
+    let list: Vec<_> = h
+        .inbox
+        .all()
+        .filter(|m| matches!(&obs, Observer::Dm) || matches!(&obs, Observer::Seat(s) if *s == m.from))
+        .map(|m| {
+            let status = if m.done.is_some() { "done" } else if m.delivered.is_some() { "reading" } else { "sent" };
+            json!({ "id": m.id, "from": m.from, "text": m.text, "at": m.at, "status": status, "replies": m.replies })
+        })
+        .collect();
+    Json(json!(list)).into_response()
+}
+
+#[derive(Deserialize)]
+struct WaitQuery {
+    #[serde(rename = "as")]
+    who: Option<String>,
+    timeout: Option<u64>,
+}
+
+/// The DM's wake. Blocks until at least one message is unseen, waits a moment for others to join
+/// the batch, then returns them all with a context bundle. Each sender is told the DM is reading.
+async fn wait(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<WaitQuery>) -> Response {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(q.timeout.unwrap_or(300).min(3600));
+    let notify = {
+        let rooms = rooms.read().await;
+        let Some(h) = rooms.get(&id) else { return no_room(&id) };
+        tri!(dm_only(h.room.state(), q.who.as_deref()));
+        h.notify.clone()
+    };
+    loop {
+        let notified = notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable(); // registered before checking, so a message arriving now isn't missed
+        if rooms.read().await[&id].inbox.undelivered() == 0 {
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return Json(json!({ "timeout": true, "text": "TIMEOUT: nothing for the DM yet" })).into_response();
+            }
+            continue;
+        }
+        tokio::time::sleep(BATCH_WINDOW).await;
+        let mut rooms = rooms.write().await;
+        let h = rooms.get_mut(&id).unwrap();
+        let ids = h.inbox.deliver();
+        if ids.is_empty() {
+            continue; // another waiter took them
+        }
+        let text = inbox::bundle(&h.room, &ids, &h.inbox);
+        for m in h.inbox.all().filter(|m| ids.contains(&m.id)) {
+            h.tell(&m.from, json!({ "msg": m.id, "kind": "reading", "text": "The DM is reading…" }));
+        }
+        return Json(json!({ "timeout": false, "ids": ids, "text": text })).into_response();
+    }
+}
+
+#[derive(Deserialize)]
+struct Reply {
+    #[serde(rename = "as")]
+    who: Option<String>,
+    text: String,
+    #[serde(default)]
+    done: bool,
+}
+
+async fn reply(State(rooms): State<Rooms>, Path((id, n)): Path<(String, String)>, Json(req): Json<Reply>) -> Response {
+    let mut rooms = rooms.write().await;
+    let Some(h) = rooms.get_mut(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), req.who.as_deref()));
+    let Ok(n) = n.trim_start_matches('#').parse::<u64>() else { return error(StatusCode::BAD_REQUEST, "messages are numbered: reply 3") };
+    let Some(m) = h.inbox.get_mut(n) else { return error(StatusCode::NOT_FOUND, format!("there is no message #{n}")) };
+    let now = Instant::now();
+    m.delivered.get_or_insert(now);
+    m.first_reply.get_or_insert(now);
+    if req.done {
+        m.done = Some(now);
+    }
+    m.replies.push(req.text.clone());
+    let seat = m.from.clone();
+    h.tell(&seat, json!({ "msg": n, "kind": "reply", "text": req.text, "done": req.done }));
+    Json(json!({ "ok": true })).into_response()
+}
+
+async fn pending(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
+    let rooms = rooms.read().await;
+    let Some(h) = rooms.get(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), q.who.as_deref()));
+    Json(json!({ "unseen": h.inbox.undelivered(), "open": h.inbox.open() })).into_response()
+}
+
+async fn stats(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<Query_>) -> Response {
+    let rooms = rooms.read().await;
+    let Some(h) = rooms.get(&id) else { return no_room(&id) };
+    tri!(dm_only(h.room.state(), q.who.as_deref()));
+    Json(json!({ "text": h.inbox.stats() })).into_response()
+}
+
 fn sse(name: &str, data: &str) -> Result<SseEvent, Infallible> {
     Ok(SseEvent::default().event(name).data(data))
 }
@@ -361,6 +527,11 @@ async fn main() {
         .route("/api/rooms/{id}/branches/{name}/discard", post(discard))
         .route("/api/rooms/{id}/rewind", post(post_rewind))
         .route("/api/rooms/{id}/stream", get(stream))
+        .route("/api/rooms/{id}/messages", get(list_messages).post(post_message))
+        .route("/api/rooms/{id}/messages/{n}/reply", post(reply))
+        .route("/api/rooms/{id}/wait", get(wait))
+        .route("/api/rooms/{id}/pending", get(pending))
+        .route("/api/rooms/{id}/stats", get(stats))
         .fallback_service(ServeDir::new(dir.join("web")))
         .with_state(rooms);
 

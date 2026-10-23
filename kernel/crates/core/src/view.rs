@@ -21,6 +21,7 @@ pub struct RoomView<'a> {
     pub id: &'a str,
     /// The last event this view includes. Clients use it to tell whether they're behind.
     pub seq: u64,
+    pub clock: GameTime,
     pub name: &'a str,
     pub observer: &'a Observer,
     pub map: &'a Map,
@@ -91,7 +92,7 @@ impl<'a> RoomView<'a> {
                 })
             })
             .collect();
-        Self { id: &room.id, seq: room.seq(), name: &s.name, observer: obs, map: &s.map, creatures }
+        Self { id: &room.id, seq: room.seq(), clock: s.clock, name: &s.name, observer: obs, map: &s.map, creatures }
     }
 }
 

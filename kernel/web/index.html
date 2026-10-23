@@ -33,6 +33,16 @@
   .token.sel circle { stroke: var(--sel); stroke-width: 0.08; }
   .token text { font: bold 0.36px system-ui; fill: #14120f; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
   .route { fill: none; stroke: var(--sel); stroke-width: 0.06; stroke-dasharray: 0.12 0.1; pointer-events: none; }
+  .token:not(.yours) { cursor: pointer; }
+  .token.pointed circle { stroke: var(--sel); stroke-width: 0.07; stroke-dasharray: 0.15 0.1; }
+  #msgs { margin: 0; padding: 8px 16px; list-style: none; border-top: 1px solid var(--line); max-height: 30vh; overflow: auto; font-size: 13px; }
+  #msgs li { margin-bottom: 6px; }
+  #msgs .status { color: var(--dim); font-size: 11px; }
+  #msgs .reply { color: var(--sel); padding-left: 10px; }
+  #say { display: flex; gap: 6px; padding: 8px 16px; border-top: 1px solid var(--line); }
+  #say input { flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font: inherit; }
+  #say button { background: var(--line); color: var(--ink); border: 0; border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  #pointing { padding: 0 16px 6px; color: var(--dim); font-size: 12px; }
   @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: auto 240px; } aside { border-left: 0; border-top: 1px solid var(--line); } }
 </style>
 </head>
@@ -43,6 +53,9 @@
   <label class="as">Viewing as <select id="as"></select></label>
   <div id="status">Connecting…</div>
   <ul id="log"></ul>
+  <ul id="msgs" hidden></ul>
+  <form id="say" hidden><input id="sayText" placeholder="Tell the DM…" autocomplete="off"><button>Send</button></form>
+  <div id="pointing" hidden></div>
   <div class="hint">Click one of your tokens, hover to preview the route, click a square to move. As the DM, shift-click places it (no route, no speed). Hover a token to see what you notice. Colour is stance: red hostile, amber wary, grey neutral, green friendly.</div>
 </aside>
 <script>
@@ -52,6 +65,8 @@ const params = new URLSearchParams(location.search);
 const viewer = params.get('as') || 'dm';
 // Everything below speaks in this viewer's names: tokens are keyed by `handle`, never by a kernel id.
 let room = null, selected = null, previewKey = null, busy = Promise.resolve();
+let pointing = null; // a token you clicked that isn't yours: sent along with your next message
+const msgs = new Map(); // your messages to the DM: id → { text, at, status, replies }
 
 const el = (tag, attrs = {}, parent) => {
   const e = document.createElementNS(NS, tag);
@@ -95,14 +110,18 @@ function drawMap() {
     const stance = c.stance ? `\n${viewer === 'dm' ? 'Toward the party' : 'You feel'}: ${c.stance}` : '';
     const appears = c.appears.length ? '\n' + c.appears.map((a) => `· ${a}`).join('\n') : '';
     el('title', {}, g).textContent = `${cap(c.label)} (${c.handle})${stats}${stance}${appears}`;
-    if (c.yours) g.addEventListener('click', () => select(c.handle));
+    g.addEventListener('click', () => c.yours ? select(c.handle) : point(c.handle));
   }
   placeTokens();
 }
 function placeTokens() {
   for (const c of room.creatures) {
     const g = svg.querySelector(`.token[data-handle="${c.handle}"]`);
-    if (g) { g.setAttribute('transform', `translate(${c.pos.x} ${c.pos.y})`); g.classList.toggle('sel', c.handle === selected); }
+    if (g) {
+      g.setAttribute('transform', `translate(${c.pos.x} ${c.pos.y})`);
+      g.classList.toggle('sel', c.handle === selected);
+      g.classList.toggle('pointed', c.handle === pointing);
+    }
   }
 }
 function select(handle) {
@@ -134,6 +153,53 @@ async function onCell(x, y, place) {
   status(out.ok ? `${cap(label(selected))} selected.` : out.reason, !out.ok);
   showRoute(null);
 }
+
+// ---------- talking to the DM (seats only) ----------
+function point(handle) {
+  if (viewer === 'dm') return;
+  pointing = pointing === handle ? null : handle;
+  placeTokens();
+  const p = document.getElementById('pointing');
+  p.hidden = !pointing;
+  p.textContent = pointing ? `Pointing at ${label(pointing)} (${pointing}). Click again to stop.` : '';
+}
+function drawMsgs() {
+  const ul = document.getElementById('msgs');
+  ul.hidden = msgs.size === 0;
+  ul.replaceChildren(...[...msgs.entries()].reverse().map(([id, m]) => {
+    const li = document.createElement('li');
+    const status = { sent: 'sent', reading: 'the DM is reading…', done: 'done' }[m.status] || m.status;
+    li.innerHTML = `<b>#${id}</b> ${esc(m.text)}${m.at ? ` <span class="status">@${esc(m.at)}</span>` : ''} <span class="status">· ${esc(status)}</span>`
+      + m.replies.map((r) => `<div class="reply">DM: ${esc(r)}</div>`).join('');
+    return li;
+  }));
+}
+async function loadMsgs() {
+  if (viewer === 'dm') return;
+  const list = await (await fetch(`/api/rooms/${room.id}/messages?as=${encodeURIComponent(viewer)}`)).json();
+  msgs.clear();
+  for (const m of list) msgs.set(m.id, { text: m.text, at: m.at, status: m.status, replies: m.replies });
+  drawMsgs();
+}
+function notice(n) {
+  const m = msgs.get(n.msg);
+  if (!m) return loadMsgs();
+  if (n.kind === 'reply') { m.replies.push(n.text); if (n.done) m.status = 'done'; }
+  else if (m.status !== 'done') m.status = n.kind;
+  drawMsgs();
+}
+document.getElementById('say').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('sayText'), text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  const at = pointing;
+  const r = await (await fetch(`/api/rooms/${room.id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ as: viewer, text, at }) })).json();
+  if (!r.ok) return status(r.reason, true);
+  if (!msgs.has(r.id)) msgs.set(r.id, { text, at, status: 'sent', replies: [] });
+  if (at) point(at);
+  drawMsgs();
+});
 
 // ---------- steps: the stream is the only thing that moves tokens ----------
 // The log is the server's own history lines (the same ones the DM and agents read), newest first.
@@ -171,11 +237,14 @@ async function load() {
   document.title = room.name;
   drawMap();
   loadLog();
+  document.getElementById('say').hidden = viewer === 'dm';
+  loadMsgs();
   return room;
 }
 function connect() {
   const es = new EventSource(`/api/rooms/${room.id}/stream?as=${encodeURIComponent(viewer)}&since=${room.seq}`);
   es.addEventListener('step', (m) => ingest(JSON.parse(m.data)));
+  es.addEventListener('notice', (m) => notice(JSON.parse(m.data)));
   // History changed under us (rewind, a committed edit, or we fell behind): start over from the new main.
   es.addEventListener('reset', async () => { es.close(); await load(); connect(); });
   es.onopen = () => { if (!selected) status('Live. Pick one of your tokens.'); };
