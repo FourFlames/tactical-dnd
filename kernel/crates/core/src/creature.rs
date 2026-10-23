@@ -1,33 +1,31 @@
-use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geom::Cell;
-use crate::id::EntityId;
+use crate::id::{EntityId, Handle};
+use crate::reading::{Abilities, MarkInstance};
+use crate::stance::Stance;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Side {
-    Party,
-    Hostile,
-    Neutral,
-}
-
-impl Side {
-    /// Whose squares this side can't move through.
-    pub fn hostile_to(self, other: Side) -> bool {
-        matches!((self, other), (Side::Party, Side::Hostile) | (Side::Hostile, Side::Party))
-    }
-}
-
+/// A creature as the kernel knows it. Nothing here says what it *is* to anyone else: others read
+/// that from its marks (see `stance`, `reading`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Creature {
     pub id: EntityId,
     /// The true name. Only observers who know it see it.
     pub name: String,
-    /// What a stranger would call it: "goblin", "robed old man".
-    pub looks: String,
-    pub side: Side,
     pub pos: Cell,
     pub speed_ft: u32,
     pub hp: i32,
     pub max_hp: i32,
+    /// What others can perceive of it.
+    pub marks: Vec<MarkInstance>,
+    /// What it takes itself to be: goblin, Rotfang clan, Red Watch.
+    pub identities: BTreeSet<Handle>,
+    /// What it brings to reading others.
+    pub abilities: Abilities,
+    /// Its attitude toward identities it reads in others.
+    pub dispositions: BTreeMap<Handle, Stance>,
+    /// Attitudes toward particular individuals, overriding dispositions.
+    pub relations: BTreeMap<EntityId, Stance>,
+    /// Individuals it knows personally (for now: fellow members of its groups).
+    pub acquainted: BTreeSet<EntityId>,
 }

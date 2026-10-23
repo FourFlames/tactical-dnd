@@ -8,7 +8,8 @@
   :root {
     --bg: #14120f; --panel: #1d1a16; --line: #2e2923; --ink: #e8e0d0; --dim: #8f8574;
     --floor: #3a342b; --wall: #0e0c0a; --difficult: #4a3d2c; --water: #24404d;
-    --party: #d9a441; --hostile: #c4473a; --neutral: #8c8a80; --sel: #f5e6b8; --bad: #e07060;
+    --yours: #d9a441; --hostile: #c4473a; --wary: #c98a3a; --neutral: #8c8a80; --friendly: #7fa66a; --deferential: #6a8fb5;
+    --sel: #f5e6b8; --bad: #e07060;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; display: grid; grid-template-columns: 1fr 300px; height: 100vh; }
@@ -42,7 +43,7 @@
   <label class="as">Viewing as <select id="as"></select></label>
   <div id="status">Connecting…</div>
   <ul id="log"></ul>
-  <div class="hint">Click one of your tokens, hover to preview the route, click a square to move. As the DM, shift-click places it (no route, no speed).</div>
+  <div class="hint">Click one of your tokens, hover to preview the route, click a square to move. As the DM, shift-click places it (no route, no speed). Hover a token to see what you notice. Colour is stance: red hostile, amber wary, grey neutral, green friendly.</div>
 </aside>
 <script>
 const NS = 'http://www.w3.org/2000/svg';
@@ -87,10 +88,13 @@ function drawMap() {
   const tokens = el('g', { id: 'tokens' }, svg);
   for (const c of room.creatures) {
     const g = el('g', { class: 'token' + (c.yours ? ' yours' : ''), 'data-handle': c.handle }, tokens);
-    el('circle', { cx: 0.5, cy: 0.5, r: 0.4, fill: `var(--${c.side})` }, g);
+    // Colour is stance: for a seat, how its character feels about this one; for the DM, how this one feels about the party.
+    el('circle', { cx: 0.5, cy: 0.5, r: 0.4, fill: c.yours && viewer !== 'dm' ? 'var(--yours)' : `var(--${c.stance || 'neutral'})` }, g);
     el('text', { x: 0.5, y: 0.52 }, g).textContent = c.label.split(/\s+/).map((w) => w[0].toUpperCase()).join('').slice(0, 2);
     const stats = c.hp != null ? ` · ${c.hp}/${c.max_hp} HP · ${c.speed_ft} ft` : '';
-    el('title', {}, g).textContent = `${cap(c.label)} (${c.handle})${stats}`;
+    const stance = c.stance ? `\n${viewer === 'dm' ? 'Toward the party' : 'You feel'}: ${c.stance}` : '';
+    const appears = c.appears.length ? '\n' + c.appears.map((a) => `· ${a}`).join('\n') : '';
+    el('title', {}, g).textContent = `${cap(c.label)} (${c.handle})${stats}${stance}${appears}`;
     if (c.yours) g.addEventListener('click', () => select(c.handle));
   }
   placeTokens();

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+use crate::codex::Codex;
 use crate::command::{Command, Rejection};
-use crate::creature::{Creature, Side};
+use crate::creature::Creature;
 use crate::def::RoomDef;
 use crate::event::{Event, Recorded};
 use crate::geom::Cell;
@@ -10,11 +12,13 @@ use crate::map::Map;
 use crate::movement;
 use crate::names::Names;
 use crate::observer::Observer;
+use crate::stance::{self, Stance};
 
 /// Everything true about a room right now. Only ever changed by [`RoomState::apply`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomState {
     pub name: String,
+    pub codex: Arc<Codex>,
     pub map: Map,
     pub creatures: BTreeMap<EntityId, Creature>,
     /// Each seat and the creatures it controls.
@@ -26,27 +30,39 @@ pub struct RoomState {
 }
 
 impl RoomState {
-    /// The DM knows everything by the author's key and true name. A seat knows the party by name
-    /// and everyone else by how they look, numbered in the order listed.
-    fn genesis(def: &RoomDef) -> Result<Self, String> {
-        let built = def.build()?;
+    /// The DM knows everything by the author's key and true name. A seat sees through its lead
+    /// creature: its own creatures and the lead's acquaintances by name, everyone else by the most
+    /// salient identity the lead reads in passing ("goblin", then "goblin-2"), or "someone".
+    fn genesis(def: &RoomDef, codex: Arc<Codex>) -> Result<Self, String> {
+        let built = def.build(&codex)?;
         let mut names = BTreeMap::new();
         let dm: &mut Names = names.entry(Observer::Dm).or_default();
         for (id, key) in &built.keys {
             dm.learn(*id, key.clone(), built.creatures[id].name.clone());
         }
-        for seat in built.seats.keys() {
+        for (seat, own) in &built.seats {
             let n: &mut Names = names.entry(Observer::Seat(seat.clone())).or_default();
+            let lead = own.first().map(|id| &built.creatures[id]);
             for (id, key) in &built.keys {
                 let c = &built.creatures[id];
-                match c.side {
-                    Side::Party => n.learn(*id, key.clone(), c.name.clone()),
-                    _ => n.learn(*id, Handle::slug(&c.looks), c.looks.clone()),
-                };
+                if own.contains(id) || lead.is_some_and(|l| l.acquainted.contains(id)) {
+                    n.learn(*id, key.clone(), c.name.clone());
+                    continue;
+                }
+                let label = lead
+                    .and_then(|l| {
+                        let facets = stance::passing_facets(&codex, l, c);
+                        // The most salient identity; the first listed wins a tie.
+                        let best = facets.iter().filter(|f| f.identity.is_some()).rev().max_by_key(|f| f.salience)?;
+                        codex.identities.get(best.identity.as_ref()?).map(|d| d.label.clone())
+                    })
+                    .unwrap_or_else(|| "someone".into());
+                n.learn(*id, Handle::slug(&label), label);
             }
         }
         Ok(Self {
             name: def.name.clone(),
+            codex,
             map: built.map,
             next_id: built.keys.len() as u32 + 1,
             creatures: built.creatures,
@@ -61,6 +77,16 @@ impl RoomState {
 
     pub fn creature_at(&self, c: Cell) -> Option<&Creature> {
         self.creatures.values().find(|cr| cr.pos == c)
+    }
+
+    /// How `observer` stands toward `target`, from its own reading of them.
+    pub fn stance(&self, observer: EntityId, target: EntityId) -> Stance {
+        stance::stance(&self.codex, &self.creatures[&observer], &self.creatures[&target])
+    }
+
+    /// The first creature a seat controls: whose eyes the seat sees through, for now.
+    pub fn lead(&self, seat: &Handle) -> Option<EntityId> {
+        self.seats.get(seat)?.first().copied()
     }
 
     /// Whether `obs` may command `who`.
@@ -194,9 +220,11 @@ pub struct Room {
 }
 
 impl Room {
-    pub fn open(id: impl Into<String>, def: RoomDef) -> Result<Self, String> {
-        let state = RoomState::genesis(&def)?;
-        let log = vec![Recorded { seq: 1, event: Event::RoomOpened { def } }];
+    pub fn open(id: impl Into<String>, def: RoomDef, codex: Codex) -> Result<Self, String> {
+        codex.check()?;
+        let codex = Arc::new(codex);
+        let state = RoomState::genesis(&def, codex.clone())?;
+        let log = vec![Recorded { seq: 1, event: Event::RoomOpened { def: Arc::new(def), codex } }];
         Ok(Self { id: id.into(), log, state })
     }
 
@@ -251,10 +279,10 @@ impl Room {
 
     fn fold(log: &[Recorded]) -> Result<RoomState, String> {
         let (first, rest) = log.split_first().ok_or("empty log")?;
-        let Event::RoomOpened { def } = &first.event else {
+        let Event::RoomOpened { def, codex } = &first.event else {
             return Err("the log doesn't start with the room opening".into());
         };
-        let mut state = RoomState::genesis(def)?;
+        let mut state = RoomState::genesis(def, codex.clone())?;
         for r in rest {
             state.apply(&r.event);
         }
@@ -266,6 +294,7 @@ impl Room {
 mod tests {
     use super::*;
     use crate::def::CreatureDef;
+    use crate::stance::Stance;
     use crate::map::Terrain;
 
     fn terrain(name: &str, blocks: bool, difficult: bool) -> Terrain {
@@ -276,11 +305,35 @@ mod tests {
         Handle::new(s).unwrap()
     }
 
-    fn creature(key: &str, name: &str, looks: Option<&str>, side: Side, x: i32, y: i32) -> CreatureDef {
-        CreatureDef { key: h(key), name: name.into(), looks: looks.map(Into::into), side, at: Cell::new(x, y), speed_ft: 30, hp: 10 }
+    fn codex() -> Codex {
+        serde_json::from_value(serde_json::json!({
+            "identities": {
+                "human": { "label": "human", "kind": "kind" },
+                "goblin": { "label": "goblin", "kind": "kind" },
+                "red-watch": { "label": "Red Watch", "kind": "group" },
+                "stranger": { "label": "stranger", "kind": "relational" }
+            },
+            "marks": {
+                "human-features": { "senses": { "sight": 2 }, "layers": [ { "reveals": { "text": "a human", "identity": "human" } } ] },
+                "goblin-features": { "senses": { "sight": 3 }, "layers": [ { "reveals": { "text": "a goblin", "identity": "goblin", "salience": "high" } } ] },
+                "red-tabard": { "senses": { "sight": 3 }, "layers": [ { "reveals": { "text": "a red tabard" }, "children": [
+                    { "gate": { "knows": "red-watch-insignia" }, "reveals": { "text": "the Red Watch's colours", "identity": "red-watch", "salience": "high" } }
+                ] } ] }
+            }
+        }))
+        .unwrap()
     }
 
-    fn room() -> Room {
+    fn creature(key: &str, name: &str, x: i32, y: i32, extra: serde_json::Value) -> CreatureDef {
+        let mut v = serde_json::json!({ "key": key, "name": name, "at": { "x": x, "y": y }, "hp": 10 });
+        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// Rook wears the Red Watch's colours. Snikka knows them and hates the Watch; Grub doesn't know
+    /// them and is merely wary of humans, so Grub's square doesn't block Rook but Snikka's would.
+    fn room_with(snikka_at: (i32, i32), grub_at: (i32, i32)) -> Room {
+        use serde_json::json;
         let def = RoomDef {
             name: "test".into(),
             legend: BTreeMap::from([
@@ -296,13 +349,24 @@ mod tests {
                 "#########".into(),
             ],
             creatures: vec![
-                creature("rook", "Rook", None, Side::Party, 1, 1),
-                creature("snikka", "Snikka", Some("goblin"), Side::Hostile, 7, 3),
-                creature("grub", "Grub", Some("goblin"), Side::Hostile, 7, 1),
+                creature("rook", "Rook", 1, 1, json!({
+                    "marks": [ { "kind": "human-features" }, { "kind": "red-tabard" } ],
+                    "identities": ["red-watch"], "knows": ["red-watch-insignia"], "dispositions": { "goblin": "hostile" }
+                })),
+                creature("snikka", "Snikka", snikka_at.0, snikka_at.1, json!({
+                    "marks": [ { "kind": "goblin-features" } ], "knows": ["red-watch-insignia"], "dispositions": { "red-watch": "hostile" }
+                })),
+                creature("grub", "Grub", grub_at.0, grub_at.1, json!({
+                    "marks": [ { "kind": "goblin-features" } ], "dispositions": { "human": "wary" }
+                })),
             ],
             seats: BTreeMap::from([(h("alice"), vec![h("rook")])]),
         };
-        Room::open("t", def).unwrap()
+        Room::open("t", def, codex()).unwrap()
+    }
+
+    fn room() -> Room {
+        room_with((7, 3), (4, 1))
     }
 
     const DM: Observer = Observer::Dm;
@@ -412,9 +476,28 @@ mod tests {
         assert_eq!(r.execute(&alice(), &[mv("snikka", 6, 1)], false).unwrap_err().rejection.code(), "unknown_name");
         assert_eq!(r.execute(&alice(), &[place("rook", 6, 1)], false).unwrap_err().rejection, Rejection::DmOnly);
 
-        r.execute(&alice(), &[mv("rook", 6, 1)], false).unwrap();
-        let err = r.execute(&alice(), &[mv("rook", 7, 1)], false).unwrap_err();
-        assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin is already at (7, 1)");
-        assert_eq!(r.state().explain(&DM, &err.rejection), "Grub is already at (7, 1)");
+        let err = r.execute(&alice(), &[mv("rook", 4, 1)], false).unwrap_err();
+        assert_eq!(r.state().explain(&alice(), &err.rejection), "Goblin is already at (4, 1)");
+        assert_eq!(r.state().explain(&DM, &err.rejection), "Grub is already at (4, 1)");
+    }
+
+    #[test]
+    fn only_creatures_hostile_to_you_by_their_own_reading_block_your_way() {
+        let rook = EntityId(1);
+        let mut r = room();
+        assert_eq!(r.state().stance(EntityId(3), rook), Stance::Wary, "Grub sees only a human");
+        assert_eq!(cost(&r.execute(&DM, &[mv("rook", 6, 1)], false).unwrap()), 25, "straight through Grub's square");
+
+        let mut r = room_with((4, 1), (7, 3));
+        assert_eq!(r.state().stance(EntityId(2), rook), Stance::Hostile, "Snikka reads the Watch's colours");
+        assert_eq!(r.execute(&DM, &[mv("rook", 6, 1)], false).unwrap_err().rejection.code(), "too_far", "the long way round");
+    }
+
+    #[test]
+    fn seats_name_strangers_by_what_their_lead_reads() {
+        let r = room();
+        let names = &r.state().names[&alice()];
+        assert_eq!(names.of(EntityId(2)).unwrap().label, "goblin");
+        assert_eq!(names.of(EntityId(3)).unwrap().handle.as_str(), "goblin-2");
     }
 }

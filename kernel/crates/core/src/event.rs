@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+use crate::codex::Codex;
 use crate::def::RoomDef;
 use crate::geom::Cell;
 use crate::id::EntityId;
@@ -9,8 +12,9 @@ use crate::id::EntityId;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    /// Always the first event: the room as authored.
-    RoomOpened { def: RoomDef },
+    /// Always the first event: the room as authored, and the codex it was opened with (kept in the
+    /// log so replay never depends on codex files that may have changed since).
+    RoomOpened { def: Arc<RoomDef>, codex: Arc<Codex> },
     /// `path` runs from the square after the start to the destination.
     CreatureMoved { who: EntityId, path: Vec<Cell>, cost_ft: u32 },
     CreaturePlaced { who: EntityId, to: Cell },

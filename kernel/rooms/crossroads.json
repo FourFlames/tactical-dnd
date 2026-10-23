@@ -22,11 +22,38 @@
     "####################"
   ],
   "creatures": [
-    { "key": "rook", "name": "Rook", "side": "party", "at": { "x": 2, "y": 8 }, "hp": 28 },
-    { "key": "wren", "name": "Wren", "side": "party", "at": { "x": 5, "y": 9 }, "speed_ft": 25, "hp": 20 },
-    { "key": "snikka", "name": "Snikka", "looks": "goblin", "side": "hostile", "at": { "x": 13, "y": 2 }, "hp": 7 },
-    { "key": "grub", "name": "Grub", "looks": "goblin", "side": "hostile", "at": { "x": 16, "y": 4 }, "hp": 7 },
-    { "key": "osric", "name": "Brother Osric", "looks": "robed old man", "side": "neutral", "at": { "x": 5, "y": 3 }, "speed_ft": 25, "hp": 9 }
+    { "key": "rook", "name": "Rook", "at": { "x": 2, "y": 8 }, "hp": 28,
+      "marks": [ { "kind": "human-features" }, { "kind": "red-tabard" } ],
+      "identities": ["human", "red-watch", "the-company"],
+      "knows": ["common", "red-watch-insignia"],
+      "skills": { "religion": { "bonus": 0 } },
+      "dispositions": { "goblin": "hostile" } },
+    { "key": "wren", "name": "Wren", "at": { "x": 5, "y": 9 }, "speed_ft": 25, "hp": 20,
+      "marks": [ { "kind": "halfling-features" } ],
+      "identities": ["halfling", "the-company"],
+      "knows": ["common", "elvish"],
+      "skills": { "arcana": { "bonus": 5, "proficient": true }, "religion": { "bonus": 3, "proficient": true } },
+      "dispositions": { "goblin": "hostile" } },
+    { "key": "snikka", "name": "Snikka", "at": { "x": 13, "y": 2 }, "hp": 7,
+      "marks": [ { "kind": "goblin-features" }, { "kind": "rotfang-tattoo" } ],
+      "identities": ["goblin", "rotfang"],
+      "knows": ["goblin", "rotfang-signs", "red-watch-insignia"],
+      "dispositions": { "red-watch": "hostile", "stranger": "wary" } },
+    { "key": "grub", "name": "Grub", "at": { "x": 16, "y": 4 }, "hp": 7,
+      "marks": [ { "kind": "goblin-features" }, { "kind": "rotfang-tattoo" } ],
+      "identities": ["goblin", "rotfang"],
+      "knows": ["goblin", "rotfang-signs"],
+      "dispositions": { "human": "wary", "halfling": "hostile" } },
+    { "key": "osric", "name": "Brother Osric", "at": { "x": 5, "y": 3 }, "speed_ft": 25, "hp": 9,
+      "marks": [
+        { "kind": "human-features" },
+        { "kind": "holy-symbol", "params": { "deity": "Lathander" } },
+        { "kind": "book", "params": { "title": "Leaves of Ithil", "language": "elvish" } }
+      ],
+      "identities": ["human", "priest"],
+      "knows": ["common", "elvish", "red-watch-insignia"],
+      "skills": { "religion": { "bonus": 5, "proficient": true } },
+      "dispositions": { "goblin": "wary", "red-watch": "friendly" } }
   ],
   "seats": {
     "alice": ["rook"],

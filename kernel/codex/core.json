@@ -1,0 +1,69 @@
+{
+  "identities": {
+    "human": { "label": "human", "kind": "kind" },
+    "halfling": { "label": "halfling", "kind": "kind" },
+    "goblin": { "label": "goblin", "kind": "kind" },
+    "priest": { "label": "priest", "kind": "role" },
+    "red-watch": { "label": "Red Watch", "kind": "group" },
+    "rotfang": { "label": "Rotfang clan", "kind": "group" },
+    "the-company": { "label": "the company", "kind": "group" },
+    "stranger": { "label": "stranger", "kind": "relational" }
+  },
+  "marks": {
+    "human-features": {
+      "senses": { "sight": 2 },
+      "layers": [ { "reveals": { "text": "a human", "identity": "human" } } ]
+    },
+    "halfling-features": {
+      "senses": { "sight": 2 },
+      "layers": [ { "reveals": { "text": "a halfling", "identity": "halfling" } } ]
+    },
+    "goblin-features": {
+      "senses": { "sight": 3 },
+      "layers": [ { "reveals": { "text": "a goblin: green skin, pointed ears", "identity": "goblin", "salience": "high" } } ]
+    },
+    "red-tabard": {
+      "senses": { "sight": 3 },
+      "layers": [
+        { "reveals": { "text": "a red tabard" },
+          "children": [
+            { "gate": { "knows": "red-watch-insignia" },
+              "reveals": { "text": "the colours of the Red Watch", "identity": "red-watch", "salience": "high" } }
+          ] }
+      ]
+    },
+    "rotfang-tattoo": {
+      "senses": { "sight": 1 },
+      "layers": [
+        { "gate": { "knows": "rotfang-signs" },
+          "reveals": { "text": "a Rotfang clan tattoo", "identity": "rotfang" },
+          "else": { "text": "a crude tattoo", "salience": "low" } }
+      ]
+    },
+    "holy-symbol": {
+      "senses": { "sight": 2 },
+      "layers": [
+        { "reveals": { "text": "a holy symbol", "identity": "priest", "salience": "high" },
+          "children": [
+            { "gate": { "skill": "religion", "dc": 12 }, "reveals": { "text": "the sun-disc of {deity}" } }
+          ] }
+      ]
+    },
+    "book": {
+      "senses": { "sight": 1 },
+      "layers": [
+        { "reveals": { "text": "a leatherbound book", "salience": "low" } },
+        { "attention": "attending",
+          "reveals": { "text": "it has a title" },
+          "ladder": [
+            { "gate": { "knows": "{language}" }, "reveals": { "text": "the title reads \"{title}\" ({language})" } },
+            { "reveals": { "text": "a title in an unknown script" } }
+          ],
+          "children": [
+            { "gate": { "skill": "nature", "dc": 13 }, "reveals": { "text": "the script resembles Sylvan" } },
+            { "gate": { "skill": "arcana", "dc": 12 }, "reveals": { "text": "some of these letters turn up in arcane diagrams" } }
+          ] }
+      ]
+    }
+  }
+}

@@ -21,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::{self, StreamExt};
-use kernel_core::{event_view, Command, Handle, Observer, Recorded, Room, RoomDef, RoomState, RoomView};
+use kernel_core::{event_view, Codex, Command, Handle, Observer, Recorded, Room, RoomDef, RoomState, RoomView};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{broadcast, RwLock};
@@ -60,19 +60,38 @@ fn kernel_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Opens every `rooms/*.json`; the file name is the room id.
-fn load_rooms(dir: &FsPath) -> BTreeMap<String, Hosted> {
-    let mut rooms = BTreeMap::new();
+/// The `*.json` files in a directory, in name order.
+fn json_files(dir: &FsPath) -> Vec<PathBuf> {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("can't read {}: {e}", dir.display()));
-    for path in entries.flatten().map(|e| e.path()) {
-        if path.extension().is_none_or(|x| x != "json") {
-            continue;
+    let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    files.sort();
+    files
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &FsPath) -> Result<T, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+/// Merges every `codex/*.json`, in name order.
+fn load_codex(dir: &FsPath) -> Codex {
+    let mut codex = Codex::default();
+    for path in json_files(dir) {
+        match read_json::<Codex>(&path) {
+            Ok(c) => codex.merge(c),
+            Err(e) => panic!("bad codex file {}: {e}", path.display()),
         }
+    }
+    println!("codex: {} identities, {} mark kinds", codex.identities.len(), codex.marks.len());
+    codex
+}
+
+/// Opens every `rooms/*.json`; the file name is the room id.
+fn load_rooms(dir: &FsPath, codex: &Codex) -> BTreeMap<String, Hosted> {
+    let mut rooms = BTreeMap::new();
+    for path in json_files(dir) {
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let opened = std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::from_str::<RoomDef>(&s).map_err(|e| e.to_string()))
-            .and_then(|def| Room::open(id.clone(), def));
+        let opened = read_json::<RoomDef>(&path).and_then(|def| Room::open(id.clone(), def, codex.clone()));
         match opened {
             Ok(room) => {
                 println!("room {id}: {}", room.state().name);
@@ -231,7 +250,8 @@ async fn stream(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Qu
 #[tokio::main]
 async fn main() {
     let dir = kernel_dir();
-    let rooms: Rooms = Arc::new(RwLock::new(load_rooms(&dir.join("rooms"))));
+    let codex = load_codex(&dir.join("codex"));
+    let rooms: Rooms = Arc::new(RwLock::new(load_rooms(&dir.join("rooms"), &codex)));
 
     let app = Router::new()
         .route("/api/rooms", get(list_rooms))

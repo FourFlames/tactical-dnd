@@ -9,6 +9,7 @@
 //! [`Observer`] at a time, in that observer's names ([`names`], [`view`]).
 
 pub mod command;
+pub mod codex;
 pub mod creature;
 pub mod def;
 pub mod event;
@@ -18,11 +19,14 @@ pub mod map;
 pub mod movement;
 pub mod names;
 pub mod observer;
+pub mod reading;
 pub mod room;
+pub mod stance;
 pub mod view;
 
 pub use command::{Command, Rejection};
-pub use creature::{Creature, Side};
+pub use codex::Codex;
+pub use creature::Creature;
 pub use def::{CreatureDef, RoomDef};
 pub use event::{Event, Recorded};
 pub use geom::Cell;
@@ -30,4 +34,5 @@ pub use id::{EntityId, Handle};
 pub use map::{Map, Terrain};
 pub use observer::Observer;
 pub use room::{Refused, Room, RoomState};
+pub use stance::Stance;
 pub use view::{event_view, RoomView};
