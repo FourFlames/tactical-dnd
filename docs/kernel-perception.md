@@ -381,6 +381,67 @@ asker's terms, from what the asker knows:
   stay hidden, the guards behave as they would anyway. Drama comes from what the world chooses to
   bring the party's way, never from NPCs sensing them.
 
+## The server
+
+Agreed in the 2026-10-23 session. One Rust binary serves the page, the API and the live stream, with
+everything rendered per observer (as built). What changes as the playable slice grows:
+
+- **One task per room** (later, per world) instead of one lock over all rooms. Each owns its state and
+  works through a queue of inputs: commands, DM acts, timer ticks, agent replies. Inputs apply in order,
+  which is what event sourcing wants; timers have a home (offer expiry, coarse simulation steps, turn
+  deadlines); agent calls run in the background and come back as inputs, so the DM never relays an
+  NPC's reply.
+- **Persistence:** a room on disk is its log of step inputs plus periodic snapshots, beside the journal.
+  Files first; SQLite only if querying across campaigns needs it.
+- **Transport stays a live stream down and plain requests up** (SSE plus HTTP): simple, reconnects by
+  itself, works through Tailscale and tunnels. Seat codes become sign-in cookies; the DM only from the
+  local machine or with a DM secret. Client types are generated from the Rust structs.
+- **The rules core also runs in the page** (`kernel-core` compiled to WebAssembly) for instant previews:
+  route cost, "can I reach that perch", attack odds. The server stays the authority. The page only knows
+  what its observer knows, so previews run on that seat's own view, never on the truth.
+- **Worlds, not rooms:** with seamless places the server hosts a campaign world, and rooms become places
+  in it. New URLs should say `/api/worlds/{id}/…`.
+- **The page** stays framework-free for the slice; a small framework when the UI outgrows it. The old 3D
+  view can return later as a second renderer of the same view.
+- **Static files baked into the binary**, so hosting a game is one executable plus Tailscale.
+
+### Seeing what a player sees
+
+Previews and views are per observer, so the DM needs tools for the gap between what a player means and
+what is true:
+
+- Messages carry what the player was pointing at or had selected (built: `at`), resolved in the bundle
+  from their names to the DM's. Later: the selection state too (a planned route, a chosen target).
+- **`dm see <seat> [at]`:** the room, a square or a creature as that seat perceives it, in their words,
+  next to the truth where they differ. For "why does Sam think the door is open?".
+- **Optimistic view state.** The page shows a predicted step (from its own preview) at once, marked
+  pending under a client request id. The server's step with that id confirms it; a refusal rolls it back
+  with the reason. The mapping from state to view, pending overlay included, should stay one function
+  of (observer view, pending inputs), so it stays manageable as the UI grows.
+
+**Playtest watch-list** (the journal and `dm review` should help answer these):
+1. When is the DM confused about what a player means, and why? (`dm wish` and replies that ask back.)
+2. Can the DM easily tell how a player sees the world? (How often `dm see` is needed, and whether it
+   answers the question.)
+3. How manageable is the state → view mapping, including pending state awaiting the server? (Rollbacks,
+   flicker, mismatches between preview and outcome.)
+
+### The DM role is harness-agnostic
+
+Any capable agentic model in any decent harness should be able to run a room and have it feel good. So
+the DM's tools are **one contract**, defined once in the server (names, arguments, results, short text
+renderings), and served three ways:
+
+- **HTTP JSON:** the source of truth; anything that can make requests can drive it.
+- **The `dm` command line:** for any harness that can run shell commands; short text out, ids that can
+  be passed back.
+- **MCP:** for harnesses that speak it (Claude Code and others): the same tools returning structured
+  results without starting a process per call.
+
+The loop relies on nothing harness-specific: `wait` is a long-poll any client can make, every answer is
+self-contained, and `kernel/DM.md` doubles as the system prompt for any model. Latency and the journal
+are measured the same way whichever harness drives it, so harnesses and models can be compared.
+
 ## Build order
 
 1. [x] Marks with trees, the codex, identities and dispositions; stance-based blocking replaces `Side`; seat
@@ -399,12 +460,14 @@ asker's terms, from what the asker knows:
          `dm wish`, `dm review`. (`crates/server/src/journal.rs`. Next: agent-call lines `a4`, a session
          that continues across restarts once rooms are saved.)
    - [ ] **The playable slice** (agreed 2026-10-23; before step 3, so there's a game to test perception in):
-         P1 save rooms to disk · P2 space v1 behind the `Space` interface (one static frame, per-square
+         P1 one task per room and saving rooms to disk (step inputs + snapshots; see "The server") · P2 space v1 behind the `Space` interface (one static frame, per-square
          height, typed terrain, edge walls and doors as events, pathing with climb cost, 3D distance, sight
          and cover) with a small place layer (the tree, links tied to doors, "which place is this square
          in", place names in the journal, bundle and narration) · P3 stat blocks, seeded rolls, check, save,
          ruling · P4 initiative, turns, attacks, damage, conditions · P5 opportunity attacks and offers ·
-         P6 the table UI (seat codes, turn HUD, route preview, offers dialog, inspect card, chronicle).
+         P6 the table UI (seat codes as cookies, turn HUD, route preview, offers dialog, inspect card,
+         chronicle, `dm see`). After the slice: previews in the page (WebAssembly), optimistic view state,
+         the DM tools over MCP alongside HTTP and the command line.
          Details and the source of each piece: `docs/kernel-port-inventory.md`.
 3. [ ] Passive readings producing traces during replay, stamped with game time; individuals binding marks.
 4. [ ] `umwelt(who, focus)` rendering for the DM view and players; `knows` and `why` queries.

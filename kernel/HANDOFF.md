@@ -69,7 +69,14 @@ Before perception step 3, so there's a game to test it in. Cards P1–P6 in the 
 `docs/kernel-perception.md`; what each ports from the Node engine, with file:line pointers, is in
 `docs/kernel-port-inventory.md`. Space follows "Space and places" in the design doc: frames joined by
 portals behind a narrow `Space` interface (first implementation: one static frame), plus a place
-layer (tree, memberships, links, optional extents) from P2 on. Start with P1 (save rooms to disk).
+layer (tree, memberships, links, optional extents) from P2 on. Start with P1: one task per room
+(replacing the global lock) and saving rooms to disk; "The server" in the design doc has the plan.
+
+**Keep in mind while building and playtesting** (from "The server"):
+- The DM role must stay harness-agnostic: one tool contract, served over HTTP, the `dm` command line and
+  (later) MCP. Nothing in the loop may depend on Claude Code features.
+- Watch for: the DM misreading what a player means; how easily the DM can see the world as a player
+  does (`dm see`); how manageable the state → view mapping is, including pending optimistic state.
 
 ### Then, from the build order
 
