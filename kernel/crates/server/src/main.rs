@@ -777,6 +777,29 @@ async fn stats(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Que
 }
 
 #[derive(Deserialize)]
+struct SeeQuery {
+    #[serde(rename = "as")]
+    asker: Option<String>,
+    seat: Option<String>,
+    at: Option<String>,
+}
+
+/// The room as one seat perceives it, next to the truth (DM only). See kernel_core::see.
+async fn see(State(rooms): State<Rooms>, Path(id): Path<String>, Query(q): Query<SeeQuery>) -> Response {
+    let Some(room) = rooms.get(&id) else { return no_room(&id) };
+    room
+        .call(move |h| {
+        tri!(dm_only(h.room.state(), q.asker.as_deref()));
+        let Some(seat) = q.seat.as_deref() else { return error(StatusCode::BAD_REQUEST, "see which seat? (seat=<name>)") };
+        match kernel_core::see(&h.room, seat, q.at.as_deref()) {
+            Ok(text) => Json(json!({ "text": text })).into_response(),
+            Err(e) => error(StatusCode::NOT_FOUND, e),
+        }
+        })
+        .await
+}
+
+#[derive(Deserialize)]
 struct JournalQuery {
     #[serde(rename = "as")]
     asker: Option<String>,
@@ -905,6 +928,7 @@ async fn main() {
         .route("/api/rooms/{id}/stats", get(stats))
         .route("/api/rooms/{id}/journal", get(get_journal).post(post_journal))
         .route("/api/rooms/{id}/review", get(review))
+        .route("/api/rooms/{id}/see", get(see))
         .fallback_service(ServeDir::new(dir.join("web")))
         .with_state(rooms);
 

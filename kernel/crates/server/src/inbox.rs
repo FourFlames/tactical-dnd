@@ -158,6 +158,11 @@ fn as_cell(text: &str) -> Option<Cell> {
     }
 }
 
+/// Where a square is in words ("in the nave, 10 ft from the altar"), in the DM's place names.
+fn where_text(s: &kernel_core::RoomState, c: Cell) -> Option<String> {
+    s.places.position_text(c)
+}
+
 /// One wake for the DM: every message in the batch with what's needed to answer it without
 /// further lookups: the speaker's sheet, what they pointed at (resolved), who's nearby, and the
 /// last few steps.
@@ -169,20 +174,20 @@ pub fn bundle(room: &Room, ids: &[u64], inbox: &Inbox) -> String {
     for m in &msgs {
         let seat = Observer::Seat(m.from.clone());
         let lead = s.lead(&m.from).map(|id| &s.creatures[&id]);
-        let who = lead.map_or_else(String::new, |c| format!(" ({}, {}/{} HP, {} ft, at {})", c.name, c.hp, c.max_hp, c.speed_ft, c.pos));
+        let who = lead.map_or_else(String::new, |c| format!(" ({}, {}/{} HP, {} ft, {}at {})", c.name, c.hp, c.max_hp, c.speed_ft, where_text(s, c.pos).map_or_else(String::new, |w| format!("{w}, ")), c.pos));
         out.push(format!("#{} {}{who}: \"{}\"", m.id, m.from, m.text));
         if let Some(at) = &m.at {
             let target = s.names.get(&seat).and_then(|n| n.resolve(at)).and_then(|id| s.creatures.get(&id));
             let line = match (target, as_cell(at)) {
                 (Some(t), _) => {
                     let dist = lead.map_or_else(String::new, |l| format!(", {} ft away", l.pos.distance_ft(t.pos)));
-                    format!("   pointing at {} (their \"{at}\") at {}{dist}", s.label(&dm, t.id), t.pos)
+                    format!("   pointing at {} (their \"{at}\") at {}{}{dist}", s.label(&dm, t.id), t.pos, where_text(s, t.pos).map_or_else(String::new, |w| format!(", {w}")))
                 }
                 (None, Some(c)) => {
                     let terrain = s.map.terrain(c).map_or("off the map", |t| t.name.as_str());
                     let dist = lead.map_or_else(String::new, |l| format!(", {} ft away", l.pos.distance_ft(c)));
                     let who = s.creature_at(c).map_or_else(String::new, |o| format!(", {} is there", s.label(&dm, o.id)));
-                    format!("   pointing at {c}: {terrain}{dist}{who}")
+                    format!("   pointing at {c}: {terrain}{}{dist}{who}", where_text(s, c).map_or_else(String::new, |w| format!(", {w}")))
                 }
                 (None, None) => format!("   pointing at \"{at}\", which they have no name for"),
             };
@@ -193,7 +198,10 @@ pub fn bundle(room: &Room, ids: &[u64], inbox: &Inbox) -> String {
                 .creatures
                 .values()
                 .filter(|c| c.id != l.id && l.pos.distance_ft(c.pos) <= 30)
-                .map(|c| format!("{} at {} {} ft, {} to {}", s.label(&dm, c.id), c.pos, l.pos.distance_ft(c.pos), format!("{:?}", s.stance(c.id, l.id)).to_lowercase(), l.name))
+                .map(|c| {
+                    let place = s.places.at(c.pos).filter(|&p| s.places.at(l.pos) != Some(p)).map_or_else(String::new, |p| format!(" ({})", s.places.position_text(c.pos).unwrap_or_else(|| format!("in {}", s.places.get(p).name))));
+                    format!("{} at {}{place} {} ft, {} to {}", s.label(&dm, c.id), c.pos, l.pos.distance_ft(c.pos), format!("{:?}", s.stance(c.id, l.id)).to_lowercase(), l.name)
+                })
                 .collect();
             out.push(format!("   nearby: {}", if near.is_empty() { "nobody within 30 ft".into() } else { near.join("; ") }));
         }
@@ -203,4 +211,35 @@ pub fn bundle(room: &Room, ids: &[u64], inbox: &Inbox) -> String {
     out.extend(recent.into_iter().map(|l| format!("   {l}")));
     out.push("answer each: dm reply <id> \"…\" (add --done when it's resolved)".into());
     out.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_core::{Codex, RoomDef};
+
+    fn crossroads() -> Room {
+        let codex: Codex = serde_json::from_str(include_str!("../../../codex/core.json")).unwrap();
+        let def: RoomDef = serde_json::from_str(include_str!("../../../rooms/crossroads.json")).unwrap();
+        Room::open("crossroads", def, codex).unwrap()
+    }
+
+    #[test]
+    fn the_bundle_says_where_the_speaker_and_what_they_point_at_are() {
+        let room = crossroads();
+        let alice = room.state().seats.keys().next().unwrap().clone();
+        let mut inbox = Inbox::default();
+        let a = inbox.add(alice.clone(), "hello".into(), Some("priest".into()));
+        let b = inbox.add(alice, "what is there".into(), Some("5,2".into()));
+        let text = bundle(&room, &[a, b], &inbox);
+        let speaker = text.lines().find(|l| l.starts_with("#1 ")).unwrap();
+        assert!(speaker.contains("in the lower hall, 15 ft from the nave, at (2, 8))"), "{speaker}");
+        let pointing = text.lines().find(|l| l.contains("pointing at") && l.contains("their")).unwrap();
+        assert!(pointing.contains(", in the nave, 10 ft from the altar,"), "{pointing}");
+        let square = text.lines().find(|l| l.contains("pointing at (5, 2)")).unwrap();
+        assert!(square.contains("flagstones, in the nave, 5 ft from the altar"), "{square}");
+        assert!(text.contains("(in the nave, 10 ft from the altar)"), "nearby creatures in other places say where:
+{text}");
+
+    }
 }

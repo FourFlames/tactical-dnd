@@ -20,7 +20,7 @@ Any command prints `📨 N new messages waiting` when players are waiting on you
 ## Commands
 
 ```
-dm look                                   everyone, where, HP, stance to the party
+dm look                                   place tree (keys), then everyone: square, place, HP, stance
 dm act "move rook 4,5; wait 1 round" --gist "Rook advances"   one step; --dry previews it
 dm history 20                             recent steps
 dm reply 3 "It's locked." --done          answer message #3
@@ -28,13 +28,16 @@ dm insert 12 "place snikka 4,6" --gist "Snikka was guarding the door"   edit his
 dm remove 14 · dm edit 14 "move rook 2,1" · dm fiat 14                   each prints a preview
 dm commit draft-15 · dm discard draft-15 · dm branches · dm rewind 9
 dm stats                                  how long players waited at each hop
+dm see sam [priest | 5,9]                 the room as sam perceives it, next to the truth
 dm log [--re m3] [--kind step,reply] [--who alice] [--since 10:02|5m]   the session journal
 dm wish "walk <who> to <someone>" --re 3  note a tool you wanted and didn't have
 dm review                                 post-mortem: what skipped the DM, rulings, waits, wishes
 ```
 
-Script: `move <who> <x>,<y>` · `place <who> <x>,<y>` · `wait <n> s|rounds|min|hours`, one per line or `;`.
-Names are your handles (`dm look` lists them). Players' handles differ; the bundle translates.
+Script: `move <who> <x>,<y>` · `move <who> to <place or who>` (`move rook to altar`, `go rook to osric`) · `place <who> <x>,<y>` · `wait <n> s|rounds|min|hours`, one per line or `;`.
+Names are your handles (`dm look` lists them, and prints the place tree under its header, e.g.
+`shrine › nave › altar · east-room · lower-hall › ford`: type those keys). Step lines and the wake
+bundle say where things are (`Rook moves 15 ft to (4, 1), at the altar`; `in the nave, 10 ft from the altar`). Players' handles differ; the bundle translates.
 
 ## Saving
 
@@ -44,6 +47,15 @@ A restart picks up where it stopped: same map, messages and history, message ids
 continue, and the journal gets a new `open` line ending `resume=true`. A saved room keeps its own copy of
 the room definition and codex, so editing `kernel/rooms/<room>.json` changes nothing for it.
 **To start a room fresh, stop the server and delete its folder** (`kernel/saves/<room>/`).
+
+## Seeing what a player sees
+
+`dm see <seat>` lists every creature that seat perceives, in its names, with what it reads from each,
+how it stands toward it, and `≠ truth: …` where that differs from what you know (a real name, an
+identity it hasn't read, a stance that would change). `dm see <seat> <their handle | x,y>` details one
+creature or square: each reading it reaches, and under `does not reach:` the ones it doesn't, with
+what blocks them (`needs a close look`, `knows elvish`, `arcana DC 12 vs passive 10`). Use it for
+"why does Sam think…?" before you answer.
 
 ## Rules of thumb
 

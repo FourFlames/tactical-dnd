@@ -262,9 +262,9 @@ mod tests {
         let p = r.surgery(Surgery::Insert { after: StepId(1), commands: vec![place("snikka", 3, 1)] }, gist).unwrap();
         let lines = crate::view::preview_lines(&r, &p.changes);
         assert_eq!(lines[0], "2 changes: 1 inserted, 1 dropped");
-        assert_eq!(lines[1], "· inserted #3: R1 dm: \"Snikka was already in the corridor\" — Snikka is placed at (3, 1)");
+        assert_eq!(lines[1], "· inserted #3: R1 dm: \"Snikka was already in the corridor\" — Snikka is placed at (3, 1), in the corridor");
         assert!(lines[2].starts_with("⚠ dropped #2 → #4: R1 dm ⚠ dropped: (6, 1) is "), "{}", lines[2]);
-        assert!(lines[2].ends_with("; was: Rook moves 25 ft to (6, 1) · seen by alice"), "{}", lines[2]);
+        assert!(lines[2].ends_with("; was: Rook moves 25 ft to (6, 1), in the corridor · seen by alice"), "{}", lines[2]);
     }
 
     #[test]

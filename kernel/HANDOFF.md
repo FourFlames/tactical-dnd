@@ -17,7 +17,7 @@ tools; its **Build order** is the roadmap) and, for the wider priorities, `docs/
 - **Saves:** each room saves to `kernel/saves/<room>/` (git-ignored; `KERNEL_SAVES` overrides) and the
   server reopens it on start; delete the folder to start a room fresh (`kernel/DM.md`, "Saving").
   Server files: `main.rs` (handlers; one task per room), `store.rs` (the save), `inbox.rs`, `journal.rs`.
-- **Check:** `cargo test --workspace` (37 tests) and `cargo clippy --workspace --all-targets` (clean),
+- **Check:** `cargo test --workspace` (58 tests) and `cargo clippy --workspace --all-targets` (clean),
   from `kernel/`. On Windows the server exe is locked while the preview runs; stop it before rebuilding
   the server. A session whose browser pane reads the main checkout's `.claude/launch.json` won't find the
   `kernel` entry (it's only in this worktree): run the same `cargo run` in the background and open the
@@ -89,19 +89,16 @@ loop, the journal and `dm review`, and timeline surgery in front of players.
   `steps.jsonl` after a hard kill is an error (the room is skipped, not overwritten); no save
   versioning; disk writes run on the room task (fine at this size); a leftover `kernel/sessions/` from
   earlier runs is no longer used and can be deleted.
-- **A2. A first place layer** (core + room file). Places with a name, a parent and rectangles; "which
-  place is this square in" (the most specific); places in the bundle ("Rook, in the nave, 10 ft from
-  the altar"), `dm look` and journal lines; `move rook to altar` and `move rook to osric` in scripts.
-  Everyone uses the DM's place names for now. Core first; the server wiring follows A1.
-  **Core done:** `core/src/place.rs` (`Places::at`, `ancestors`, `within`, `position_text`),
-  `RoomDef.places`, `Command::MoveToward` (resolved to a plain `Move`, so history never sees it), and
-  the crossroads tree (shrine › nave › altar, east room, lower hall › ford). **Still to do:** call
-  `places.position_text(pos)` from the wake bundle, `dm look` and journal step lines; teach the page
-  and the DM tool schema the `move_toward` command. Known limit: "10 ft from" ignores walls.
+- **A2. A first place layer (done)** (core + server + dm). Places (name, parent, rectangles; the most specific wins)
+  in step lines (`Rook moves 15 ft to (4, 1), at the altar`), the wake bundle (speaker, pointed-at, nearby),
+  `dm look` (place column and a key tree), and `move rook to altar` / `move rook to osric` in scripts.
+  Everyone uses the DM's place names for now. Known limit: "10 ft from" ignores walls.
 - **A3. Narration** (core + page). A `say` command and event (all, or a whisper to one seat), in
   history like any step; `dm say`; a chronicle panel on the page in each seat's words.
 - **A4. `dm see <seat> [at]`** (CLI + a read-only endpoint): the room, a square or a creature as that
   seat perceives it, flagging where it differs from the truth.
+  **Done:** `core/src/see.rs` (a pure renderer, `kernel_core::see`), `GET /see?seat&at`, `dm see`;
+  passing attention only (no simulated close look), seats seen through their lead creature.
 - **A5. Surgery reaches the table** (server + page): a seat that saw something a commit changed gets a
   notice in the chronicle before its page reloads.
 

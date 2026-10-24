@@ -6,10 +6,12 @@ use serde_json::{json, Value};
 const HELP: &str = "\
 dm <command> [--room R]          (server: $KERNEL_URL, default http://localhost:5180)
 
-  look                            the room now: everyone, where, HP, stance to the party
+  look                            the room now: the place tree (keys you can type), then everyone: where, HP, stance
   act \"<script>\" [--gist G] [--re MSG] [--as SEAT] [--dry]
                                   run commands as one step, e.g. act \"move rook 4,5; wait 1 round\" --re 3
   history [N] [--branch B]        the last N steps (default 20)
+  see <seat> [at]                 the room as that seat perceives it, next to the truth; <at> is a handle
+                                  the seat uses or a square (5,9): what it reads there and why not more
   wait [--timeout SECONDS]        block until players message you; prints them as one batch
   reply <id> \"<text>\" [--done]    answer a message (--done when it's resolved)
   messages                        every message and its replies
@@ -23,7 +25,7 @@ dm <command> [--room R]          (server: $KERNEL_URL, default http://localhost:
   wish \"<tool you wanted>\" [--re MSG]   note a command or tool you wished you had
   review                          the post-mortem: what skipped the DM, rulings, slow waits, wishes
 
-script: move <who> <x>,<y> · place <who> <x>,<y> · wait <n> s|rounds|min|hours  (one per line or ;)";
+script: move <who> <x>,<y> | to <place or who> · place <who> <x>,<y> · wait <n> s|rounds|min|hours  (one per line or ;)";
 
 struct Client {
     base: String,
@@ -144,6 +146,14 @@ fn run() -> Result<(), String> {
             let v = ok(c.get(&q)?)?;
             lines(&v["lines"]).iter().for_each(|l| println!("{l}"));
         }
+        "see" => {
+            let seat_name = rest.first().ok_or("see which seat? dm see <seat> [handle | x,y]")?;
+            let mut q = vec![("seat", seat_name.as_str())];
+            if let Some(at) = rest.get(1) {
+                q.push(("at", at.as_str()));
+            }
+            println!("{}", ok(c.get_with("/see", &q)?)?["text"].as_str().unwrap_or(""));
+        }
         "wait" => {
             let t = timeout.unwrap_or_else(|| "300".into());
             let v = ok(c.get(&format!("/wait?timeout={t}"))?)?;
@@ -246,14 +256,18 @@ fn run() -> Result<(), String> {
 fn look(c: &Client) -> Result<(), String> {
     let v = ok(c.get("")?)?;
     println!("{} · R{} · main at #{}", v["name"].as_str().unwrap_or("?"), v["clock"].as_u64().unwrap_or(0) / 6 + 1, v["seq"]);
+    if let Some(tree) = place_tree(&v["places"]) {
+        println!("{tree}");
+    }
     for cr in v["creatures"].as_array().into_iter().flatten() {
         let hp = match (cr["hp"].as_i64(), cr["max_hp"].as_i64()) {
             (Some(h), Some(m)) => format!("{h}/{m} HP"),
             _ => String::new(),
         };
+        let place = cr["place"].as_str().map(|p| format!("  {p}")).unwrap_or_default();
         let stance = cr["stance"].as_str().map(|s| format!("{s} to the party")).unwrap_or_default();
         println!(
-            "{:<10} {:<16} ({}, {})  {:<9} {:>2} ft  {stance}",
+            "{:<10} {:<16} ({}, {})  {:<9} {:>2} ft  {stance}{place}",
             cr["handle"].as_str().unwrap_or("?"),
             cr["label"].as_str().unwrap_or("?"),
             cr["pos"]["x"],
@@ -265,6 +279,22 @@ fn look(c: &Client) -> Result<(), String> {
     Ok(())
 }
 
+/// The places as one line of keys: `shrine › nave › altar · east-room · lower-hall › ford`. Places
+/// inside the same place read `a › (b, c)`.
+fn place_tree(places: &Value) -> Option<String> {
+    let list: Vec<(&str, Option<&str>)> = places.as_array()?.iter().filter_map(|p| Some((p["key"].as_str()?, p["parent"].as_str()))).collect();
+    fn walk(list: &[(&str, Option<&str>)], key: &str) -> String {
+        let kids: Vec<String> = list.iter().filter(|(_, p)| *p == Some(key)).map(|(k, _)| walk(list, k)).collect();
+        match kids.len() {
+            0 => key.to_owned(),
+            1 => format!("{key} › {}", kids[0]),
+            _ => format!("{key} › ({})", kids.join(", ")),
+        }
+    }
+    let roots: Vec<String> = list.iter().filter(|(_, p)| p.is_none()).map(|(k, _)| walk(&list, k)).collect();
+    (!roots.is_empty()).then(|| roots.join(" · "))
+}
+
 /// After every command: whether players are waiting on the DM.
 fn footer(c: &Client) {
     if let Ok(v) = c.get("/pending") {
@@ -274,5 +304,26 @@ fn footer(c: &Client) {
         } else if open > 0 {
             println!("📨 {open} message{} not yet marked done", if open == 1 { "" } else { "s" });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_place_tree_reads_in_keys() {
+        let v = json!([
+            { "key": "shrine", "name": "the shrine" },
+            { "key": "nave", "name": "the nave", "parent": "shrine" },
+            { "key": "altar", "name": "the altar", "parent": "nave" },
+            { "key": "east-room", "name": "the east room" },
+            { "key": "lower-hall", "name": "the lower hall" },
+            { "key": "ford", "name": "the ford", "parent": "lower-hall" },
+        ]);
+        assert_eq!(place_tree(&v).unwrap(), "shrine › nave › altar · east-room · lower-hall › ford");
+        assert_eq!(place_tree(&json!(null)), None);
+        let branchy = json!([{ "key": "a" }, { "key": "b", "parent": "a" }, { "key": "c", "parent": "a" }]);
+        assert_eq!(place_tree(&branchy).unwrap(), "a › (b, c)");
     }
 }

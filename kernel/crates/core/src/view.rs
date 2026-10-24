@@ -26,6 +26,19 @@ pub struct RoomView<'a> {
     pub observer: &'a Observer,
     pub map: &'a Map,
     pub creatures: Vec<CreatureView<'a>>,
+    /// The room's places in definition order (parents before the places inside them, as authored).
+    /// Names are the DM's for now; they'll be per observer with perception.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub places: Vec<PlaceView<'a>>,
+}
+
+/// A place as an observer reads it: the key the DM types, the name for a sentence, and what it is in.
+#[derive(Clone, Debug, Serialize)]
+pub struct PlaceView<'a> {
+    pub key: &'a Handle,
+    pub name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<&'a Handle>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,6 +46,9 @@ pub struct CreatureView<'a> {
     pub handle: &'a Handle,
     pub label: &'a str,
     pub pos: Cell,
+    /// Where it is, in words: "in the nave, 10 ft from the altar". Absent when no place owns the square.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
     /// Whether this observer may command it.
     pub yours: bool,
     /// For a seat: how its lead creature stands toward this one. For the DM: how this one stands
@@ -83,6 +99,7 @@ impl<'a> RoomView<'a> {
                     handle: &a.handle,
                     label: &a.label,
                     pos: c.pos,
+                    place: s.places.position_text(c.pos),
                     yours,
                     stance,
                     appears,
@@ -92,7 +109,8 @@ impl<'a> RoomView<'a> {
                 })
             })
             .collect();
-        Self { id: &room.id, seq: room.seq(), clock: s.clock, name: &s.name, observer: obs, map: &s.map, creatures }
+        let places = s.places.iter().map(|p| PlaceView { key: &p.key, name: &p.name, parent: p.parent.map(|id| &s.places.get(id).key) }).collect();
+        Self { id: &room.id, seq: room.seq(), clock: s.clock, name: &s.name, observer: obs, map: &s.map, creatures, places }
     }
 }
 
@@ -169,16 +187,23 @@ fn duration(seconds: u64) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
+/// ", in the nave" or ", at the altar" for the most specific place that owns the square; nothing if
+/// none does.
+fn at_place(s: &RoomState, c: Cell) -> String {
+    s.places.at(c).map_or_else(String::new, |id| format!(", {} {}", s.places.preposition(id), s.places.get(id).name))
+}
+
 /// An event in `obs`'s words, or nothing if they have no name for who it's about.
 pub fn event_text(s: &RoomState, obs: &Observer, e: &Event) -> Option<String> {
     Some(match e {
         Event::CreatureMoved { who, path, cost_ft } => {
             known(s, obs, *who)?;
-            format!("{} moves {cost_ft} ft to {}", capitalize(&s.label(obs, *who)), path.last()?)
+            let to = *path.last()?;
+            format!("{} moves {cost_ft} ft to {to}{}", capitalize(&s.label(obs, *who)), at_place(s, to))
         }
         Event::CreaturePlaced { who, to } => {
             known(s, obs, *who)?;
-            format!("{} is placed at {to}", capitalize(&s.label(obs, *who)))
+            format!("{} is placed at {to}{}", capitalize(&s.label(obs, *who)), at_place(s, *to))
         }
         Event::TimePassed { seconds } => format!("time passes: {}", duration(*seconds)),
     })
@@ -285,4 +310,34 @@ pub fn change_line(room: &Room, c: &Change) -> String {
 /// A draft's summary line followed by one line per change.
 pub fn preview_lines(room: &Room, changes: &[Change]) -> Vec<String> {
     std::iter::once(summary(changes)).chain(changes.iter().map(|c| change_line(room, c))).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::*;
+
+    #[test]
+    fn step_lines_name_the_place_when_one_owns_the_square() {
+        let mut r = room();
+        // (5,1) is in the corridor; (1,2) is a floor square no place owns.
+        let st = run(&mut r, &[mv("rook", 5, 1), place("grub", 1, 2)]);
+        let line = step_line(r.state(), &DM, &st).unwrap();
+        assert!(line.ends_with("Rook moves 20 ft to (5, 1), in the corridor; Grub is placed at (1, 2)"), "{line}");
+        let st = run(&mut r, &[place("snikka", 3, 3)]);
+        assert!(step_line(r.state(), &DM, &st).unwrap().ends_with("Snikka is placed at (3, 3), in the rubble"));
+    }
+
+    #[test]
+    fn the_view_carries_places_and_where_each_creature_is() {
+        let r = room();
+        let v = RoomView::new(&r, &DM);
+        let keys: Vec<_> = v.places.iter().map(|p| p.key.to_string()).collect();
+        assert_eq!(keys, ["corridor", "rubble-strip"]);
+        let rook = v.creatures.iter().find(|c| c.handle.as_str() == "rook").unwrap();
+        assert_eq!(rook.place.as_deref(), Some("in the corridor, 10 ft from the rubble"));
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["places"][0]["key"], "corridor");
+        assert_eq!(json["creatures"][0]["place"], "in the corridor, 10 ft from the rubble");
+    }
 }

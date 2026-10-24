@@ -15,6 +15,9 @@ use crate::map::Map;
 /// How far, in feet, a place can be and still be mentioned as nearby.
 pub const NEARBY_FT: u32 = 30;
 
+/// The most squares a place can have and still read as a spot ("at the altar").
+pub const SPOT_SQUARES: usize = 4;
+
 /// A block of squares: `w` wide and `h` tall, with its top-left corner at (`x`, `y`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
@@ -202,10 +205,22 @@ impl Places {
             .filter(|p| !self.within(p.id, c))
             .filter_map(|p| Some((p.distance_ft(c).filter(|&d| d <= NEARBY_FT)?, p)))
             .min_by_key(|(d, p)| (*d, std::cmp::Reverse(self.depth(p.id)), p.area(), p.id));
+        let here = format!("{} {}", self.preposition(here.id), here.name);
         Some(match near {
-            Some((ft, p)) => format!("in {}, {ft} ft from {}", here.name, p.name),
-            None => format!("in {}", here.name),
+            Some((ft, p)) => format!("{here}, {ft} ft from {}", p.name),
+            None => here,
         })
+    }
+
+    /// "at" for a spot (no places inside it, at most [`SPOT_SQUARES`] squares: the altar, a well),
+    /// "in" for anything bigger (the nave, the yard).
+    pub fn preposition(&self, id: PlaceId) -> &'static str {
+        let leaf = !self.list.iter().any(|p| p.parent == Some(id));
+        if leaf && self.get(id).area() <= SPOT_SQUARES {
+            "at"
+        } else {
+            "in"
+        }
     }
 }
 
@@ -281,7 +296,7 @@ mod tests {
         assert_eq!(p.position_text(Cell::new(0, 0)).unwrap(), "in the nave, 10 ft from the altar");
         assert_eq!(p.position_text(Cell::new(1, 3)).unwrap(), "in the nave, 15 ft from the altar");
         // On the altar the nave and hall hold the square, so the nearest other place is the rug.
-        assert_eq!(p.position_text(Cell::new(2, 0)).unwrap(), "in the altar, 20 ft from the rug");
+        assert_eq!(p.position_text(Cell::new(2, 0)).unwrap(), "at the altar, 20 ft from the rug");
         assert_eq!(p.position_text(Cell::new(14, 0)).unwrap(), "in the yard, 15 ft from the hall");
         // Beyond 30 ft there is nothing to mention.
         assert_eq!(p.position_text(Cell::new(19, 5)).unwrap(), "in the yard");
